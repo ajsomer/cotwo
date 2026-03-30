@@ -125,6 +125,42 @@ The clinician view is the same run sheet component, filtered to the clinician's 
 - Clinicians can start/end video sessions from their view.
 - Solo practitioners without a receptionist can process their own sessions using the same Process flow.
 
+### Sidebar and Navigation
+
+One sidebar, one navigation structure. The user's role and the organisation's tier determine which items are visible. No separate admin layout. No mode switching.
+
+**Layout**: Fixed left sidebar on desktop. Always visible. Clinic-side views render in the content area to the right.
+
+**Top: Org Branding**
+- Organisation logo (`logo_url` from organisations table) and org name.
+- Static for the session. Sets the context.
+
+**Location Switcher**
+- Sits below the org branding.
+- Single-location users: location name displayed as text, no dropdown.
+- Multi-location users: dropdown selector. Changing selection updates the context for all clinic-side views (run sheet, readiness). The real-time subscription switches to the new location's channel.
+
+**Navigation Links**
+
+| Nav Item | Visible To | Tier | Description |
+|----------|-----------|------|-------------|
+| Run Sheet | All roles | Core + Complete | Receptionists: full run sheet. Clinicians: filtered to assigned rooms. Same page, role determines filtering and actions. |
+| Readiness | Receptionists, Practice Managers | Complete only | Outstanding pre-appointment items: incomplete forms, missing cards, unsigned consent. |
+| Workflows | Practice Managers | Complete only | Workflow template builder. Pre and post appointment action sequences. |
+| Forms | Practice Managers | Complete only | Form builder. Create and manage intake forms, consent forms, PROMs. |
+| Settings | Practice Managers | Core + Complete | Team management, rooms, appointment types, payment config (Stripe Connect), org branding. |
+
+**Visibility by role and tier:**
+
+| Role | Core | Complete |
+|------|------|----------|
+| Clinician | Run Sheet | Run Sheet |
+| Receptionist | Run Sheet | Run Sheet, Readiness |
+| Practice Manager | Run Sheet, Settings | Run Sheet, Readiness, Workflows, Forms, Settings |
+
+**Bottom: User**
+- User name, role badge, logout button.
+
 ### The Process Flow
 
 Sequential, receptionist-driven:
@@ -166,7 +202,11 @@ Organisation → Location → Clinician. Org sets defaults. Location can overrid
 
 ### Org Hierarchy
 - `organisations` → `locations` → `rooms`
+- `organisations` carries `logo_url` for patient-facing branding and `tier` (core/complete)
+- `locations` carries `qr_token` (unique, static per location, used in QR code URL for in-person check-in)
+- `rooms` carries `link_token` (unique, static per room, used in on-demand link URL)
 - `users` linked to locations via `staff_assignments` (carries role, employment_type, stripe_account_id)
+- `clinician_room_assignments` (junction: staff_assignment_id, room_id. Controls which rooms a clinician sees on their run sheet view)
 
 ### Patient
 - `patients` (scoped to org via org_id, fields: first_name, last_name, date_of_birth)
@@ -178,7 +218,7 @@ Organisation → Location → Clinician. Org sets defaults. Location can overrid
 - `appointments` (the planning entity: patient, clinician, appointment_type, scheduled_at, room_id)
 
 ### Sessions
-- `sessions` (the doing entity: appointment_id nullable, room_id, status, video_call_id)
+- `sessions` (the doing entity: appointment_id nullable, room_id, status, video_call_id, entry_token unique for SMS link URLs, notification_sent, patient_arrived)
 - `session_participants` (junction table: session_id, patient_id, role. MVP: one patient per session)
 
 ### Workflow Engine (Complete only)
@@ -273,37 +313,30 @@ src/
       login/page.tsx
       signup/page.tsx
     (clinic)/
-      dashboard/page.tsx
       runsheet/page.tsx
       readiness/page.tsx
-      payments/page.tsx
-      layout.tsx
-    (patient)/
-      entry/[token]/page.tsx
-      form/[token]/page.tsx
-      waiting/[token]/page.tsx
-      pay/[token]/page.tsx
-      layout.tsx
-    (admin)/
-      settings/page.tsx
       workflows/page.tsx
       workflows/[id]/page.tsx
       forms/page.tsx
       forms/[id]/page.tsx
-      team/page.tsx
-      rooms/page.tsx
-      appointment-types/page.tsx
-      payments/settings/page.tsx
-      layout.tsx
+      settings/page.tsx
+      settings/team/page.tsx
+      settings/rooms/page.tsx
+      settings/appointment-types/page.tsx
+      settings/payments/page.tsx
+      layout.tsx                    # Sidebar + location switcher + role context
+    (patient)/
+      entry/[token]/page.tsx        # Unified patient entry flow (primer, OTP, identity, card, items, arrive)
+      waiting/[token]/page.tsx      # Virtual waiting room (telehealth)
+      layout.tsx                    # 420px max-width centred container
     api/
       webhooks/stripe/route.ts
       cron/daily-scan/route.ts
       pms/sync/route.ts
   components/
-    ui/          # Shared primitives
-    clinic/      # Clinic-specific components
-    patient/     # Patient-facing components
-    admin/       # Admin components
+    ui/          # Shared primitives (badge, button, skeleton, slide-over, etc.)
+    clinic/      # Clinic-side components (run sheet, process flow, sidebar, etc.)
+    patient/     # Patient-facing components (entry flow steps, waiting room, etc.)
   lib/
     supabase/
       client.ts
@@ -313,6 +346,13 @@ src/
     stripe/
       client.ts
       connect.ts
+    runsheet/
+      queries.ts
+      derived-state.ts
+      grouping.ts
+      format.ts
+      actions.ts
+      mutations.ts
     workflows/
       engine.ts
       scanner.ts
@@ -325,6 +365,8 @@ src/
     useLocation.ts
     useOrg.ts
     useRole.ts
+    useTabNotifications.ts
+    useFaviconBadge.ts
   styles/
     globals.css
 supabase/
@@ -427,3 +469,5 @@ AND NOT EXISTS (
 - QR code check-in is Complete tier only.
 - One-shot SMS is Core only. Complete tier uses the workflow engine for configurable timed patient communications.
 - All patient-facing flows must work on mobile (phone browser). Mobile-first design with 420px max-width container centred on desktop. Clinic-side flows are desktop-primary.
+- RLS policies are staff-scoped (via auth.uid() and staff_assignments). Patient-facing API routes use the Supabase service role client to bypass RLS, since patients authenticate via phone OTP tokens, not staff accounts.
+- Entry tokens: sessions have `entry_token` (unique, in SMS link URLs), locations have `qr_token` (unique, in QR code URLs), rooms have `link_token` (unique, in on-demand link URLs). All generated on record creation.

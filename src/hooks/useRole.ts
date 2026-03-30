@@ -1,6 +1,18 @@
 "use client";
 
+import { createContext, useContext } from "react";
+import type { UserRole } from "@/lib/supabase/types";
+
+export interface RoleContextValue {
+  role: UserRole | null;
+  userId: string | null;
+}
+
+export const RoleContext = createContext<RoleContextValue>({
+  role: null,
+  userId: null,
+});
+
 export function useRole() {
-  // TODO: Return current user's role (practice_manager, receptionist, clinician)
-  return null;
+  return useContext(RoleContext);
 }
