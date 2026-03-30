@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useMemo, useCallback, useTransition } from "react";
 import { RunsheetHeader } from "./runsheet-header";
-import { SummaryBar } from "./summary-bar";
 import { RoomContainer } from "./room-container";
 import { enrichSessions } from "@/lib/runsheet/derived-state";
 import { groupSessionsByRoom, calculateSummary } from "@/lib/runsheet/grouping";
@@ -191,35 +190,27 @@ export function RunsheetShell({
   }, [addSessionOpen, locationId, visibleRooms, editingSessionId, enriched, timezone]);
 
   return (
-    <div className="p-6 space-y-4 max-w-[860px] mx-auto">
-      <div className="flex items-center gap-3">
-        <div className="flex-1">
-          <RunsheetHeader
-            timezone={timezone}
-            showAddButton={isReceptionist}
-            onAddSession={() => {
-              setEditingSessionId(null);
-              setAddSessionOpen(true);
-            }}
-          />
-        </div>
-        <button
-          onClick={handleSeed}
-          disabled={isSeeding}
-          className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-500 hover:bg-gray-50 hover:text-gray-700 disabled:opacity-50 transition-colors"
-          title="Seed or reseed demo data"
-        >
-          {isSeeding ? "Seeding..." : "Seed data"}
-        </button>
+    <div className="p-6 max-w-[860px] mx-auto">
+      <div className="mb-4">
+        <RunsheetHeader
+          summary={summary}
+          showAddButton={isReceptionist}
+          onAddSession={() => {
+            setEditingSessionId(null);
+            setAddSessionOpen(true);
+          }}
+          onSeed={handleSeed}
+          isSeeding={isSeeding}
+          onBulkProcess={handleBulkProcess}
+        />
       </div>
 
-      {isReceptionist && <SummaryBar summary={summary} onBulkProcess={handleBulkProcess} />}
-
       <div className="space-y-3">
-        {groups.map((group) => (
+        {groups.map((group, index) => (
           <RoomContainer
             key={group.room_id}
             group={group}
+            roomIndex={index}
             onAction={handleAction}
             onSessionClick={handleSessionClick}
             singleRoom={singleRoom}

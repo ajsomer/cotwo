@@ -11,7 +11,7 @@ export function StatusBadge({ state, className }: StatusBadgeProps) {
   const config = getStatusBadgeConfig(state);
 
   return (
-    <Badge variant={config.variant} dot dotColor={config.dotColor} className={className}>
+    <Badge variant={config.variant} className={className}>
       {config.label}
     </Badge>
   );

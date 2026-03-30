@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { Badge } from "@/components/ui/badge";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
+import { Tooltip } from "@/components/ui/tooltip";
 import { SessionRow } from "./session-row";
 import {
   getRoomExpansionState,
@@ -10,8 +11,32 @@ import {
 } from "@/lib/runsheet/grouping";
 import type { RoomGroup } from "@/lib/supabase/types";
 
+// Distinct background colours for room avatars from the Coviu palette
+const AVATAR_COLORS = [
+  "bg-teal-500",
+  "bg-blue-500",
+  "bg-amber-500",
+  "bg-red-400",
+  "bg-green-500",
+  "bg-purple-500",
+];
+
+function getAvatarColor(index: number): string {
+  return AVATAR_COLORS[index % AVATAR_COLORS.length];
+}
+
+function getInitials(name: string): string {
+  return name
+    .split(/[\s']+/)
+    .filter((w) => w.length > 0 && w[0] !== "(")
+    .slice(0, 2)
+    .map((w) => w[0].toUpperCase())
+    .join("");
+}
+
 interface RoomContainerProps {
   group: RoomGroup;
+  roomIndex: number;
   onAction: (sessionId: string, action: string) => void;
   onSessionClick?: (sessionId: string) => void;
   singleRoom?: boolean;
@@ -19,17 +44,32 @@ interface RoomContainerProps {
 
 export function RoomContainer({
   group,
+  roomIndex,
   onAction,
   onSessionClick,
   singleRoom = false,
 }: RoomContainerProps) {
   const autoState = getRoomExpansionState(group.sessions);
   const [expansion, setExpansion] = useState<RoomExpansionState>(autoState);
-  const [showDone, setShowDone] = useState(false);
   const [manualOverride, setManualOverride] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuCoords, setMenuCoords] = useState({ x: 0, y: 0 });
+  const menuRef = useRef<HTMLDivElement>(null);
+  const kebabRef = useRef<HTMLButtonElement>(null);
 
-  // Re-evaluate auto-expansion when session states change, unless manually overridden
+  // Close menu on outside click
+  useEffect(() => {
+    if (!menuOpen) return;
+    function handleClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [menuOpen]);
+
   useEffect(() => {
     if (!manualOverride) {
       setExpansion(autoState);
@@ -56,10 +96,13 @@ export function RoomContainer({
     [group.link_token]
   );
 
-  const handleSendLink = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    console.log("Send session link for room:", group.room_name);
-  }, [group.room_name]);
+  const handleSendLink = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      console.log("Send session link for room:", group.room_name);
+    },
+    [group.room_name]
+  );
 
   const handleRoomSettings = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -67,31 +110,26 @@ export function RoomContainer({
   }, []);
 
   const attentionSessions = getAttentionSessions(group.sessions);
-  const nonDoneSessions = group.sessions.filter(
-    (s) => s.derived_state !== "done"
-  );
-  const doneSessions = group.sessions.filter(
-    (s) => s.derived_state === "done"
-  );
 
   const visibleSessions =
     expansion === "collapsed"
       ? []
       : expansion === "auto-expanded"
         ? attentionSessions
-        : showDone
-          ? group.sessions
-          : nonDoneSessions;
+        : group.sessions;
 
   const hiddenCount =
     expansion === "auto-expanded"
       ? group.sessions.length - attentionSessions.length
       : 0;
 
+  const initials = getInitials(group.room_name);
+  const avatarColor = getAvatarColor(roomIndex);
+
   // Single-room clinician view: always expanded, no header
   if (singleRoom) {
     return (
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="bg-white rounded-xl border border-gray-200">
         {group.sessions.map((session) => (
           <SessionRow
             key={session.session_id}
@@ -112,101 +150,126 @@ export function RoomContainer({
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
       {/* Room header */}
-      <button
-        onClick={toggleExpansion}
-        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors"
-        aria-expanded={expansion !== "collapsed"}
-      >
-        {/* Chevron */}
-        <svg
-          className={`h-4 w-4 text-gray-500 transition-transform flex-shrink-0 ${
-            expansion !== "collapsed" ? "rotate-90" : ""
-          }`}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={2}
+      <div className="flex items-center gap-3 px-6 py-2.5 border-b border-gray-200 transition-colors">
+        {/* Clickable expand/collapse area */}
+        <button
+          onClick={toggleExpansion}
+          className="flex items-center gap-3 flex-1 min-w-0"
+          aria-expanded={expansion !== "collapsed"}
         >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M9 5l7 7-7 7"
+          {/* Chevron */}
+          <svg
+            className={`h-5 w-5 text-gray-400 transition-transform flex-shrink-0 ${
+              expansion !== "collapsed" ? "rotate-90" : ""
+            }`}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M9 5l7 7-7 7"
+            />
+          </svg>
+
+          {/* Room name */}
+          <span className="text-lg font-semibold text-gray-800 truncate">
+            {group.room_name}
+          </span>
+        </button>
+
+        {/* Traffic lights */}
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          <TrafficLight
+            count={group.counts.late}
+            activeColor="bg-red-500"
+            tooltip={`${group.counts.late} late`}
           />
-        </svg>
-
-        {/* Room name */}
-        <span className="text-sm font-semibold text-gray-800 truncate">
-          {group.room_name}
-        </span>
-
-        {/* Spacer */}
-        <div className="flex-1" />
-
-        {/* Room action icons (hover-reveal) */}
-        <div className="flex items-center gap-2">
-          {/* Settings */}
-          <span
-            onClick={handleRoomSettings}
-            title="Room settings"
-            className="p-0.5 text-gray-400 hover:text-gray-600 transition-colors"
-            role="button"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="8" cy="8" r="2" />
-              <path d="M8 2.5v1M8 12.5v1M13.5 8h-1M3.5 8h-1M11.9 4.1l-.7.7M4.8 11.2l-.7.7M11.9 11.9l-.7-.7M4.8 4.8l-.7-.7" />
-            </svg>
-          </span>
-
-          {/* Send link */}
-          <span
-            onClick={handleSendLink}
-            title="Send session link"
-            className="p-0.5 text-gray-400 hover:text-gray-600 transition-colors"
-            role="button"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M14 2L7 9" />
-              <path d="M14 2l-4.5 12-2.5-5L2 6.5 14 2z" />
-            </svg>
-          </span>
-
-          {/* Copy link */}
-          <span
-            onClick={handleCopyLink}
-            title={copied ? "Copied!" : "Copy room link"}
-            className="p-0.5 text-gray-400 hover:text-gray-600 transition-colors"
-            role="button"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="5" y="5" width="9" height="9" rx="1.5" />
-              <path d="M3.5 11H3a1.5 1.5 0 01-1.5-1.5V3A1.5 1.5 0 013 1.5h6.5A1.5 1.5 0 0111 3v.5" />
-            </svg>
-          </span>
+          <TrafficLight
+            count={group.counts.upcoming + group.counts.waiting}
+            activeColor="bg-amber-500/80"
+            tooltip={`${group.counts.upcoming + group.counts.waiting} waiting`}
+          />
+          <TrafficLight
+            count={group.counts.active}
+            activeColor="bg-teal-500/60"
+            tooltip={`${group.counts.active} in session`}
+          />
+          <TrafficLight
+            count={group.counts.total}
+            activeColor="bg-gray-500"
+            tooltip={`${group.counts.total} total`}
+            alwaysActive
+          />
         </div>
 
-        {/* Status badges */}
-        <div className="flex items-center gap-1.5">
-          {group.counts.late > 0 && (
-            <Badge variant="red">{group.counts.late} late</Badge>
-          )}
-          {group.counts.waiting > 0 && (
-            <Badge variant="amber">{group.counts.waiting} waiting</Badge>
-          )}
-          {group.counts.active > 0 && (
-            <Badge variant="teal">{group.counts.active} active</Badge>
-          )}
-          {group.counts.complete > 0 && (
-            <Badge variant="blue">{group.counts.complete} to process</Badge>
-          )}
-          <span className="text-xs text-gray-500 ml-1">
-            {group.counts.total}
-          </span>
+        {/* Kebab menu */}
+        <div className="flex items-center flex-shrink-0" ref={menuRef}>
+          <Tooltip content="Room actions">
+            <button
+              ref={kebabRef}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (kebabRef.current) {
+                  const rect = kebabRef.current.getBoundingClientRect();
+                  setMenuCoords({ x: rect.right, y: rect.bottom });
+                }
+                setMenuOpen((prev) => !prev);
+              }}
+              className="p-1.5 text-gray-400 hover:text-gray-600 transition-colors rounded-md hover:bg-gray-100"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                <circle cx="8" cy="3" r="1.5" />
+                <circle cx="8" cy="8" r="1.5" />
+                <circle cx="8" cy="13" r="1.5" />
+              </svg>
+            </button>
+          </Tooltip>
+
+          {menuOpen &&
+            createPortal(
+              <div
+                className="fixed z-[9999] w-44 bg-white rounded-lg border border-gray-200 shadow-lg py-1"
+                style={{ top: menuCoords.y + 4, left: menuCoords.x - 176 }}
+              >
+                <button
+                  onClick={(e) => {
+                    handleSendLink(e);
+                    setMenuOpen(false);
+                  }}
+                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                >
+                  Send room link
+                </button>
+                <button
+                  onClick={(e) => {
+                    handleCopyLink(e);
+                    setMenuOpen(false);
+                  }}
+                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                >
+                  {copied ? "Copied!" : "Copy room link"}
+                </button>
+                <button
+                  onClick={(e) => {
+                    handleRoomSettings(e);
+                    setMenuOpen(false);
+                  }}
+                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                >
+                  Room settings
+                </button>
+              </div>,
+              document.body
+            )}
         </div>
-      </button>
+      </div>
 
       {/* Session rows */}
       {visibleSessions.length > 0 && (
-        <div className="border-t border-gray-200">
+        <div>
           {visibleSessions.map((session) => (
             <SessionRow
               key={session.session_id}
@@ -218,7 +281,7 @@ export function RoomContainer({
         </div>
       )}
 
-      {/* Show all toggle (auto-expanded mode) */}
+      {/* Show all / Show less toggle */}
       {expansion === "auto-expanded" && hiddenCount > 0 && (
         <button
           onClick={(e) => {
@@ -226,28 +289,58 @@ export function RoomContainer({
             setManualOverride(true);
             setExpansion("fully-expanded");
           }}
-          className="w-full px-4 py-2 text-xs text-teal-500 hover:bg-gray-50 border-t border-gray-200 transition-colors"
+          className="w-full px-6 py-1.5 text-xs text-gray-500 hover:bg-gray-50 border-t border-gray-200 transition-colors"
         >
           Show all ({group.counts.total} sessions)
         </button>
       )}
-
-      {/* Done sessions toggle (fully-expanded mode) */}
-      {expansion === "fully-expanded" && doneSessions.length > 0 && !showDone && (
+      {expansion === "fully-expanded" && attentionSessions.length > 0 && attentionSessions.length < group.sessions.length && (
         <button
-          onClick={() => setShowDone(true)}
-          className="w-full px-4 py-2 text-xs text-gray-500 hover:bg-gray-50 border-t border-gray-200 transition-colors"
+          onClick={(e) => {
+            e.stopPropagation();
+            setManualOverride(true);
+            setExpansion("auto-expanded");
+          }}
+          className="w-full px-6 py-1.5 text-xs text-gray-500 hover:bg-gray-50 border-t border-gray-200 transition-colors"
         >
-          {doneSessions.length} completed
+          Show less
         </button>
       )}
 
       {/* Empty state */}
       {expansion !== "collapsed" && group.sessions.length === 0 && (
-        <p className="p-4 text-center text-xs text-gray-500 border-t border-gray-200">
+        <p className="p-4 text-center text-sm text-gray-500 border-t border-gray-200">
           No sessions
         </p>
       )}
     </div>
+  );
+}
+
+function TrafficLight({
+  count,
+  activeColor,
+  tooltip,
+  alwaysActive = false,
+}: {
+  count: number;
+  activeColor: string;
+  tooltip: string;
+  alwaysActive?: boolean;
+}) {
+  const isActive = alwaysActive || count > 0;
+
+  return (
+    <Tooltip content={tooltip}>
+      <span
+        className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-semibold flex-shrink-0 ${
+          isActive
+            ? `${activeColor} text-white`
+            : "border border-gray-200 text-transparent"
+        }`}
+      >
+        {isActive ? count : "0"}
+      </span>
+    </Tooltip>
   );
 }

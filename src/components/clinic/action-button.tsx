@@ -15,7 +15,7 @@ const variantMap = {
   red: "danger",
   amber: "accent",
   teal: "primary",
-  blue: "primary",
+  blue: "blue",
 } as const;
 
 export function ActionButton({

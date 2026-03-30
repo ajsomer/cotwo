@@ -76,49 +76,33 @@ export function enrichSessions(
   return sessions.map((s) => enrichSession(s, now));
 }
 
-/** Row background tint class for a derived state. */
-export function getRowBackground(state: DerivedDisplayState): string {
-  switch (state) {
-    case 'late':
-      return 'bg-[#FFEDED]';
-    case 'upcoming':
-    case 'waiting':
-    case 'checked_in':
-      return 'bg-[#FFF8EB]';
-    case 'in_session':
-    case 'running_over':
-      return 'bg-[#EAFAFA]';
-    case 'complete':
-      return 'bg-[#EDF4FC]';
-    case 'done':
-      return 'bg-white';
-    default:
-      return 'bg-white';
-  }
+/** Row background class for a derived state. */
+export function getRowBackground(_state: DerivedDisplayState): string {
+  return '';
 }
 
 /** Badge configuration for each derived state. */
 export function getStatusBadgeConfig(state: DerivedDisplayState): StatusBadgeConfig {
   switch (state) {
     case 'late':
-      return { label: 'Late', variant: 'red', dotColor: 'bg-red-500' };
+      return { label: 'Late', variant: 'red' };
     case 'upcoming':
-      return { label: 'Upcoming', variant: 'amber', dotColor: 'bg-amber-500' };
+      return { label: 'Upcoming', variant: 'amber' };
     case 'waiting':
-      return { label: 'Waiting', variant: 'amber', dotColor: 'bg-amber-500' };
+      return { label: 'Waiting', variant: 'amber-soft' };
     case 'checked_in':
-      return { label: 'Checked in', variant: 'amber', dotColor: 'bg-amber-500' };
+      return { label: 'Checked in', variant: 'amber-soft' };
     case 'in_session':
-      return { label: 'In session', variant: 'teal', dotColor: 'bg-teal-500' };
+      return { label: 'In session', variant: 'teal-muted' };
     case 'running_over':
-      return { label: 'Running over', variant: 'teal', dotColor: 'bg-teal-500' };
+      return { label: 'Running over', variant: 'gray-muted' };
     case 'complete':
-      return { label: 'Complete', variant: 'blue', dotColor: 'bg-blue-500' };
+      return { label: 'Complete', variant: 'blue-muted' };
     case 'done':
-      return { label: 'Done', variant: 'faded', dotColor: 'bg-gray-500' };
+      return { label: 'Done', variant: 'faded' };
     case 'queued':
     default:
-      return { label: 'Queued', variant: 'gray', dotColor: 'bg-gray-500' };
+      return { label: 'Queued', variant: 'gray' };
   }
 }
 

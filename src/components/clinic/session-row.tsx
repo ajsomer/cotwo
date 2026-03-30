@@ -3,6 +3,7 @@
 import { StatusBadge } from "./status-badge";
 import { ModalityBadge } from "./modality-badge";
 import { ActionButton } from "./action-button";
+import { Tooltip } from "@/components/ui/tooltip";
 import { getRowBackground } from "@/lib/runsheet/derived-state";
 import { formatSessionTime, formatPatientName } from "@/lib/runsheet/format";
 import type { EnrichedSession } from "@/lib/supabase/types";
@@ -24,7 +25,7 @@ export function SessionRow({ session, onAction, onClick }: SessionRowProps) {
 
   return (
     <div
-      className={`flex items-center gap-3 px-4 py-2 border-b border-gray-200 last:border-b-0 transition-colors ${bg} ${isDone ? "opacity-40" : ""} ${onClick ? "cursor-pointer hover:bg-gray-50/50" : ""}`}
+      className={`flex items-center px-6 py-1.5 border-b border-gray-200 last:border-b-0 transition-colors ${bg} ${isDone ? "opacity-40" : ""} ${onClick ? "cursor-pointer hover:bg-gray-50/50" : ""}`}
       onClick={() => onClick?.(session.session_id)}
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}
@@ -36,38 +37,46 @@ export function SessionRow({ session, onAction, onClick }: SessionRowProps) {
       }}
     >
       {/* Time */}
-      <span className="font-mono text-[13px] font-bold text-gray-800 whitespace-nowrap w-[60px] flex-shrink-0">
+      <span className="text-sm text-gray-500 whitespace-nowrap w-[60px] flex-shrink-0 mr-5">
         {time}
+      </span>
+
+      {/* Modality badge */}
+      <span className="mr-4">
+        <ModalityBadge modality={session.modality} />
       </span>
 
       {/* Patient info: two lines */}
       <div className="flex-1 min-w-0">
-        {/* Line 1: Patient name + inline icons */}
+        {/* Line 1: Patient name + readiness icons */}
         <div className="flex items-center gap-1.5">
-          <span className="text-sm font-semibold text-gray-800 truncate">
+          <span className="text-base font-medium text-gray-800 truncate">
             {patientName}
           </span>
-          <ModalityBadge modality={session.modality} />
           <ReadinessIcons session={session} />
         </div>
         {/* Line 2: Appointment type */}
         {session.type_name && (
-          <p className="text-[11px] text-gray-500 truncate mt-0.5">
+          <p className="text-sm text-gray-500 truncate mt-0.5">
             {session.type_name}
           </p>
         )}
       </div>
 
       {/* Status badge */}
-      <StatusBadge state={session.derived_state} />
+      <div className="ml-3">
+        <StatusBadge state={session.derived_state} />
+      </div>
 
       {/* Action */}
-      <ActionButton
+      <div className="ml-2">
+        <ActionButton
         state={session.derived_state}
         modality={session.modality}
         sessionId={session.session_id}
         onAction={onAction}
       />
+      </div>
     </div>
   );
 }
@@ -80,22 +89,26 @@ function ReadinessIcons({ session }: { session: EnrichedSession }) {
   return (
     <>
       {session.has_card_on_file ? (
-        <span title="Card on file" className="flex-shrink-0 leading-none inline-flex">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-green-500">
-            <rect x="1.5" y="3.5" width="13" height="9" rx="1.5" />
-            <path d="M1.5 6.5h13" />
-            <path d="M4 10h3" />
-          </svg>
-        </span>
+        <Tooltip content="Card on file">
+          <span className="flex-shrink-0 leading-none inline-flex">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-green-500">
+              <rect x="1.5" y="3.5" width="13" height="9" rx="1.5" />
+              <path d="M1.5 6.5h13" />
+              <path d="M4 10h3" />
+            </svg>
+          </span>
+        </Tooltip>
       ) : (
-        <span title="No card stored" className="flex-shrink-0 leading-none inline-flex">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
-            <rect x="1.5" y="3.5" width="13" height="9" rx="1.5" />
-            <path d="M1.5 6.5h13" />
-            <path d="M4 10h3" />
-            <path d="M13 2L3 14" strokeWidth="1.5" />
-          </svg>
-        </span>
+        <Tooltip content="No card stored">
+          <span className="flex-shrink-0 leading-none inline-flex">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
+              <rect x="1.5" y="3.5" width="13" height="9" rx="1.5" />
+              <path d="M1.5 6.5h13" />
+              <path d="M4 10h3" />
+              <path d="M13 2L3 14" strokeWidth="1.5" />
+            </svg>
+          </span>
+        </Tooltip>
       )}
     </>
   );

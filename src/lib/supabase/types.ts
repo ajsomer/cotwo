@@ -176,8 +176,7 @@ export interface RunsheetSummary {
 /** Badge config for a derived state. */
 export interface StatusBadgeConfig {
   label: string;
-  variant: 'red' | 'amber' | 'teal' | 'blue' | 'gray' | 'faded';
-  dotColor: string;
+  variant: 'red' | 'amber' | 'amber-soft' | 'teal' | 'teal-muted' | 'blue' | 'blue-muted' | 'gray' | 'gray-muted' | 'faded' | 'green';
 }
 
 /** Action button config for a derived state. */

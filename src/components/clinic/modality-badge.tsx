@@ -1,3 +1,5 @@
+import { Video, User } from "lucide-react";
+import { Tooltip } from "@/components/ui/tooltip";
 import type { AppointmentModality } from "@/lib/supabase/types";
 
 interface ModalityBadgeProps {
@@ -9,42 +11,19 @@ export function ModalityBadge({ modality }: ModalityBadgeProps) {
 
   if (modality === "telehealth") {
     return (
-      <span title="Telehealth" className="flex-shrink-0 leading-none inline-flex">
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="text-gray-400"
-        >
-          <rect x="1" y="3.5" width="10" height="7.5" rx="1.5" />
-          <path d="M11 6.5l3.5-2v7l-3.5-2" />
-        </svg>
-      </span>
+      <Tooltip content="Telehealth">
+        <span className="inline-flex items-center justify-center w-[26px] h-[26px] flex-shrink-0">
+          <Video size={15} className="text-gray-400" strokeWidth={1.75} />
+        </span>
+      </Tooltip>
     );
   }
 
   return (
-    <span title="In-person" className="flex-shrink-0 leading-none inline-flex">
-      <svg
-        width="14"
-        height="14"
-        viewBox="0 0 16 16"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className="text-gray-400"
-      >
-        <path d="M2 14V6l6-3.5L14 6v8" />
-        <path d="M6 14v-4h4v4" />
-        <path d="M2 14h12" />
-      </svg>
-    </span>
+    <Tooltip content="In-person">
+      <span className="inline-flex items-center justify-center w-[26px] h-[26px] flex-shrink-0">
+        <User size={15} className="text-gray-400" strokeWidth={1.75} />
+      </span>
+    </Tooltip>
   );
 }
