@@ -1,0 +1,2 @@
+-- Initial schema migration
+-- TODO: Create tables per data model in CLAUDE.md

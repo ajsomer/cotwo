@@ -1,0 +1,2 @@
+-- Seed data for development
+-- TODO: Sample org, location, rooms, users, appointment types
