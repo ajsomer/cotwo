@@ -6,11 +6,13 @@ import type { UserRole } from "@/lib/supabase/types";
 export interface RoleContextValue {
   role: UserRole | null;
   userId: string | null;
+  fullName: string | null;
 }
 
 export const RoleContext = createContext<RoleContextValue>({
   role: null,
   userId: null,
+  fullName: null,
 });
 
 export function useRole() {

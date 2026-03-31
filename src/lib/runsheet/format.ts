@@ -33,6 +33,21 @@ export function formatRelativeTime(date: Date, now: Date): string {
   return `${Math.abs(diffMin)} min ago`;
 }
 
+/** Format an Australian phone number for display. e.g. "+61450336880" -> "0450 336 880" */
+export function formatPhoneNumber(phone: string | null): string | null {
+  if (!phone) return null;
+  // Strip +61 prefix and leading zeros
+  const digits = phone.replace(/\D/g, '').replace(/^61/, '');
+  if (digits.length === 9) {
+    // Mobile: 0XXX XXX XXX
+    return `0${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}`;
+  }
+  if (digits.length === 10 && digits.startsWith('0')) {
+    return `${digits.slice(0, 4)} ${digits.slice(4, 7)} ${digits.slice(7)}`;
+  }
+  return phone;
+}
+
 /** Format today's date. e.g. "Monday 30 March 2026" */
 export function formatRunsheetDate(date: Date): string {
   return date.toLocaleDateString('en-AU', {

@@ -60,7 +60,7 @@ export default async function RunSheetPage() {
   ]);
 
   // For clinicians, also fetch their assigned room IDs
-  if (role === "clinician") {
+  if (role === "clinician" || role === "clinic_owner") {
     clinicianRoomIds = await fetchClinicianRoomIds(userId, locationId);
   }
 

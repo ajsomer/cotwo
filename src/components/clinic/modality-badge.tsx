@@ -13,7 +13,7 @@ export function ModalityBadge({ modality }: ModalityBadgeProps) {
     return (
       <Tooltip content="Telehealth">
         <span className="inline-flex items-center justify-center w-[26px] h-[26px] flex-shrink-0">
-          <Video size={15} className="text-gray-400" strokeWidth={1.75} />
+          <Video size={18} className="text-gray-400" strokeWidth={1.75} />
         </span>
       </Tooltip>
     );
@@ -22,7 +22,7 @@ export function ModalityBadge({ modality }: ModalityBadgeProps) {
   return (
     <Tooltip content="In-person">
       <span className="inline-flex items-center justify-center w-[26px] h-[26px] flex-shrink-0">
-        <User size={15} className="text-gray-400" strokeWidth={1.75} />
+        <User size={18} className="text-gray-400" strokeWidth={1.75} />
       </span>
     </Tooltip>
   );

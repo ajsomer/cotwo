@@ -6,7 +6,7 @@ export type Database = Record<string, never>;
 // Hand-written application types for the run sheet
 // ============================================================================
 
-export type UserRole = 'practice_manager' | 'receptionist' | 'clinician';
+export type UserRole = 'clinic_owner' | 'practice_manager' | 'receptionist' | 'clinician';
 export type RoomType = 'clinical' | 'reception' | 'shared' | 'triage';
 export type AppointmentModality = 'telehealth' | 'in_person';
 export type SessionStatus = 'queued' | 'waiting' | 'checked_in' | 'in_session' | 'complete' | 'done';

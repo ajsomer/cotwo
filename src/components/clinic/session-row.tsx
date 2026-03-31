@@ -4,8 +4,8 @@ import { StatusBadge } from "./status-badge";
 import { ModalityBadge } from "./modality-badge";
 import { ActionButton } from "./action-button";
 import { Tooltip } from "@/components/ui/tooltip";
-import { getRowBackground } from "@/lib/runsheet/derived-state";
-import { formatSessionTime, formatPatientName } from "@/lib/runsheet/format";
+import { getRowBorderColor } from "@/lib/runsheet/derived-state";
+import { formatSessionTime, formatPatientName, formatPhoneNumber } from "@/lib/runsheet/format";
 import type { EnrichedSession } from "@/lib/supabase/types";
 
 interface SessionRowProps {
@@ -15,17 +15,18 @@ interface SessionRowProps {
 }
 
 export function SessionRow({ session, onAction, onClick }: SessionRowProps) {
-  const bg = getRowBackground(session.derived_state);
+  const borderColor = getRowBorderColor(session.derived_state);
   const isDone = session.derived_state === "done";
   const patientName = formatPatientName(
     session.patient_first_name,
     session.patient_last_name
   );
   const time = formatSessionTime(session.scheduled_at);
+  const phone = formatPhoneNumber(session.phone_number);
 
   return (
     <div
-      className={`flex items-center px-6 py-1.5 border-b border-gray-200 last:border-b-0 transition-colors ${bg} ${isDone ? "opacity-40" : ""} ${onClick ? "cursor-pointer hover:bg-gray-50/50" : ""}`}
+      className={`flex items-stretch border-b border-gray-200 last:border-b-0 border-l-[3px] ${borderColor} transition-colors ${isDone ? "opacity-40" : ""} ${onClick ? "cursor-pointer hover:bg-gray-50/50" : ""}`}
       onClick={() => onClick?.(session.session_id)}
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}
@@ -36,46 +37,53 @@ export function SessionRow({ session, onAction, onClick }: SessionRowProps) {
         }
       }}
     >
-      {/* Time */}
-      <span className="text-sm text-gray-500 whitespace-nowrap w-[60px] flex-shrink-0 mr-5">
+      {/* Time column — full height, flush against left border */}
+      <span className="flex items-center justify-center w-[94px] flex-shrink-0 text-[13px] font-medium whitespace-nowrap bg-[#FAF9F7] text-[#5F5E5A]">
         {time}
       </span>
 
-      {/* Modality badge */}
-      <span className="mr-4">
-        <ModalityBadge modality={session.modality} />
-      </span>
+      {/* Content area */}
+      <div className="flex items-center flex-1 min-w-0 px-5 py-1.5">
+        {/* Modality badge */}
+        <span className="mr-4">
+          <ModalityBadge modality={session.modality} />
+        </span>
 
-      {/* Patient info: two lines */}
-      <div className="flex-1 min-w-0">
-        {/* Line 1: Patient name + readiness icons */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-base font-medium text-gray-800 truncate">
-            {patientName}
-          </span>
-          <ReadinessIcons session={session} />
+        {/* Patient info: two lines */}
+        <div className="flex-1 min-w-0">
+          {/* Line 1: Patient name + readiness icons */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-base font-medium text-gray-800 truncate">
+              {patientName}
+            </span>
+            <ReadinessIcons session={session} />
+          </div>
+          {/* Line 2: Phone · Appointment type */}
+          {(phone || session.type_name) && (
+            <p className="text-xs text-gray-500 truncate mt-0.5">
+              {phone}
+              {phone && session.type_name && (
+                <span className="text-[#B4B2A9] mx-1.5">&middot;</span>
+              )}
+              {session.type_name}
+            </p>
+          )}
         </div>
-        {/* Line 2: Appointment type */}
-        {session.type_name && (
-          <p className="text-sm text-gray-500 truncate mt-0.5">
-            {session.type_name}
-          </p>
-        )}
-      </div>
 
-      {/* Status badge */}
-      <div className="ml-3">
-        <StatusBadge state={session.derived_state} />
-      </div>
+        {/* Status badge */}
+        <div className="ml-3">
+          <StatusBadge state={session.derived_state} />
+        </div>
 
-      {/* Action */}
-      <div className="ml-2">
-        <ActionButton
-        state={session.derived_state}
-        modality={session.modality}
-        sessionId={session.session_id}
-        onAction={onAction}
-      />
+        {/* Action */}
+        <div className="ml-2">
+          <ActionButton
+            state={session.derived_state}
+            modality={session.modality}
+            sessionId={session.session_id}
+            onAction={onAction}
+          />
+        </div>
       </div>
     </div>
   );

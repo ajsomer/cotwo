@@ -40,6 +40,7 @@ interface RoomContainerProps {
   onAction: (sessionId: string, action: string) => void;
   onSessionClick?: (sessionId: string) => void;
   singleRoom?: boolean;
+  totalRooms?: number;
 }
 
 export function RoomContainer({
@@ -48,8 +49,10 @@ export function RoomContainer({
   onAction,
   onSessionClick,
   singleRoom = false,
+  totalRooms = 1,
 }: RoomContainerProps) {
-  const autoState = getRoomExpansionState(group.sessions);
+  const isOnlyRoom = totalRooms === 1;
+  const autoState = isOnlyRoom ? "fully-expanded" : getRoomExpansionState(group.sessions);
   const [expansion, setExpansion] = useState<RoomExpansionState>(autoState);
   const [manualOverride, setManualOverride] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -281,7 +284,7 @@ export function RoomContainer({
         </div>
       )}
 
-      {/* Show all / Show less toggle */}
+      {/* Expand / collapse toggle */}
       {expansion === "auto-expanded" && hiddenCount > 0 && (
         <button
           onClick={(e) => {
@@ -289,9 +292,9 @@ export function RoomContainer({
             setManualOverride(true);
             setExpansion("fully-expanded");
           }}
-          className="w-full px-6 py-1.5 text-xs text-gray-500 hover:bg-gray-50 border-t border-gray-200 transition-colors"
+          className="w-full py-1 text-[11px] text-gray-500 hover:bg-gray-50 border-t border-gray-200 transition-colors text-center"
         >
-          Show all ({group.counts.total} sessions)
+          show all
         </button>
       )}
       {expansion === "fully-expanded" && attentionSessions.length > 0 && attentionSessions.length < group.sessions.length && (
@@ -301,17 +304,33 @@ export function RoomContainer({
             setManualOverride(true);
             setExpansion("auto-expanded");
           }}
-          className="w-full px-6 py-1.5 text-xs text-gray-500 hover:bg-gray-50 border-t border-gray-200 transition-colors"
+          className="w-full py-1 text-[11px] text-gray-500 hover:bg-gray-50 border-t border-gray-200 transition-colors text-center"
         >
-          Show less
+          show less
         </button>
       )}
 
       {/* Empty state */}
       {expansion !== "collapsed" && group.sessions.length === 0 && (
-        <p className="p-4 text-center text-sm text-gray-500 border-t border-gray-200">
-          No sessions
-        </p>
+        <div className="p-8 text-center border-t border-gray-200">
+          <svg
+            width="32"
+            height="32"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="mx-auto mb-3 text-gray-300"
+          >
+            <rect x="3" y="4" width="18" height="18" rx="2" />
+            <path d="M16 2v4M8 2v4M3 10h18M12 14v4M10 16h4" />
+          </svg>
+          <p className="text-sm text-gray-500">
+            No sessions today. Click <span className="font-medium text-gray-700">+ Add session</span> to schedule your first patient.
+          </p>
+        </div>
       )}
     </div>
   );

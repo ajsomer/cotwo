@@ -13,6 +13,7 @@ interface StaffAssignmentData {
   org: Organisation;
   role: UserRole;
   userId: string;
+  fullName: string;
 }
 
 interface ClinicProvidersProps {
@@ -67,6 +68,7 @@ export function ClinicProviders({
     () => ({
       role: devRole ?? currentAssignment?.role ?? null,
       userId: devUserId ?? currentAssignment?.userId ?? null,
+      fullName: currentAssignment?.fullName ?? null,
     }),
     [currentAssignment, devRole, devUserId]
   );

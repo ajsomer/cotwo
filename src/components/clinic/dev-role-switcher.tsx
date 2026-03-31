@@ -9,6 +9,11 @@ interface DevRoleSwitcherProps {
 
 const DEV_USERS: Array<{ label: string; role: UserRole; userId: string }> = [
   {
+    label: "Owner",
+    role: "clinic_owner",
+    userId: "00000000-0000-0000-0000-000000001001",
+  },
+  {
     label: "Receptionist",
     role: "receptionist",
     userId: "00000000-0000-0000-0000-000000001001",

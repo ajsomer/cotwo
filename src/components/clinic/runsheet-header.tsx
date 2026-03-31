@@ -40,7 +40,7 @@ export function RunsheetHeader({
 
   return (
     <div className="flex items-center bg-white rounded-xl border border-gray-200 px-6 py-2.5">
-      {/* Lightning bolt + bulk actions */}
+      {/* Left: lightning bolt + seed */}
       <div className="flex items-center gap-2">
         <Zap
           size={16}
@@ -48,17 +48,22 @@ export function RunsheetHeader({
           fill={hasActions ? "currentColor" : "none"}
           strokeWidth={2}
         />
+        {onSeed && (
+          <button
+            onClick={onSeed}
+            disabled={isSeeding}
+            className="px-2.5 py-1.5 text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50 transition-colors"
+          >
+            {isSeeding ? "Seeding..." : "Seed data"}
+          </button>
+        )}
+      </div>
 
-        {hasLate && (
-          <Button variant="danger" size="sm" onClick={onBulkCall}>
-            Call now ({summary.late})
-          </Button>
-        )}
-        {hasUpcoming && (
-          <Button variant="accent" size="sm" onClick={onBulkNudge}>
-            Nudge ({summary.upcoming})
-          </Button>
-        )}
+      {/* Spacer */}
+      <div className="flex-1" />
+
+      {/* Right: bulk actions + add session */}
+      <div className="flex items-center gap-2 flex-shrink-0">
         {hasComplete && (
           <Button
             variant="blue"
@@ -68,21 +73,18 @@ export function RunsheetHeader({
             Bulk process ({summary.complete})
           </Button>
         )}
-      </div>
-
-      {/* Spacer */}
-      <div className="flex-1" />
-
-      {/* Right: seed + add session */}
-      <div className="flex items-center gap-2 flex-shrink-0">
-        {onSeed && (
-          <button
-            onClick={onSeed}
-            disabled={isSeeding}
-            className="px-2.5 py-1.5 text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50 transition-colors"
-          >
-            {isSeeding ? "Seeding..." : "Seed data"}
-          </button>
+        {hasUpcoming && (
+          <Button variant="accent" size="sm" onClick={onBulkNudge}>
+            Nudge ({summary.upcoming})
+          </Button>
+        )}
+        {hasLate && (
+          <Button variant="danger" size="sm" onClick={onBulkCall}>
+            Call now ({summary.late})
+          </Button>
+        )}
+        {showAddButton && hasActions && (
+          <div className="w-px h-5 bg-gray-200" />
         )}
         {showAddButton && (
           <Button size="sm" onClick={onAddSession}>+ Add session</Button>

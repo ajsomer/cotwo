@@ -63,9 +63,9 @@ export function RunsheetShell({
   useTabNotifications(summary);
   useFaviconBadge(summary);
 
-  const isReceptionist = role === "receptionist" || role === "practice_manager";
-  const isClinician = role === "clinician";
-  const singleRoom = isClinician && visibleRooms.length === 1;
+  const isReceptionist = role === "receptionist" || role === "practice_manager" || role === "clinic_owner";
+  const isClinician = role === "clinician" || role === "clinic_owner";
+  const singleRoom = false;
 
   // Seed state
   const [isSeeding, startSeeding] = useTransition();
@@ -214,6 +214,7 @@ export function RunsheetShell({
             onAction={handleAction}
             onSessionClick={handleSessionClick}
             singleRoom={singleRoom}
+            totalRooms={groups.length}
           />
         ))}
 
@@ -230,18 +231,6 @@ export function RunsheetShell({
           </div>
         )}
 
-        {summary.total === 0 && groups.length > 0 && (
-          <div className="bg-white rounded-xl border border-gray-200 p-12 text-center space-y-4">
-            <p className="text-gray-500">No sessions today. Seed some demo data to get started.</p>
-            <button
-              onClick={handleSeed}
-              disabled={isSeeding}
-              className="inline-flex items-center gap-2 rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 disabled:opacity-50 transition-colors"
-            >
-              {isSeeding ? "Seeding..." : "Seed demo data"}
-            </button>
-          </div>
-        )}
       </div>
 
       {ProcessFlow}

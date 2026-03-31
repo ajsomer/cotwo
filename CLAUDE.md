@@ -172,7 +172,8 @@ Available from `complete` status (both modalities) and from `checked_in` status 
 
 ### Roles
 
-- **Practice Manager / Owner**: Full admin. Org and location config. Workflow templates, form builder, user management, payment settings.
+- **Clinic Owner**: The first user who signs up. A practising clinician who also owns and administers the clinic. Paid seat. Has all Practice Manager permissions plus clinician capabilities (appears on run sheet, assigned to rooms, starts calls) and account ownership (billing, subscription). One per organisation.
+- **Practice Manager**: Non-clinical admin. Full platform configuration (workflows, forms, rooms, team). Free seat. Does not appear on run sheet as a provider. Same admin permissions as Clinic Owner minus clinician and account ownership.
 - **Receptionist**: Day-to-day operations. Run sheet, payments, outcome pathway selection. Cannot modify platform config.
 - **Clinician**: Session-level access. Starts telehealth calls from run sheet. Preference-level settings only.
 
@@ -236,10 +237,45 @@ Organisation → Location → Clinician. Org sets defaults. Location can overrid
 ### Payments
 - `payments` (appointment_id, patient_id, amount_cents, status, stripe_payment_intent_id, stripe_account_id)
 
+## Auth Model
+
+### Identity Chain
+
+`auth.users` (Supabase) → `users` (`users.id = auth.users.id`) → `staff_assignments` (role, location) → `clinician_room_assignments` (room access)
+
+The `users.id` column IS the `auth.users.id` UUID. No separate `auth_id` column. `auth.uid()` in RLS policies matches `users.id` directly.
+
+### User Record Creation
+
+A database trigger on `auth.users` automatically creates the `users` record on sign-up. The `signUp()` call passes `full_name` in `options.data` (stored in `raw_user_meta_data`). The trigger reads it from there.
+
+### Session Management
+
+Supabase Auth sessions are managed via cookies (`@supabase/ssr`). The Next.js middleware calls `supabase.auth.getUser()` on every request to validate the JWT server-side and refresh tokens. Always use `getUser()` (not `getSession()`) for server-side validation — `getSession()` reads from the cookie without revalidating.
+
+### Route Protection (Progressive Gate)
+
+The middleware enforces setup prerequisites. Abandoned setup resumes on next login.
+
+- No auth session → redirect to `/login` (patient routes exempt)
+- Authenticated, no org → redirect to `/setup/clinic`
+- Authenticated, has org, no rooms → redirect to `/setup/rooms`
+- Authenticated, complete setup → allow clinic routes
+- Authenticated, visits `/login` or `/signup` → redirect to appropriate destination
+
+### Staff Assignments and Org Resolution
+
+`staff_assignments` has no `org_id` column. The org is always derived via `locations.org_id`. Queries that need org context join through `locations`.
+
+### Prototype Auth Configuration
+
+- Email confirmation disabled (Supabase Dashboard > Auth > Providers > Email). Enables seamless sign-up-to-setup flow.
+- Service role client (`SUPABASE_SERVICE_ROLE_KEY`) bypasses RLS for admin operations during setup and patient-facing API routes.
+
 ## Key Enums
 
 ```sql
-user_role: practice_manager, receptionist, clinician
+user_role: clinic_owner, practice_manager, receptionist, clinician
 employment_type: full_time, part_time
 room_type: clinical, reception, shared, triage
 appointment_modality: telehealth, in_person
@@ -312,6 +348,13 @@ src/
     (auth)/
       login/page.tsx
       signup/page.tsx
+      auth/
+        callback/route.ts          # PKCE token exchange (password reset, email confirm)
+        reset-password/page.tsx    # New password form after reset link
+    (setup)/
+      setup/clinic/page.tsx        # Create org + location (step 1)
+      setup/rooms/page.tsx         # Create rooms (step 2)
+      layout.tsx                   # Centred card layout with step indicator
     (clinic)/
       runsheet/page.tsx
       readiness/page.tsx

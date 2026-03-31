@@ -76,9 +76,27 @@ export function enrichSessions(
   return sessions.map((s) => enrichSession(s, now));
 }
 
-/** Row background class for a derived state. */
-export function getRowBackground(_state: DerivedDisplayState): string {
-  return '';
+/** Left border colour class for a derived state. */
+export function getRowBorderColor(state: DerivedDisplayState): string {
+  switch (state) {
+    case 'late':
+      return 'border-l-red-500';
+    case 'upcoming':
+      return 'border-l-amber-500';
+    case 'waiting':
+    case 'checked_in':
+      return 'border-l-amber-500';
+    case 'in_session':
+    case 'running_over':
+      return 'border-l-teal-500/60';
+    case 'complete':
+      return 'border-l-blue-500/60';
+    case 'done':
+      return 'border-l-gray-200';
+    case 'queued':
+    default:
+      return 'border-l-gray-200';
+  }
 }
 
 /** Badge configuration for each derived state. */
@@ -95,7 +113,7 @@ export function getStatusBadgeConfig(state: DerivedDisplayState): StatusBadgeCon
     case 'in_session':
       return { label: 'In session', variant: 'teal-muted' };
     case 'running_over':
-      return { label: 'Running over', variant: 'gray-muted' };
+      return { label: 'Running over', variant: 'teal-muted' };
     case 'complete':
       return { label: 'Complete', variant: 'blue-muted' };
     case 'done':
