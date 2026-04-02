@@ -14,13 +14,19 @@ export function formatCurrency(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
-/** Format patient name. e.g. "Sarah Johnson" */
+/** Format patient name, falling back to phone number if no name is known yet. */
 export function formatPatientName(
   firstName: string | null,
-  lastName: string | null
+  lastName: string | null,
+  phoneNumber?: string | null
 ): string {
-  if (!firstName && !lastName) return 'Unknown patient';
-  return [firstName, lastName].filter(Boolean).join(' ');
+  if (firstName || lastName) {
+    return [firstName, lastName].filter(Boolean).join(' ');
+  }
+  if (phoneNumber) {
+    return formatPhoneNumber(phoneNumber) ?? phoneNumber;
+  }
+  return 'Unknown patient';
 }
 
 /** Format a relative time like "5 min ago" or "in 10 min". */

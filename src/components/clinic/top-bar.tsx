@@ -28,13 +28,9 @@ export function TopBar() {
         </span>
       </div>
 
-      {/* Right: location switcher */}
-      <div className="flex items-center">
-        {locations.length <= 1 ? (
-          <span className="text-sm text-gray-500">
-            {selectedLocation?.name ?? "No location"}
-          </span>
-        ) : (
+      {/* Right: location switcher (only shown for multi-location orgs) */}
+      {locations.length > 1 && (
+        <div className="flex items-center">
           <div className="relative">
             <select
               value={selectedLocation?.id ?? ""}
@@ -57,8 +53,8 @@ export function TopBar() {
               <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
             </svg>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -59,8 +59,9 @@ export default async function RunSheetPage() {
     fetchLocationRooms(locationId),
   ]);
 
-  // For clinicians, also fetch their assigned room IDs
-  if (role === "clinician" || role === "clinic_owner") {
+  // For clinicians, fetch their assigned room IDs to filter the run sheet.
+  // clinic_owner sees all rooms (has practice manager permissions).
+  if (role === "clinician") {
     clinicianRoomIds = await fetchClinicianRoomIds(userId, locationId);
   }
 

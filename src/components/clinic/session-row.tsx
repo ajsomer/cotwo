@@ -1,11 +1,10 @@
 "use client";
 
 import { StatusBadge } from "./status-badge";
-import { ModalityBadge } from "./modality-badge";
 import { ActionButton } from "./action-button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { getRowBorderColor } from "@/lib/runsheet/derived-state";
-import { formatSessionTime, formatPatientName, formatPhoneNumber } from "@/lib/runsheet/format";
+import { formatSessionTime, formatPatientName } from "@/lib/runsheet/format";
 import type { EnrichedSession } from "@/lib/supabase/types";
 
 interface SessionRowProps {
@@ -19,10 +18,10 @@ export function SessionRow({ session, onAction, onClick }: SessionRowProps) {
   const isDone = session.derived_state === "done";
   const patientName = formatPatientName(
     session.patient_first_name,
-    session.patient_last_name
+    session.patient_last_name,
+    session.phone_number
   );
   const time = formatSessionTime(session.scheduled_at);
-  const phone = formatPhoneNumber(session.phone_number);
 
   return (
     <div
@@ -42,41 +41,36 @@ export function SessionRow({ session, onAction, onClick }: SessionRowProps) {
         {time}
       </span>
 
-      {/* Content area */}
-      <div className="flex items-center flex-1 min-w-0 px-5 py-1.5">
-        {/* Modality badge */}
-        <span className="mr-4">
-          <ModalityBadge modality={session.modality} />
+      {/* Single-line content area — fixed height for consistency */}
+      <div className="flex items-center flex-1 min-w-0 px-5 h-12">
+        {/* Patient name */}
+        <span className="text-[14px] font-semibold text-gray-800 truncate leading-none">
+          {patientName}
         </span>
 
-        {/* Patient info: two lines */}
-        <div className="flex-1 min-w-0">
-          {/* Line 1: Patient name + readiness icons */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-base font-medium text-gray-800 truncate">
-              {patientName}
-            </span>
-            <ReadinessIcons session={session} />
-          </div>
-          {/* Line 2: Phone · Appointment type */}
-          {(phone || session.type_name) && (
-            <p className="text-xs text-gray-500 truncate mt-0.5">
-              {phone}
-              {phone && session.type_name && (
-                <span className="text-[#B4B2A9] mx-1.5">&middot;</span>
-              )}
-              {session.type_name}
-            </p>
-          )}
-        </div>
+        {/* Card indicator */}
+        <CardIndicator hasCard={session.has_card_on_file} />
+
+        <span className="mx-2 text-gray-300 leading-none flex-shrink-0">&middot;</span>
 
         {/* Status badge */}
-        <div className="ml-3">
-          <StatusBadge state={session.derived_state} />
-        </div>
+        <StatusBadge state={session.derived_state} className="flex-shrink-0" />
 
-        {/* Action */}
-        <div className="ml-2">
+        {/* Appointment type */}
+        {session.type_name && (
+          <>
+            <span className="mx-2 text-gray-300 leading-none flex-shrink-0">&middot;</span>
+            <span className="text-xs text-gray-500 truncate flex-shrink min-w-0 leading-none">
+              {session.type_name}
+            </span>
+          </>
+        )}
+
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* Action button */}
+        <div className="ml-2 flex-shrink-0">
           <ActionButton
             state={session.derived_state}
             modality={session.modality}
@@ -89,35 +83,31 @@ export function SessionRow({ session, onAction, onClick }: SessionRowProps) {
   );
 }
 
-function ReadinessIcons({ session }: { session: EnrichedSession }) {
-  if (session.derived_state === "done" || session.derived_state === "queued") {
-    return null;
+function CardIndicator({ hasCard }: { hasCard: boolean }) {
+  if (hasCard) {
+    return (
+      <Tooltip content="Card on file">
+        <span className="ml-2 flex-shrink-0 inline-flex items-center">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-green-500">
+            <rect x="1.5" y="3.5" width="13" height="9" rx="1.5" />
+            <path d="M1.5 6.5h13" />
+            <path d="M4 10h3" />
+          </svg>
+        </span>
+      </Tooltip>
+    );
   }
 
   return (
-    <>
-      {session.has_card_on_file ? (
-        <Tooltip content="Card on file">
-          <span className="flex-shrink-0 leading-none inline-flex">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-green-500">
-              <rect x="1.5" y="3.5" width="13" height="9" rx="1.5" />
-              <path d="M1.5 6.5h13" />
-              <path d="M4 10h3" />
-            </svg>
-          </span>
-        </Tooltip>
-      ) : (
-        <Tooltip content="No card stored">
-          <span className="flex-shrink-0 leading-none inline-flex">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
-              <rect x="1.5" y="3.5" width="13" height="9" rx="1.5" />
-              <path d="M1.5 6.5h13" />
-              <path d="M4 10h3" />
-              <path d="M13 2L3 14" strokeWidth="1.5" />
-            </svg>
-          </span>
-        </Tooltip>
-      )}
-    </>
+    <Tooltip content="No card stored">
+      <span className="ml-2 flex-shrink-0 inline-flex items-center">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
+          <rect x="1.5" y="3.5" width="13" height="9" rx="1.5" />
+          <path d="M1.5 6.5h13" />
+          <path d="M4 10h3" />
+          <path d="M13 2L3 14" strokeWidth="1.5" />
+        </svg>
+      </span>
+    </Tooltip>
   );
 }

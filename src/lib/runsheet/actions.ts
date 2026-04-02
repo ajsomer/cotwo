@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { getSmsProvider } from "@/lib/sms";
 
 /** Call a late patient — logs to console for prototype. */
 export async function callPatient(sessionId: string) {
@@ -61,9 +62,16 @@ export async function nudgePatient(sessionId: string) {
   const appointment = session.appointments as unknown as Record<string, unknown> | null;
   const phone = appointment?.phone_number as string | null;
 
-  console.log(
-    `[NUDGE] Would resend join notification SMS to ${phone ?? "unknown"} for session ${sessionId}`
-  );
+  // Send nudge SMS via provider
+  if (phone && session.entry_token) {
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const entryLink = `${appUrl}/entry/${session.entry_token}`;
+    const sms = getSmsProvider();
+    await sms.sendNotification(
+      phone,
+      `Reminder: Your appointment is coming up. Join here: ${entryLink}`
+    );
+  }
 
   // Update notification_sent_at to track the nudge
   await supabase

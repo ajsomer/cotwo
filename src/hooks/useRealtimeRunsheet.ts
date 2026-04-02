@@ -15,6 +15,7 @@ interface UseRealtimeRunsheetOptions {
 interface UseRealtimeRunsheetResult {
   sessions: RunsheetSession[];
   connectionStatus: ConnectionStatus;
+  refetch: () => Promise<void>;
 }
 
 export function useRealtimeRunsheet({
@@ -25,7 +26,23 @@ export function useRealtimeRunsheet({
   const [connectionStatus, setConnectionStatus] =
     useState<ConnectionStatus>("connecting");
   const channelRef = useRef<RealtimeChannel | null>(null);
+  const participantsChannelRef = useRef<RealtimeChannel | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Full refetch of run sheet data
+  const refetch = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `/api/runsheet?locationId=${locationId}&_t=${Date.now()}`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setSessions(data.sessions);
+      }
+    } catch {
+      // Silent fail — will retry on next trigger
+    }
+  }, [locationId]);
 
   // Merge a realtime update into the sessions array
   const mergeSession = useCallback(
@@ -37,17 +54,22 @@ export function useRealtimeRunsheet({
       const updated = payload.new;
       const sessionId = updated.id as string;
 
+      // Check if this session belongs to our location
+      if (updated.location_id !== locationId) return;
+
+      if (payload.eventType === "INSERT") {
+        // New session — refetch to get full joined data
+        refetch();
+        return;
+      }
+
+      if (payload.eventType === "DELETE") {
+        setSessions((prev) => prev.filter((s) => s.session_id !== (payload.old.id as string)));
+        return;
+      }
+
       setSessions((prev) => {
-        // Check if this session belongs to our location
-        if (updated.location_id !== locationId) return prev;
-
         const idx = prev.findIndex((s) => s.session_id === sessionId);
-        if (idx === -1 && payload.eventType === "INSERT") {
-          // New session — we don't have all joins, so trigger a full refetch
-          // For now, add a partial record; the next polling cycle will fill in details
-          return prev;
-        }
-
         if (idx === -1) return prev;
 
         // Update in place
@@ -66,13 +88,14 @@ export function useRealtimeRunsheet({
         return next;
       });
     },
-    [locationId]
+    [locationId, refetch]
   );
 
-  // Subscribe to realtime channel
+  // Subscribe to realtime channels
   useEffect(() => {
     const supabase = createClient();
 
+    // Channel 1: session changes
     const channel = supabase
       .channel(`runsheet:${locationId}`)
       .on(
@@ -94,7 +117,6 @@ export function useRealtimeRunsheet({
       .subscribe((status) => {
         if (status === "SUBSCRIBED") {
           setConnectionStatus("connected");
-          // Clear polling fallback when connected
           if (pollingRef.current) {
             clearInterval(pollingRef.current);
             pollingRef.current = null;
@@ -107,8 +129,28 @@ export function useRealtimeRunsheet({
 
     channelRef.current = channel;
 
+    // Channel 2: session_participants changes (patient name linked after identity step)
+    const participantsChannel = supabase
+      .channel(`runsheet-participants:${locationId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "session_participants",
+        },
+        () => {
+          // A patient was linked/unlinked — refetch to get updated names
+          refetch();
+        }
+      )
+      .subscribe();
+
+    participantsChannelRef.current = participantsChannel;
+
     return () => {
       channel.unsubscribe();
+      participantsChannel.unsubscribe();
       if (pollingRef.current) {
         clearInterval(pollingRef.current);
       }
@@ -125,20 +167,10 @@ export function useRealtimeRunsheet({
   const startPollingFallback = useCallback(() => {
     if (pollingRef.current) return;
 
-    pollingRef.current = setInterval(async () => {
-      try {
-        const res = await fetch(
-          `/api/runsheet?locationId=${locationId}&_t=${Date.now()}`
-        );
-        if (res.ok) {
-          const data = await res.json();
-          setSessions(data.sessions);
-        }
-      } catch {
-        // Silent fail, will retry next interval
-      }
+    pollingRef.current = setInterval(() => {
+      refetch();
     }, 30_000);
-  }, [locationId]);
+  }, [refetch]);
 
-  return { sessions, connectionStatus };
+  return { sessions, connectionStatus, refetch };
 }

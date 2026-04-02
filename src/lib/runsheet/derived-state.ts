@@ -29,7 +29,7 @@ export function getDerivedState(
 
   // status === 'queued'
   if (isLate(session, now)) return 'late';
-  if (isUpcoming(session)) return 'upcoming';
+  if (isUpcoming(session, now)) return 'upcoming';
   return 'queued';
 }
 
@@ -40,13 +40,14 @@ export function isLate(session: RunsheetSession, now: Date): boolean {
   return now > scheduledTime && session.status === 'queued';
 }
 
-/** Session is upcoming: notification sent, patient hasn't arrived, within window. */
-export function isUpcoming(session: RunsheetSession): boolean {
-  return (
-    session.status === 'queued' &&
-    session.notification_sent &&
-    !session.patient_arrived
-  );
+/** Session is upcoming: within 10 minutes of scheduled time, patient hasn't arrived. */
+export function isUpcoming(session: RunsheetSession, now: Date): boolean {
+  if (session.status !== 'queued' || session.patient_arrived || !session.scheduled_at) {
+    return false;
+  }
+  const scheduledTime = new Date(session.scheduled_at);
+  const minutesUntil = (scheduledTime.getTime() - now.getTime()) / 60_000;
+  return minutesUntil > 0 && minutesUntil <= 10;
 }
 
 /** Session is running over: in_session and past scheduled_at + duration. */
@@ -150,12 +151,5 @@ export function getActionConfig(
 
 /** Whether a derived state is an "attention" state that triggers auto-expand. */
 export function isAttentionState(state: DerivedDisplayState): boolean {
-  return (
-    state === 'late' ||
-    state === 'upcoming' ||
-    state === 'waiting' ||
-    state === 'checked_in' ||
-    state === 'running_over' ||
-    state === 'complete'
-  );
+  return state !== 'queued' && state !== 'done';
 }

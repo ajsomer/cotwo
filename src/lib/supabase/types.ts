@@ -185,3 +185,64 @@ export type ActionConfig = {
   variant: 'red' | 'amber' | 'teal' | 'blue';
   action: 'call' | 'nudge' | 'admit' | 'process';
 } | null;
+
+// ============================================================================
+// Patient Entry Flow Types
+// ============================================================================
+
+/** The type of token used to enter the patient flow. */
+export type EntryType = 'session' | 'on_demand' | 'qr_code';
+
+/** Context resolved from the entry token. */
+export interface EntryContext {
+  entry_type: EntryType;
+  org: { id: string; name: string; logo_url: string | null; tier: OrgTier };
+  location: { id: string; name: string; stripe_account_id: string | null };
+  room: { id: string; name: string; room_type: RoomType } | null;
+  session: {
+    id: string;
+    entry_token: string;
+    status: SessionStatus;
+    appointment_id: string | null;
+    scheduled_at: string | null;
+    phone_number: string | null;
+    clinician_name: string | null;
+  } | null;
+  payments_enabled: boolean;
+}
+
+/** State tracked as the patient progresses through the flow. */
+export interface PatientFlowState {
+  current_step: number;
+  total_steps: number;
+  phone_verified: boolean;
+  phone_number: string | null;
+  verification_id: string | null;
+  patient_id: string | null;
+  patient_name: string | null;
+  identity_confirmed: boolean;
+  card_on_file: boolean;
+  card_last_four: string | null;
+  card_brand: string | null;
+  device_tested: boolean;
+  session_id: string | null;
+}
+
+/** Patient contact returned during identity step. */
+export interface PatientContact {
+  id: string;
+  first_name: string;
+  last_name: string;
+  date_of_birth: string | null;
+}
+
+/** Phone verification record. */
+export interface PhoneVerification {
+  id: string;
+  phone_number: string;
+  code: string;
+  expires_at: string;
+  verified_at: string | null;
+  session_id: string | null;
+  created_at: string;
+}

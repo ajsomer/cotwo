@@ -1,37 +1,19 @@
+import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { EntryContext } from '@/lib/supabase/types';
-import { EntryFlowClient } from './entry-flow-client';
 
-export default async function EntryPage({
-  params,
-}: {
-  params: Promise<{ token: string }>;
-}) {
-  const { token } = await params;
+/**
+ * POST /api/patient/resolve
+ * Resolves an entry token to full context (org, location, room, session).
+ * Checks sessions.entry_token → rooms.link_token → locations.qr_token in order.
+ */
+export async function POST(request: NextRequest) {
+  const { token } = await request.json();
 
-  const context = await resolveToken(token);
-
-  if (!context) {
-    return (
-      <div className="flex flex-col items-center py-12 text-center">
-        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-50">
-          <span className="text-lg text-red-500">!</span>
-        </div>
-        <h1 className="text-xl font-semibold text-gray-800">
-          Link not found
-        </h1>
-        <p className="mt-2 text-sm text-gray-500">
-          This link has expired or is no longer valid. Please contact your
-          clinic for a new link.
-        </p>
-      </div>
-    );
+  if (!token || typeof token !== 'string') {
+    return NextResponse.json({ error: 'Token is required' }, { status: 400 });
   }
 
-  return <EntryFlowClient context={context} token={token} />;
-}
-
-async function resolveToken(token: string): Promise<EntryContext | null> {
   const supabase = createServiceClient();
 
   // 1. Check sessions.entry_token (SMS link entry)
@@ -58,7 +40,7 @@ async function resolveToken(token: string): Promise<EntryContext | null> {
     const org = location.organisations as any;
     const appointment = session.appointments as any;
 
-    return {
+    const context: EntryContext = {
       entry_type: 'session',
       org: { id: org.id, name: org.name, logo_url: org.logo_url, tier: org.tier },
       location: { id: location.id, name: location.name, stripe_account_id: location.stripe_account_id },
@@ -74,6 +56,8 @@ async function resolveToken(token: string): Promise<EntryContext | null> {
       },
       payments_enabled: !!location.stripe_account_id,
     };
+
+    return NextResponse.json({ context });
   }
 
   // 2. Check rooms.link_token (on-demand entry)
@@ -92,7 +76,7 @@ async function resolveToken(token: string): Promise<EntryContext | null> {
     const location = (room as any).locations as any;
     const org = location.organisations as any;
 
-    return {
+    const context: EntryContext = {
       entry_type: 'on_demand',
       org: { id: org.id, name: org.name, logo_url: org.logo_url, tier: org.tier },
       location: { id: location.id, name: location.name, stripe_account_id: location.stripe_account_id },
@@ -100,9 +84,11 @@ async function resolveToken(token: string): Promise<EntryContext | null> {
       session: null,
       payments_enabled: !!location.stripe_account_id,
     };
+
+    return NextResponse.json({ context });
   }
 
-  // 3. Check locations.qr_token (QR code — deferred but resolve works)
+  // 3. Check locations.qr_token (QR code entry — deferred but resolve works)
   const { data: location } = await supabase
     .from('locations')
     .select(`
@@ -115,7 +101,7 @@ async function resolveToken(token: string): Promise<EntryContext | null> {
   if (location) {
     const org = (location as any).organisations as any;
 
-    return {
+    const context: EntryContext = {
       entry_type: 'qr_code',
       org: { id: org.id, name: org.name, logo_url: org.logo_url, tier: org.tier },
       location: { id: location.id, name: location.name, stripe_account_id: location.stripe_account_id },
@@ -123,7 +109,13 @@ async function resolveToken(token: string): Promise<EntryContext | null> {
       session: null,
       payments_enabled: !!location.stripe_account_id,
     };
+
+    return NextResponse.json({ context });
   }
 
-  return null;
+  // 4. No match
+  return NextResponse.json(
+    { error: 'This link has expired or is no longer valid.' },
+    { status: 404 }
+  );
 }

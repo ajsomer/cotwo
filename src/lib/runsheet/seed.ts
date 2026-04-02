@@ -1,16 +1,16 @@
 "use server";
 
 import { createClient as createServerClient } from "@supabase/supabase-js";
+import { createClient } from "@/lib/supabase/server";
 
 /**
  * Seeds the database with demo data for the run sheet.
  * Uses the service role client to bypass RLS.
  *
- * Time-aware: generates a realistic day based on the current time.
- * Past slots are mostly done, with one outstanding action per room.
- * Future slots are upcoming/queued.
- *
- * Does NOT create rooms — reads whatever rooms exist at the location.
+ * Resolves the authenticated user's org and location dynamically.
+ * Does NOT create or modify rooms, org, location, users, or staff assignments.
+ * Only populates session-related data (patients, appointments, sessions, etc.)
+ * for whatever rooms already exist at the user's location.
  */
 export async function seedDemoData() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -20,11 +20,46 @@ export async function seedDemoData() {
     return { success: false, error: "Missing SUPABASE_SERVICE_ROLE_KEY" };
   }
 
+  // Get the authenticated user's org and location
+  const authClient = await createClient();
+  const {
+    data: { user },
+  } = await authClient.auth.getUser();
+
+  if (!user) {
+    return { success: false, error: "Not authenticated" };
+  }
+
   const supabase = createServerClient(supabaseUrl, serviceRoleKey);
 
-  const ORG_ID = "00000000-0000-0000-0000-000000000001";
-  const LOCATION_ID = "00000000-0000-0000-0000-000000000010";
-  const TIMEZONE = "Australia/Sydney";
+  // Resolve the user's staff assignment to find their org and location
+  const { data: assignment, error: assignmentError } = await supabase
+    .from("staff_assignments")
+    .select(`
+      location_id,
+      locations!inner (
+        id,
+        org_id,
+        timezone,
+        organisations!inner (
+          id,
+          timezone
+        )
+      )
+    `)
+    .eq("user_id", user.id)
+    .limit(1)
+    .single();
+
+  if (assignmentError || !assignment) {
+    return { success: false, error: "No staff assignment found. Complete clinic setup first." };
+  }
+
+  const loc = assignment.locations as unknown as Record<string, unknown>;
+  const org = loc.organisations as unknown as Record<string, unknown>;
+  const LOCATION_ID = loc.id as string;
+  const ORG_ID = org.id as string;
+  const TIMEZONE = (loc.timezone as string) ?? "Australia/Sydney";
 
   try {
     // Clean existing session data (preserves rooms, org, location, staff)
@@ -37,30 +72,7 @@ export async function seedDemoData() {
     await supabase.from("patients").delete().neq("id", "00000000-0000-0000-0000-000000000000");
     await supabase.from("outcome_pathways").delete().neq("id", "00000000-0000-0000-0000-000000000000");
 
-    // Upsert reference data
-    await supabase.from("organisations").upsert({
-      id: ORG_ID, name: "Sunrise Allied Health", slug: "sunrise-allied",
-      tier: "complete", timezone: TIMEZONE,
-    });
-
-    await supabase.from("locations").upsert({
-      id: LOCATION_ID, org_id: ORG_ID, name: "Bondi Junction Clinic",
-      address: "123 Oxford St, Bondi Junction NSW 2022", timezone: TIMEZONE,
-      qr_token: "qr-bondi-junction", stripe_account_id: "acct_test_bondi",
-    });
-
-    await supabase.from("users").upsert([
-      { id: "00000000-0000-0000-0000-000000001001", email: "sarah@sunrise.com.au", full_name: "Sarah Mitchell" },
-      { id: "00000000-0000-0000-0000-000000001002", email: "drsmith@sunrise.com.au", full_name: "Dr James Smith" },
-      { id: "00000000-0000-0000-0000-000000001003", email: "drnguyen@sunrise.com.au", full_name: "Dr Lily Nguyen" },
-    ]);
-
-    await supabase.from("staff_assignments").upsert([
-      { id: "00000000-0000-0000-0000-000000002001", user_id: "00000000-0000-0000-0000-000000001001", location_id: LOCATION_ID, role: "receptionist", employment_type: "full_time" },
-      { id: "00000000-0000-0000-0000-000000002002", user_id: "00000000-0000-0000-0000-000000001002", location_id: LOCATION_ID, role: "clinician", employment_type: "full_time" },
-      { id: "00000000-0000-0000-0000-000000002003", user_id: "00000000-0000-0000-0000-000000001003", location_id: LOCATION_ID, role: "clinician", employment_type: "part_time" },
-    ]);
-
+    // Upsert appointment types for this org
     await supabase.from("appointment_types").upsert([
       { id: "00000000-0000-0000-0000-000000003001", org_id: ORG_ID, name: "Initial Consultation", modality: "telehealth", duration_minutes: 45, default_fee_cents: 15000 },
       { id: "00000000-0000-0000-0000-000000003002", org_id: ORG_ID, name: "Follow-up", modality: "telehealth", duration_minutes: 20, default_fee_cents: 8500 },
@@ -102,7 +114,7 @@ export async function seedDemoData() {
     ]);
 
     // ========================================================================
-    // Read existing rooms and generate time-aware sessions
+    // Read existing rooms at the user's location and generate time-aware sessions
     // ========================================================================
     const { data: rooms } = await supabase
       .from("rooms")
@@ -112,6 +124,18 @@ export async function seedDemoData() {
 
     if (!rooms || rooms.length === 0) {
       return { success: true, warning: "No rooms found — sessions not seeded. Create rooms in Settings first." };
+    }
+
+    // Find clinicians assigned to this location for realistic session data
+    const { data: clinicians } = await supabase
+      .from("staff_assignments")
+      .select("user_id")
+      .eq("location_id", LOCATION_ID)
+      .in("role", ["clinician", "clinic_owner"]);
+
+    const clinicianIds = (clinicians ?? []).map((c) => c.user_id as string);
+    if (clinicianIds.length === 0) {
+      clinicianIds.push(user.id); // fallback to the current user
     }
 
     // Determine current time in the clinic's timezone
@@ -149,10 +173,6 @@ export async function seedDemoData() {
       "00000000-0000-0000-0000-000000003002",
       "00000000-0000-0000-0000-000000003003",
       "00000000-0000-0000-0000-000000003004",
-    ];
-    const clinicianIds = [
-      "00000000-0000-0000-0000-000000001002",
-      "00000000-0000-0000-0000-000000001003",
     ];
 
     // Assign each room ~4-6 slots spread across the day

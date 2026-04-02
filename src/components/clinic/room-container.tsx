@@ -126,9 +126,6 @@ export function RoomContainer({
       ? group.sessions.length - attentionSessions.length
       : 0;
 
-  const initials = getInitials(group.room_name);
-  const avatarColor = getAvatarColor(roomIndex);
-
   // Single-room clinician view: always expanded, no header
   if (singleRoom) {
     return (
@@ -182,31 +179,6 @@ export function RoomContainer({
             {group.room_name}
           </span>
         </button>
-
-        {/* Traffic lights */}
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          <TrafficLight
-            count={group.counts.late}
-            activeColor="bg-red-500"
-            tooltip={`${group.counts.late} late`}
-          />
-          <TrafficLight
-            count={group.counts.upcoming + group.counts.waiting}
-            activeColor="bg-amber-500/80"
-            tooltip={`${group.counts.upcoming + group.counts.waiting} waiting`}
-          />
-          <TrafficLight
-            count={group.counts.active}
-            activeColor="bg-teal-500/60"
-            tooltip={`${group.counts.active} in session`}
-          />
-          <TrafficLight
-            count={group.counts.total}
-            activeColor="bg-gray-500"
-            tooltip={`${group.counts.total} total`}
-            alwaysActive
-          />
-        </div>
 
         {/* Kebab menu */}
         <div className="flex items-center flex-shrink-0" ref={menuRef}>
@@ -333,33 +305,5 @@ export function RoomContainer({
         </div>
       )}
     </div>
-  );
-}
-
-function TrafficLight({
-  count,
-  activeColor,
-  tooltip,
-  alwaysActive = false,
-}: {
-  count: number;
-  activeColor: string;
-  tooltip: string;
-  alwaysActive?: boolean;
-}) {
-  const isActive = alwaysActive || count > 0;
-
-  return (
-    <Tooltip content={tooltip}>
-      <span
-        className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-semibold flex-shrink-0 ${
-          isActive
-            ? `${activeColor} text-white`
-            : "border border-gray-200 text-transparent"
-        }`}
-      >
-        {isActive ? count : "0"}
-      </span>
-    </Tooltip>
   );
 }

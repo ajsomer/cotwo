@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { SlideOver } from "@/components/ui/slide-over";
 import { Button } from "@/components/ui/button";
 import { useOrg } from "@/hooks/useOrg";
-import { createSessions, deleteSession } from "@/lib/runsheet/mutations";
+import { createSessions, updateSession, deleteSession } from "@/lib/runsheet/mutations";
 import type { Room, EnrichedSession } from "@/lib/supabase/types";
 
 interface AddSessionPanelProps {
@@ -13,6 +13,7 @@ interface AddSessionPanelProps {
   editingSessionId: string | null;
   sessions: EnrichedSession[];
   onClose: () => void;
+  onRefetch?: () => Promise<void>;
   timezone: string;
 }
 
@@ -33,6 +34,7 @@ export function AddSessionPanel({
   editingSessionId,
   sessions,
   onClose,
+  onRefetch,
   timezone,
 }: AddSessionPanelProps) {
   const { org } = useOrg();
@@ -57,38 +59,58 @@ export function AddSessionPanel({
     timeZone: timezone,
   });
 
-  // Initialize room states
+  // Track which rows are existing sessions vs newly added
+  const [existingSessionIds] = useState<Set<string>>(() => {
+    const ids = new Set<string>();
+    for (const s of sessions) {
+      if (s.derived_state !== "done") ids.add(s.session_id);
+    }
+    return ids;
+  });
+
+  // Snapshot original values for change detection
+  const [originalValues] = useState<Map<string, { phone: string; time: string }>>(() => {
+    const map = new Map<string, { phone: string; time: string }>();
+    for (const s of sessions) {
+      if (s.derived_state === "done") continue;
+      map.set(s.session_id, {
+        phone: s.phone_number ?? "",
+        time: s.scheduled_at
+          ? new Date(s.scheduled_at).toLocaleTimeString("en-AU", {
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: false,
+              timeZone: timezone,
+            })
+          : "",
+      });
+    }
+    return map;
+  });
+
+  // Initialize room states — always show existing sessions
   const [roomStates, setRoomStates] = useState<Record<string, RoomState>>(() => {
     const initial: Record<string, RoomState> = {};
 
-    if (editingSessionId) {
-      for (const room of rooms) {
-        const roomSessions = sessions.filter(
-          (s) => s.room_id === room.id && s.derived_state !== "done"
-        );
-        initial[room.id] = {
-          active: roomSessions.length > 0,
-          patients: roomSessions.map((s) => ({
-            id: s.session_id,
-            phone: s.phone_number ?? "",
-            time: s.scheduled_at
-              ? new Date(s.scheduled_at).toLocaleTimeString("en-AU", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  hour12: false,
-                  timeZone: timezone,
-                })
-              : "",
-          })),
-        };
-      }
-    } else {
-      for (const room of rooms) {
-        initial[room.id] = {
-          active: false,
-          patients: [],
-        };
-      }
+    for (const room of rooms) {
+      const roomSessions = sessions.filter(
+        (s) => s.room_id === room.id && s.derived_state !== "done"
+      );
+      initial[room.id] = {
+        active: roomSessions.length > 0,
+        patients: roomSessions.map((s) => ({
+          id: s.session_id,
+          phone: s.phone_number ?? "",
+          time: s.scheduled_at
+            ? new Date(s.scheduled_at).toLocaleTimeString("en-AU", {
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: false,
+                timeZone: timezone,
+              })
+            : "",
+        })),
+      };
     }
 
     return initial;
@@ -159,10 +181,16 @@ export function AddSessionPanel({
   async function handleSave() {
     setSaving(true);
 
-    const inputs: Array<{
+    const newInputs: Array<{
       phone_number: string;
       scheduled_at: string;
       room_id: string;
+    }> = [];
+
+    const updates: Array<{
+      sessionId: string;
+      phone_number: string;
+      scheduled_at: string;
     }> = [];
 
     for (const [roomId, state] of Object.entries(roomStates)) {
@@ -171,19 +199,53 @@ export function AddSessionPanel({
         if (!patient.phone || patient.phone.length <= 3 || !patient.time) continue;
 
         const [hours, minutes] = patient.time.split(":").map(Number);
+        if (isNaN(hours) || isNaN(minutes)) continue;
         const scheduledDate = new Date(targetDate);
         scheduledDate.setHours(hours, minutes, 0, 0);
 
-        inputs.push({
-          phone_number: patient.phone,
-          scheduled_at: scheduledDate.toISOString(),
-          room_id: roomId,
-        });
+        if (existingSessionIds.has(patient.id)) {
+          // Existing session — only update if changed
+          const original = originalValues.get(patient.id);
+          if (original && (original.phone !== patient.phone || original.time !== patient.time)) {
+            updates.push({
+              sessionId: patient.id,
+              phone_number: patient.phone,
+              scheduled_at: scheduledDate.toISOString(),
+            });
+          }
+        } else {
+          // New row
+          newInputs.push({
+            phone_number: patient.phone,
+            scheduled_at: scheduledDate.toISOString(),
+            room_id: roomId,
+          });
+        }
       }
     }
 
-    if (inputs.length > 0 && org) {
-      await createSessions(locationId, org.id, inputs);
+    // Create new sessions
+    if (newInputs.length > 0 && org) {
+      const result = await createSessions(locationId, org.id, org.name, newInputs);
+      if (result.links?.length) {
+        console.log(
+          `%c[Patient Entry Links]`,
+          "color: #2ABFBF; font-weight: bold",
+          ...result.links.flatMap((link) => ["\n  →", link])
+        );
+      }
+    }
+
+    // Update changed existing sessions
+    for (const u of updates) {
+      await updateSession(u.sessionId, {
+        phone_number: u.phone_number,
+        scheduled_at: u.scheduled_at,
+      });
+    }
+
+    if (newInputs.length > 0 || updates.length > 0) {
+      await onRefetch?.();
     }
 
     setSaving(false);
@@ -196,6 +258,7 @@ export function AddSessionPanel({
     }
     await deleteSession(sessionId);
     removePatientRow(roomId, sessionId);
+    await onRefetch?.();
   }
 
   const panelTitle = editingSessionId ? "Edit sessions" : "Add sessions";
@@ -324,8 +387,8 @@ export function AddSessionPanel({
                           }`}
                         >
                           {/* Phone input with +61 prefix */}
-                          <div className="flex-1 flex">
-                            <span className="inline-flex items-center px-2 text-xs text-gray-500 bg-gray-50 border border-r-0 border-gray-200 rounded-l-lg">
+                          <div className="flex min-w-0 flex-shrink">
+                            <span className="inline-flex items-center px-2 text-xs text-gray-500 bg-gray-50 border border-r-0 border-gray-200 rounded-l-lg flex-shrink-0">
                               +61
                             </span>
                             <input
@@ -339,24 +402,16 @@ export function AddSessionPanel({
                                   "+61" + e.target.value.replace(/^\+61\s?/, "")
                                 )
                               }
-                              className="flex-1 min-w-0 text-sm border border-gray-200 rounded-r-lg px-2.5 py-1.5 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none"
+                              className="w-full min-w-0 text-sm border border-gray-200 rounded-r-lg px-2.5 py-1.5 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none"
                             />
                           </div>
 
-                          {/* Time input */}
-                          <input
-                            type="text"
+                          {/* Time input — hour : minute AM/PM */}
+                          <TimeInput
                             value={patient.time}
-                            onChange={(e) =>
-                              updatePatientRow(
-                                room.id,
-                                patient.id,
-                                "time",
-                                e.target.value
-                              )
+                            onChange={(val) =>
+                              updatePatientRow(room.id, patient.id, "time", val)
                             }
-                            placeholder="9:00 am"
-                            className="w-[100px] text-sm border border-gray-200 rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none"
                           />
 
                           {/* Delete button */}
@@ -408,5 +463,107 @@ export function AddSessionPanel({
         </div>
       </div>
     </SlideOver>
+  );
+}
+
+/** Structured time input: hour, minute, AM/PM. Stores value as "HH:MM" in 24-hour format. */
+function TimeInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const minuteRef = useRef<HTMLInputElement>(null);
+
+  // Parse 24h "HH:MM" into 12h parts for initial state
+  function parse24h(v: string) {
+    if (!v) return { hour: "", minute: "", period: "AM" as "AM" | "PM" };
+    const [h, m] = v.split(":").map(Number);
+    if (isNaN(h) || isNaN(m)) return { hour: "", minute: "", period: "AM" as "AM" | "PM" };
+    const period: "AM" | "PM" = h >= 12 ? "PM" : "AM";
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    return { hour: String(h12), minute: String(m).padStart(2, "0"), period };
+  }
+
+  const initial = parse24h(value);
+  const [hour, setHour] = useState(initial.hour);
+  const [minute, setMinute] = useState(initial.minute);
+  const [period, setPeriod] = useState(initial.period);
+
+  // Sync local state when value changes externally
+  const lastValue = useRef(value);
+  useEffect(() => {
+    if (value !== lastValue.current) {
+      const parsed = parse24h(value);
+      setHour(parsed.hour);
+      setMinute(parsed.minute);
+      setPeriod(parsed.period);
+      lastValue.current = value;
+    }
+  }, [value]);
+
+  function commit(h: string, m: string, p: "AM" | "PM") {
+    const hNum = parseInt(h, 10);
+    const mNum = parseInt(m, 10);
+    if (isNaN(hNum) || isNaN(mNum)) {
+      onChange("");
+      return;
+    }
+    let h24 = hNum;
+    if (p === "AM" && hNum === 12) h24 = 0;
+    else if (p === "PM" && hNum !== 12) h24 = hNum + 12;
+    const result = `${String(h24).padStart(2, "0")}:${String(mNum).padStart(2, "0")}`;
+    lastValue.current = result;
+    onChange(result);
+  }
+
+  return (
+    <div className="flex items-center gap-0.5 flex-shrink-0">
+      <input
+        type="text"
+        inputMode="numeric"
+        maxLength={2}
+        value={hour}
+        onChange={(e) => {
+          const v = e.target.value.replace(/\D/g, "").slice(0, 2);
+          setHour(v);
+          // Auto-advance to minute after 2 digits or a digit >= 2 (can't be 20+)
+          if (v.length === 2 || (v.length === 1 && parseInt(v) >= 2)) {
+            minuteRef.current?.focus();
+            minuteRef.current?.select();
+          }
+        }}
+        onBlur={() => commit(hour, minute || "0", period)}
+        placeholder="9"
+        className="w-9 text-sm text-center border border-gray-200 rounded-lg py-1.5 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none"
+      />
+      <span className="text-sm text-gray-400 font-medium">:</span>
+      <input
+        ref={minuteRef}
+        type="text"
+        inputMode="numeric"
+        maxLength={2}
+        value={minute}
+        onChange={(e) => {
+          const v = e.target.value.replace(/\D/g, "").slice(0, 2);
+          setMinute(v);
+        }}
+        onBlur={() => {
+          // Pad single digit on blur (e.g. "3" → "30")
+          const padded = minute.length === 1 ? minute + "0" : minute;
+          setMinute(padded);
+          commit(hour || "12", padded || "0", period);
+        }}
+        placeholder="00"
+        className="w-9 text-sm text-center border border-gray-200 rounded-lg py-1.5 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none"
+      />
+      <select
+        value={period}
+        onChange={(e) => {
+          const p = e.target.value as "AM" | "PM";
+          setPeriod(p);
+        }}
+        onBlur={() => commit(hour || "12", minute || "0", period)}
+        className="text-sm font-medium border border-gray-200 rounded-lg px-1.5 py-1.5 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none bg-white text-gray-700"
+      >
+        <option value="AM">AM</option>
+        <option value="PM">PM</option>
+      </select>
+    </div>
   );
 }

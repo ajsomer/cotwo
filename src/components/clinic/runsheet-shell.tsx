@@ -31,7 +31,7 @@ export function RunsheetShell({
   clinicianRoomIds,
 }: RunsheetShellProps) {
   // Real-time session state
-  const { sessions } = useRealtimeRunsheet({
+  const { sessions, refetch } = useRealtimeRunsheet({
     initialSessions,
     locationId,
   });
@@ -184,10 +184,11 @@ export function RunsheetShell({
           setAddSessionOpen(false);
           setEditingSessionId(null);
         }}
+        onRefetch={refetch}
         timezone={timezone}
       />
     );
-  }, [addSessionOpen, locationId, visibleRooms, editingSessionId, enriched, timezone]);
+  }, [addSessionOpen, locationId, visibleRooms, editingSessionId, enriched, timezone, refetch]);
 
   return (
     <div className="p-6 max-w-[860px] mx-auto">
