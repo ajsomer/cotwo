@@ -10,6 +10,8 @@ interface RunsheetHeaderProps {
   onAddSession?: () => void;
   onSeed?: () => void;
   isSeeding?: boolean;
+  onNuke?: () => void;
+  isNuking?: boolean;
   onBulkCall?: () => void;
   onBulkNudge?: () => void;
   onBulkProcess?: () => void;
@@ -21,6 +23,8 @@ export function RunsheetHeader({
   onAddSession,
   onSeed,
   isSeeding,
+  onNuke,
+  isNuking,
   onBulkCall,
   onBulkNudge,
   onBulkProcess,
@@ -42,12 +46,19 @@ export function RunsheetHeader({
     <div className="flex items-center bg-white rounded-xl border border-gray-200 px-6 py-2.5">
       {/* Left: lightning bolt + seed */}
       <div className="flex items-center gap-2">
-        <Zap
-          size={16}
-          className={`flex-shrink-0 transition-colors ${boltColor}`}
-          fill={hasActions ? "currentColor" : "none"}
-          strokeWidth={2}
-        />
+        <button
+          onClick={onNuke}
+          disabled={isNuking}
+          className="p-1 rounded hover:bg-red-50 transition-colors disabled:opacity-50"
+          title="Clear all sessions"
+        >
+          <Zap
+            size={16}
+            className={`flex-shrink-0 transition-colors ${isNuking ? "text-red-500 animate-pulse" : boltColor} hover:text-red-500`}
+            fill={hasActions ? "currentColor" : "none"}
+            strokeWidth={2}
+          />
+        </button>
         {onSeed && (
           <button
             onClick={onSeed}

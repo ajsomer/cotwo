@@ -73,6 +73,10 @@ export function PhoneVerification({
         return;
       }
 
+      if (data.dev_code) {
+        console.log(`📱 [DEV] OTP code for ${phoneNumber}: ${data.dev_code}`);
+      }
+
       setVerificationId(data.verification_id);
       setPhase('enter_code');
       setResendTimer(30);

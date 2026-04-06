@@ -64,5 +64,6 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     verification_id: verification.id,
     expires_at: expiresAt,
+    ...(process.env.NODE_ENV === 'development' && { dev_code: code }),
   });
 }

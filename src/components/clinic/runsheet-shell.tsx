@@ -8,7 +8,8 @@ import { groupSessionsByRoom, calculateSummary } from "@/lib/runsheet/grouping";
 import { useRealtimeRunsheet } from "@/hooks/useRealtimeRunsheet";
 import { useTabNotifications } from "@/hooks/useTabNotifications";
 import { useFaviconBadge } from "@/hooks/useFaviconBadge";
-import { seedDemoData } from "@/lib/runsheet/seed";
+import { seedDemoData, nukeSessions } from "@/lib/runsheet/seed";
+import { PatientContactCard } from "./patient-contact-card";
 import type { RunsheetSession, Room, UserRole } from "@/lib/supabase/types";
 
 interface RunsheetShellProps {
@@ -80,9 +81,36 @@ export function RunsheetShell({
     });
   }, []);
 
+  // Nuke state
+  const [isNuking, startNuking] = useTransition();
+  const handleNuke = useCallback(() => {
+    startNuking(async () => {
+      const result = await nukeSessions();
+      if (result.success) {
+        refetch();
+      } else {
+        console.error("Nuke failed:", result.error);
+      }
+    });
+  }, [refetch]);
+
   // Add session panel state
   const [addSessionOpen, setAddSessionOpen] = useState(false);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+
+  // Patient contact card state
+  const [contactSessionId, setContactSessionId] = useState<string | null>(null);
+  const contactSession = useMemo(
+    () => contactSessionId ? enriched.find((s) => s.session_id === contactSessionId) ?? null : null,
+    [contactSessionId, enriched]
+  );
+
+  const handlePatientClick = useCallback((sessionId: string) => {
+    const session = enriched.find((s) => s.session_id === sessionId);
+    if (session?.patient_id) {
+      setContactSessionId(sessionId);
+    }
+  }, [enriched]);
 
   // Process flow state
   const [processingSessionId, setProcessingSessionId] = useState<string | null>(null);
@@ -202,6 +230,8 @@ export function RunsheetShell({
           }}
           onSeed={handleSeed}
           isSeeding={isSeeding}
+          onNuke={handleNuke}
+          isNuking={isNuking}
           onBulkProcess={handleBulkProcess}
         />
       </div>
@@ -214,6 +244,7 @@ export function RunsheetShell({
             roomIndex={index}
             onAction={handleAction}
             onSessionClick={handleSessionClick}
+            onPatientClick={handlePatientClick}
             singleRoom={singleRoom}
             totalRooms={groups.length}
           />
@@ -236,6 +267,11 @@ export function RunsheetShell({
 
       {ProcessFlow}
       {AddSessionPanel}
+      <PatientContactCard
+        session={contactSession}
+        open={!!contactSessionId}
+        onClose={() => setContactSessionId(null)}
+      />
     </div>
   );
 }

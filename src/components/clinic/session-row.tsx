@@ -11,9 +11,10 @@ interface SessionRowProps {
   session: EnrichedSession;
   onAction: (sessionId: string, action: string) => void;
   onClick?: (sessionId: string) => void;
+  onPatientClick?: (sessionId: string) => void;
 }
 
-export function SessionRow({ session, onAction, onClick }: SessionRowProps) {
+export function SessionRow({ session, onAction, onClick, onPatientClick }: SessionRowProps) {
   const borderColor = getRowBorderColor(session.derived_state);
   const isDone = session.derived_state === "done";
   const patientName = formatPatientName(
@@ -44,9 +45,22 @@ export function SessionRow({ session, onAction, onClick }: SessionRowProps) {
       {/* Single-line content area — fixed height for consistency */}
       <div className="flex items-center flex-1 min-w-0 px-5 h-12">
         {/* Patient name */}
-        <span className="text-[14px] font-semibold text-gray-800 truncate leading-none">
-          {patientName}
-        </span>
+        {session.patient_id && onPatientClick ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onPatientClick(session.session_id);
+            }}
+            className="text-[14px] font-semibold text-gray-800 truncate leading-none hover:underline hover:text-teal-600 transition-colors"
+          >
+            {patientName}
+          </button>
+        ) : (
+          <span className="text-[14px] font-semibold text-gray-800 truncate leading-none">
+            {patientName}
+          </span>
+        )}
 
         {/* Card indicator */}
         <CardIndicator hasCard={session.has_card_on_file} />

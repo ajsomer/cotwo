@@ -39,6 +39,7 @@ interface RoomContainerProps {
   roomIndex: number;
   onAction: (sessionId: string, action: string) => void;
   onSessionClick?: (sessionId: string) => void;
+  onPatientClick?: (sessionId: string) => void;
   singleRoom?: boolean;
   totalRooms?: number;
 }
@@ -48,6 +49,7 @@ export function RoomContainer({
   roomIndex,
   onAction,
   onSessionClick,
+  onPatientClick,
   singleRoom = false,
   totalRooms = 1,
 }: RoomContainerProps) {
@@ -136,6 +138,7 @@ export function RoomContainer({
             session={session}
             onAction={onAction}
             onClick={onSessionClick}
+            onPatientClick={onPatientClick}
           />
         ))}
         {group.sessions.length === 0 && (
@@ -251,6 +254,7 @@ export function RoomContainer({
               session={session}
               onAction={onAction}
               onClick={onSessionClick}
+              onPatientClick={onPatientClick}
             />
           ))}
         </div>

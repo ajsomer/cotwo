@@ -12,6 +12,36 @@ import { createClient } from "@/lib/supabase/server";
  * Only populates session-related data (patients, appointments, sessions, etc.)
  * for whatever rooms already exist at the user's location.
  */
+/**
+ * Removes all session-related data from the database.
+ * Preserves rooms, org, location, users, staff assignments, and appointment types.
+ */
+export async function nukeSessions() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !serviceRoleKey) {
+    return { success: false, error: "Missing SUPABASE_SERVICE_ROLE_KEY" };
+  }
+
+  const supabase = createServerClient(supabaseUrl, serviceRoleKey);
+
+  try {
+    await supabase.from("session_participants").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    await supabase.from("payments").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    await supabase.from("sessions").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    await supabase.from("appointments").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    await supabase.from("payment_methods").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    await supabase.from("patient_phone_numbers").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    await supabase.from("patients").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    await supabase.from("phone_verifications").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    return { success: true };
+  } catch (err) {
+    console.error("[NUKE] Failed:", err);
+    return { success: false, error: String(err) };
+  }
+}
+
 export async function seedDemoData() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
