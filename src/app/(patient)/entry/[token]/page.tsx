@@ -13,22 +13,28 @@ export default async function EntryPage({
 
   if (!context) {
     return (
-      <div className="flex flex-col items-center py-12 text-center">
-        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-50">
-          <span className="text-lg text-red-500">!</span>
+      <div className="mx-auto w-full max-w-[420px]">
+        <div className="flex flex-col items-center py-12 text-center">
+          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-50">
+            <span className="text-lg text-red-500">!</span>
+          </div>
+          <h1 className="text-xl font-semibold text-gray-800">
+            Link not found
+          </h1>
+          <p className="mt-2 text-sm text-gray-500">
+            This link has expired or is no longer valid. Please contact your
+            clinic for a new link.
+          </p>
         </div>
-        <h1 className="text-xl font-semibold text-gray-800">
-          Link not found
-        </h1>
-        <p className="mt-2 text-sm text-gray-500">
-          This link has expired or is no longer valid. Please contact your
-          clinic for a new link.
-        </p>
       </div>
     );
   }
 
-  return <EntryFlowClient context={context} token={token} />;
+  return (
+    <div className="mx-auto w-full max-w-[420px]">
+      <EntryFlowClient context={context} token={token} />
+    </div>
+  );
 }
 
 async function resolveToken(token: string): Promise<EntryContext | null> {

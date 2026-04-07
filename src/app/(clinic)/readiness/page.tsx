@@ -1,7 +1,5 @@
+import { ReadinessShell } from "@/components/clinic/readiness-shell";
+
 export default function ReadinessPage() {
-  return (
-    <div className="p-6">
-      <h1 className="text-2xl font-semibold">Readiness</h1>
-    </div>
-  );
+  return <ReadinessShell />;
 }

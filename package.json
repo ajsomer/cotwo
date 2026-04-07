@@ -18,7 +18,11 @@
     "next": "16.2.1",
     "react": "19.2.4",
     "react-dom": "19.2.4",
-    "stripe": "^21.0.1"
+    "stripe": "^21.0.1",
+    "survey-core": "^2.5.18",
+    "survey-creator-core": "^2.5.18",
+    "survey-creator-react": "^2.5.18",
+    "survey-react-ui": "^2.5.18"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

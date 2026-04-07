@@ -249,3 +249,46 @@ export interface PhoneVerification {
   session_id: string | null;
   created_at: string;
 }
+
+// ============================================================================
+// Forms Types
+// ============================================================================
+
+export type FormStatus = 'draft' | 'published' | 'archived';
+export type FormAssignmentStatus = 'pending' | 'sent' | 'opened' | 'completed';
+
+export interface Form {
+  id: string;
+  org_id: string;
+  name: string;
+  description: string | null;
+  schema: Record<string, unknown>;
+  status: FormStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FormAssignment {
+  id: string;
+  form_id: string;
+  appointment_id: string | null;
+  patient_id: string;
+  token: string;
+  schema_snapshot: Record<string, unknown>;
+  status: FormAssignmentStatus;
+  sent_at: string | null;
+  opened_at: string | null;
+  completed_at: string | null;
+  submission_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FormSubmission {
+  id: string;
+  form_id: string;
+  patient_id: string;
+  appointment_id: string | null;
+  responses: Record<string, unknown>;
+  created_at: string;
+}

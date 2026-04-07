@@ -65,6 +65,36 @@ export async function GET(
     }
   }
 
+  // Fetch form assignments for this patient
+  const { data: formAssignmentsData } = await supabase
+    .from('form_assignments')
+    .select('id, form_id, status, sent_at, completed_at, created_at, submission_id')
+    .eq('patient_id', patientId)
+    .order('created_at', { ascending: false });
+
+  // Get form names for assignments
+  const formIds = [...new Set((formAssignmentsData ?? []).map((a) => a.form_id))];
+  let formNameMap: Record<string, string> = {};
+  if (formIds.length > 0) {
+    const { data: formsData } = await supabase
+      .from('forms')
+      .select('id, name')
+      .in('id', formIds);
+    if (formsData) {
+      formNameMap = Object.fromEntries(formsData.map((f) => [f.id, f.name]));
+    }
+  }
+
+  const formAssignments = (formAssignmentsData ?? []).map((a) => ({
+    id: a.id,
+    form_name: formNameMap[a.form_id] ?? 'Unknown form',
+    status: a.status,
+    sent_at: a.sent_at,
+    completed_at: a.completed_at,
+    created_at: a.created_at,
+    submission_id: a.submission_id,
+  }));
+
   // Fetch visit history: past done sessions for this patient
   const { data: historyData } = await supabase
     .from('session_participants')
@@ -100,5 +130,6 @@ export async function GET(
     payment_methods: cardsRes.data ?? [],
     current_session: currentSession,
     visit_history: visitHistory,
+    form_assignments: formAssignments,
   });
 }

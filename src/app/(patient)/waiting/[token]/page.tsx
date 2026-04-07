@@ -29,13 +29,15 @@ export default async function WaitingRoomPage({
 
   if (!session) {
     return (
-      <div className="flex flex-col items-center py-12 text-center">
-        <h1 className="text-xl font-semibold text-gray-800">
-          Session not found
-        </h1>
-        <p className="mt-2 text-sm text-gray-500">
-          This waiting room link is no longer valid.
-        </p>
+      <div className="mx-auto w-full max-w-[420px]">
+        <div className="flex flex-col items-center py-12 text-center">
+          <h1 className="text-xl font-semibold text-gray-800">
+            Session not found
+          </h1>
+          <p className="mt-2 text-sm text-gray-500">
+            This waiting room link is no longer valid.
+          </p>
+        </div>
       </div>
     );
   }
@@ -46,6 +48,7 @@ export default async function WaitingRoomPage({
   const appointment = session.appointments as any;
 
   return (
+    <div className="mx-auto w-full max-w-[420px]">
     <WaitingRoomClient
       sessionId={session.id}
       locationId={location.id}
@@ -55,5 +58,6 @@ export default async function WaitingRoomPage({
       clinicianName={appointment?.users?.full_name || null}
       scheduledAt={appointment?.scheduled_at || null}
     />
+    </div>
   );
 }

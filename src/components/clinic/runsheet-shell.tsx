@@ -11,6 +11,7 @@ import { useTabNotifications } from "@/hooks/useTabNotifications";
 import { useFaviconBadge } from "@/hooks/useFaviconBadge";
 import { seedDemoData, nukeSessions } from "@/lib/runsheet/seed";
 import { PatientContactCard } from "./patient-contact-card";
+import { PatientSlideOverProvider } from "./patient-slide-over-context";
 import type { RunsheetSession, Room, UserRole } from "@/lib/supabase/types";
 
 interface RunsheetShellProps {
@@ -104,6 +105,7 @@ export function RunsheetShell({
 
   // Patient contact card state
   const [contactSessionId, setContactSessionId] = useState<string | null>(null);
+  const [contactPatientId, setContactPatientId] = useState<string | null>(null);
   const contactSession = useMemo(
     () => contactSessionId ? enriched.find((s) => s.session_id === contactSessionId) ?? null : null,
     [contactSessionId, enriched]
@@ -113,8 +115,14 @@ export function RunsheetShell({
     const session = enriched.find((s) => s.session_id === sessionId);
     if (session?.patient_id) {
       setContactSessionId(sessionId);
+      setContactPatientId(null);
     }
   }, [enriched]);
+
+  const handleOpenPatient = useCallback((patientId: string) => {
+    setContactPatientId(patientId);
+    setContactSessionId(null);
+  }, []);
 
   // Process flow state
   const [processingSessionId, setProcessingSessionId] = useState<string | null>(null);
@@ -223,6 +231,7 @@ export function RunsheetShell({
   }, [addSessionOpen, locationId, visibleRooms, editingSessionId, enriched, timezone, refetch]);
 
   return (
+    <PatientSlideOverProvider onOpenPatient={handleOpenPatient}>
     <div className="p-6 max-w-[860px] mx-auto">
       <div className="mb-4">
         <RunsheetHeader
@@ -273,9 +282,14 @@ export function RunsheetShell({
       {AddSessionPanel}
       <PatientContactCard
         session={contactSession}
-        open={!!contactSessionId}
-        onClose={() => setContactSessionId(null)}
+        patientId={contactPatientId}
+        open={!!contactSessionId || !!contactPatientId}
+        onClose={() => {
+          setContactSessionId(null);
+          setContactPatientId(null);
+        }}
       />
     </div>
+    </PatientSlideOverProvider>
   );
 }

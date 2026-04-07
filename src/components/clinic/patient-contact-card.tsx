@@ -7,7 +7,8 @@ import { formatPhoneNumber } from "@/lib/runsheet/format";
 import type { EnrichedSession } from "@/lib/supabase/types";
 
 interface PatientContactCardProps {
-  session: EnrichedSession | null;
+  session?: EnrichedSession | null;
+  patientId?: string | null;
   open: boolean;
   onClose: () => void;
 }
@@ -33,25 +34,40 @@ interface PatientDetails {
     room_name: string | null;
   } | null;
   visit_history: { date: string; type_name: string | null }[];
+  form_assignments: {
+    id: string;
+    form_name: string;
+    status: string;
+    sent_at: string | null;
+    completed_at: string | null;
+    created_at: string;
+    submission_id: string | null;
+  }[];
 }
 
-export function PatientContactCard({ session, open, onClose }: PatientContactCardProps) {
+export function PatientContactCard({ session, patientId: propPatientId, open, onClose }: PatientContactCardProps) {
   const [details, setDetails] = useState<PatientDetails | null>(null);
   const [loading, setLoading] = useState(false);
+  const [resendingId, setResendingId] = useState<string | null>(null);
+
+  const resolvedPatientId = propPatientId || session?.patient_id || null;
 
   useEffect(() => {
-    if (!open || !session?.patient_id) {
+    if (!open || !resolvedPatientId) {
       setDetails(null);
       return;
     }
 
     setLoading(true);
-    fetch(`/api/patient/${session.patient_id}?session_id=${session.session_id}`)
+    const url = session?.session_id
+      ? `/api/patient/${resolvedPatientId}?session_id=${session.session_id}`
+      : `/api/patient/${resolvedPatientId}`;
+    fetch(url)
       .then((res) => res.json())
       .then((data) => setDetails(data))
       .catch((err) => console.error("[ContactCard] fetch failed:", err))
       .finally(() => setLoading(false));
-  }, [open, session?.patient_id, session?.session_id]);
+  }, [open, resolvedPatientId, session?.session_id]);
 
   return (
     <SlideOver open={open} onClose={onClose} title="Patient details">
@@ -230,6 +246,86 @@ export function PatientContactCard({ session, open, onClose }: PatientContactCar
               <p className="text-sm text-gray-400">First visit</p>
             )}
           </section>
+
+          <div className="h-px bg-gray-200" />
+
+          {/* Forms */}
+          <section>
+            <h4 className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
+              Forms
+            </h4>
+            {details.form_assignments && details.form_assignments.length > 0 ? (
+              <div className="space-y-1.5">
+                {details.form_assignments.map((fa) => (
+                  <div
+                    key={fa.id}
+                    className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <span className="text-sm text-gray-800 block truncate">
+                        {fa.form_name}
+                      </span>
+                      <span className="text-xs text-gray-400">
+                        {fa.status === "completed" && fa.completed_at
+                          ? `Completed ${relativeTime(fa.completed_at)}`
+                          : fa.sent_at
+                            ? `Sent ${relativeTime(fa.sent_at)}`
+                            : "Pending"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 ml-2 flex-shrink-0">
+                      <span
+                        className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                          fa.status === "completed"
+                            ? "bg-teal-500/15 text-teal-700"
+                            : fa.status === "opened"
+                              ? "bg-amber-500/15 text-amber-700"
+                              : fa.status === "sent"
+                                ? "bg-amber-500/15 text-amber-700"
+                                : "bg-gray-200 text-gray-600"
+                        }`}
+                      >
+                        {fa.status === "completed" ? "Completed" : fa.status === "opened" ? "Opened" : fa.status === "sent" ? "Sent" : "Pending"}
+                      </span>
+                      {fa.status !== "completed" ? (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            setResendingId(fa.id);
+                            try {
+                              await fetch("/api/forms/assignments/send", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ assignment_id: fa.id }),
+                              });
+                            } catch {
+                              // silent
+                            }
+                            setTimeout(() => setResendingId(null), 2000);
+                          }}
+                          className="text-[11px] text-teal-600 hover:text-teal-700 whitespace-nowrap"
+                        >
+                          {resendingId === fa.id ? "Sent!" : "Resend"}
+                        </button>
+                      ) : fa.submission_id ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            window.open(`/api/forms/submissions/${fa.submission_id}`, "_blank");
+                          }}
+                          className="text-[11px] text-teal-600 hover:text-teal-700 whitespace-nowrap"
+                        >
+                          View
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-400">No forms sent to this patient.</p>
+            )}
+          </section>
         </div>
       )}
     </SlideOver>
@@ -265,6 +361,19 @@ function formatDate(iso: string): string {
     month: "short",
     year: "numeric",
   });
+}
+
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days} days ago`;
+  return formatDate(iso);
 }
 
 function capitalise(s: string): string {
