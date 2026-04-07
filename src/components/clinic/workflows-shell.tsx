@@ -207,13 +207,14 @@ export function WorkflowsShell() {
     setDirection(newDir); // Triggers the useEffect to reload
   };
 
-  const handleSelect = async (id: string) => {
+  const handleSelect = (id: string) => {
     if (id === selectedId) return;
     if (dirtyRef.current) {
       if (!window.confirm("You have unsaved changes. Discard them?")) return;
     }
     setSelectedId(id);
-    await loadDetail(id, direction, appointmentTypes, outcomePathways);
+    // Fire and forget — detail loading skeleton shows via detailLoading state
+    loadDetail(id, direction, appointmentTypes, outcomePathways);
   };
 
   const handleCreateType = async () => {
