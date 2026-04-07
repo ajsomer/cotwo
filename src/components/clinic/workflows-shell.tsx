@@ -41,7 +41,6 @@ export function WorkflowsShell() {
   const [direction, setDirection] = useState<WorkflowDirection>("pre_appointment");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -49,7 +48,11 @@ export function WorkflowsShell() {
   const [appointmentTypes, setAppointmentTypes] = useState<AppointmentTypeRow[]>([]);
   const [outcomePathways, setOutcomePathways] = useState<OutcomePathwayRow[]>([]);
 
-  // Detail data
+  // Prefetched data maps — all templates + blocks loaded upfront for instant switching
+  const [templatesMap, setTemplatesMap] = useState<Record<string, DbWorkflowTemplate>>({});
+  const [blocksMap, setBlocksMap] = useState<Record<string, DbWorkflowActionBlock[]>>({});
+
+  // Detail data for the currently selected item (read from maps)
   const [template, setTemplate] = useState<DbWorkflowTemplate | null>(null);
   const [originalBlocks, setOriginalBlocks] = useState<DbWorkflowActionBlock[]>([]);
   const [workingBlocks, setWorkingBlocks] = useState<DbWorkflowActionBlock[]>([]);
@@ -75,10 +78,27 @@ export function WorkflowsShell() {
   const isPre = direction === "pre_appointment";
 
   // ---------------------------------------------------------------------------
-  // Data fetching — event-driven only, no useEffect
+  // Data fetching — event-driven, not effect-driven
   // ---------------------------------------------------------------------------
 
-  /** Fetch sidebar items. Returns data directly. */
+  /**
+   * Fetch everything the page needs in a single API call.
+   * Returns sidebar items, forms, and first item's detail.
+   */
+  async function fetchInit(dir: WorkflowDirection) {
+    const res = await fetch(`/api/workflows/init?org_id=${orgId}&direction=${dir}`);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    return data as {
+      appointment_types: AppointmentTypeRow[];
+      outcome_pathways: OutcomePathwayRow[];
+      forms: { id: string; name: string }[];
+      templates: Record<string, DbWorkflowTemplate>;
+      blocks: Record<string, DbWorkflowActionBlock[]>;
+    };
+  }
+
+  /** Fetch sidebar only (used after create/save to refresh counts). */
   async function fetchSidebar(dir: WorkflowDirection) {
     if (dir === "pre_appointment") {
       const res = await fetch(`/api/appointment-types?org_id=${orgId}`);
@@ -93,21 +113,17 @@ export function WorkflowsShell() {
     }
   }
 
-  /** Fetch published forms for the picker dropdowns. */
-  async function fetchFormsList() {
-    const res = await fetch(`/api/forms?org_id=${orgId}`);
-    const data = await res.json();
-    return (data.forms ?? [])
-      .filter((f: { status: string }) => f.status === "published")
-      .map((f: { id: string; name: string }) => ({ id: f.id, name: f.name }));
-  }
-
-  /** Load detail for a specific item. Called explicitly by event handlers. */
-  async function loadDetail(
+  /**
+   * Load detail for a specific item. Synchronous — reads from prefetched maps.
+   * Zero network calls on sidebar click.
+   */
+  function loadDetail(
     itemId: string,
     dir: WorkflowDirection,
     types: AppointmentTypeRow[],
-    pathways: OutcomePathwayRow[]
+    pathways: OutcomePathwayRow[],
+    tplMap: Record<string, DbWorkflowTemplate>,
+    blkMap: Record<string, DbWorkflowActionBlock[]>
   ) {
     setMetadataEdits({});
 
@@ -119,25 +135,24 @@ export function WorkflowsShell() {
         setWorkingBlocks([]);
         return;
       }
-
-      setDetailLoading(true);
-      try {
-        const res = await fetch(`/api/workflows/${type.pre_workflow_template_id}`);
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
-        setTemplate(data.template);
-        setOriginalBlocks(data.blocks ?? []);
-        setWorkingBlocks(data.blocks ?? []);
-      } catch (err) {
-        setError((err as Error).message);
-      } finally {
-        setDetailLoading(false);
-      }
+      const tpl = tplMap[type.pre_workflow_template_id] ?? null;
+      const blocks = blkMap[type.pre_workflow_template_id] ?? [];
+      setTemplate(tpl);
+      setOriginalBlocks(blocks);
+      setWorkingBlocks(blocks);
     } else {
       const pathway = pathways.find((p) => p.id === itemId);
-      setTemplate(pathway?.template ?? null);
-      setOriginalBlocks(pathway?.blocks ?? []);
-      setWorkingBlocks(pathway?.blocks ?? []);
+      if (!pathway?.workflow_template_id) {
+        setTemplate(null);
+        setOriginalBlocks([]);
+        setWorkingBlocks([]);
+        return;
+      }
+      const tpl = tplMap[pathway.workflow_template_id] ?? null;
+      const blocks = blkMap[pathway.workflow_template_id] ?? [];
+      setTemplate(tpl);
+      setOriginalBlocks(blocks);
+      setWorkingBlocks(blocks);
     }
   }
 
@@ -153,22 +168,20 @@ export function WorkflowsShell() {
       setLoading(true);
       setError(null);
       try {
-        const [sidebarData, formsData] = await Promise.all([
-          fetchSidebar(direction),
-          fetchFormsList(),
-        ]);
+        // Single API call returns sidebar + forms + all templates + all blocks
+        const data = await fetchInit(direction);
         if (cancelled) return;
 
-        setAppointmentTypes(sidebarData.types);
-        setOutcomePathways(sidebarData.pathways);
-        setForms(formsData);
-        setLoading(false);
+        setAppointmentTypes(data.appointment_types);
+        setOutcomePathways(data.outcome_pathways);
+        setForms(data.forms);
+        setTemplatesMap(data.templates);
+        setBlocksMap(data.blocks);
 
-        const items = direction === "pre_appointment" ? sidebarData.types : sidebarData.pathways;
+        const items = direction === "pre_appointment" ? data.appointment_types : data.outcome_pathways;
         if (items.length > 0) {
-          const firstId = items[0].id;
-          setSelectedId(firstId);
-          await loadDetail(firstId, direction, sidebarData.types, sidebarData.pathways);
+          setSelectedId(items[0].id);
+          loadDetail(items[0].id, direction, data.appointment_types, data.outcome_pathways, data.templates, data.blocks);
         } else {
           setSelectedId(null);
           setTemplate(null);
@@ -176,10 +189,9 @@ export function WorkflowsShell() {
           setWorkingBlocks([]);
         }
       } catch (err) {
-        if (!cancelled) {
-          setError((err as Error).message);
-          setLoading(false);
-        }
+        if (!cancelled) setError((err as Error).message);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     }
 
@@ -211,8 +223,28 @@ export function WorkflowsShell() {
       if (!window.confirm("You have unsaved changes. Discard them?")) return;
     }
     setSelectedId(id);
-    loadDetail(id, direction, appointmentTypes, outcomePathways);
+    loadDetail(id, direction, appointmentTypes, outcomePathways, templatesMap, blocksMap);
   };
+
+  /** After mutations, refetch everything to refresh maps + sidebar. */
+  async function refreshAll(selectId?: string) {
+    try {
+      const data = await fetchInit(direction);
+      setAppointmentTypes(data.appointment_types);
+      setOutcomePathways(data.outcome_pathways);
+      setForms(data.forms);
+      setTemplatesMap(data.templates);
+      setBlocksMap(data.blocks);
+
+      const id = selectId ?? selectedId;
+      if (id) {
+        setSelectedId(id);
+        loadDetail(id, direction, data.appointment_types, data.outcome_pathways, data.templates, data.blocks);
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
 
   const handleCreateType = async () => {
     try {
@@ -223,11 +255,7 @@ export function WorkflowsShell() {
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-
-      const sidebarData = await fetchSidebar(direction);
-      setAppointmentTypes(sidebarData.types);
-      setSelectedId(data.appointment_type.id);
-      await loadDetail(data.appointment_type.id, direction, sidebarData.types, []);
+      await refreshAll(data.appointment_type.id);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -242,11 +270,7 @@ export function WorkflowsShell() {
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-
-      const sidebarData = await fetchSidebar(direction);
-      setOutcomePathways(sidebarData.pathways);
-      setSelectedId(data.outcome_pathway.id);
-      await loadDetail(data.outcome_pathway.id, direction, [], sidebarData.pathways);
+      await refreshAll(data.outcome_pathway.id);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -259,11 +283,16 @@ export function WorkflowsShell() {
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
-      const sidebarData = await fetchSidebar(direction);
-      setAppointmentTypes(sidebarData.types);
+      // Update maps locally with the new template
+      setTemplatesMap((prev) => ({ ...prev, [data.template.id]: data.template }));
+      setBlocksMap((prev) => ({ ...prev, [data.template.id]: [] }));
       setTemplate(data.template);
       setOriginalBlocks([]);
       setWorkingBlocks([]);
+
+      // Refresh sidebar to update the dot
+      const sidebarData = await fetchSidebar(direction);
+      setAppointmentTypes(sidebarData.types);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -349,9 +378,13 @@ export function WorkflowsShell() {
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
-      setOriginalBlocks(data.blocks ?? []);
-      setWorkingBlocks(data.blocks ?? []);
+      const savedBlocks = data.blocks ?? [];
+      setOriginalBlocks(savedBlocks);
+      setWorkingBlocks(savedBlocks);
       setMetadataEdits({});
+
+      // Update local maps so next sidebar click sees saved data
+      setBlocksMap((prev) => ({ ...prev, [template.id]: savedBlocks }));
 
       // Refresh sidebar counts
       const sidebarData = await fetchSidebar(direction);
@@ -491,7 +524,7 @@ export function WorkflowsShell() {
           onCreateWorkflow={handleCreateWorkflow}
           onSave={handleSave}
           onCancel={handleCancel}
-          loading={detailLoading}
+          loading={false}
         />
       </div>
 
