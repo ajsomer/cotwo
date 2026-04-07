@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useTransition } from "react";
+import dynamic from "next/dynamic";
 import { RunsheetHeader } from "./runsheet-header";
 import { RoomContainer } from "./room-container";
 import { enrichSessions } from "@/lib/runsheet/derived-state";
@@ -13,6 +14,16 @@ import { seedDemoData, nukeSessions } from "@/lib/runsheet/seed";
 import { PatientContactCard } from "./patient-contact-card";
 import { PatientSlideOverProvider } from "./patient-slide-over-context";
 import type { RunsheetSession, Room, UserRole } from "@/lib/supabase/types";
+
+// Lazy-load heavy modals — only downloaded when first opened
+const ProcessFlowDynamic = dynamic(
+  () => import("./process-flow").then((mod) => mod.ProcessFlow),
+  { ssr: false }
+);
+const AddSessionPanelDynamic = dynamic(
+  () => import("./add-session-panel").then((mod) => mod.AddSessionPanel),
+  { ssr: false }
+);
 
 interface RunsheetShellProps {
   initialSessions: RunsheetSession[];
@@ -189,46 +200,10 @@ export function RunsheetShell({
     }
   }, [bulkProcessQueue]);
 
-  // Lazy-load process flow and add session panel
-  const ProcessFlow = useMemo(() => {
-    if (!processingSessionId) return null;
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { ProcessFlow: PF } = require("./process-flow");
-    const session = enriched.find((s) => s.session_id === processingSessionId);
-    if (!session) return null;
-    return (
-      <PF
-        session={session}
-        onComplete={handleProcessComplete}
-        onClose={() => {
-          setProcessingSessionId(null);
-          setBulkProcessQueue([]);
-        }}
-        isBulk={bulkProcessQueue.length > 0}
-        timezone={timezone}
-      />
-    );
-  }, [processingSessionId, enriched, handleProcessComplete, bulkProcessQueue, timezone]);
-
-  const AddSessionPanel = useMemo(() => {
-    if (!addSessionOpen) return null;
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { AddSessionPanel: ASP } = require("./add-session-panel");
-    return (
-      <ASP
-        locationId={locationId}
-        rooms={visibleRooms}
-        editingSessionId={editingSessionId}
-        sessions={enriched}
-        onClose={() => {
-          setAddSessionOpen(false);
-          setEditingSessionId(null);
-        }}
-        onRefetch={refetch}
-        timezone={timezone}
-      />
-    );
-  }, [addSessionOpen, locationId, visibleRooms, editingSessionId, enriched, timezone, refetch]);
+  // Process flow and add session panel rendered via next/dynamic (code-split)
+  const processingSession = processingSessionId
+    ? enriched.find((s) => s.session_id === processingSessionId) ?? null
+    : null;
 
   return (
     <PatientSlideOverProvider onOpenPatient={handleOpenPatient}>
@@ -278,8 +253,32 @@ export function RunsheetShell({
 
       </div>
 
-      {ProcessFlow}
-      {AddSessionPanel}
+      {processingSession && (
+        <ProcessFlowDynamic
+          session={processingSession}
+          onComplete={handleProcessComplete}
+          onClose={() => {
+            setProcessingSessionId(null);
+            setBulkProcessQueue([]);
+          }}
+          isBulk={bulkProcessQueue.length > 0}
+          timezone={timezone}
+        />
+      )}
+      {addSessionOpen && (
+        <AddSessionPanelDynamic
+          locationId={locationId}
+          rooms={visibleRooms}
+          editingSessionId={editingSessionId}
+          sessions={enriched}
+          onClose={() => {
+            setAddSessionOpen(false);
+            setEditingSessionId(null);
+          }}
+          onRefetch={refetch}
+          timezone={timezone}
+        />
+      )}
       <PatientContactCard
         session={contactSession}
         patientId={contactPatientId}

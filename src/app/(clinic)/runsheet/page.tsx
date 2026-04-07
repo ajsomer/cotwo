@@ -53,17 +53,17 @@ export default async function RunSheetPage() {
     }
   }
 
-  // Fetch data in parallel
-  const [sessions, rooms] = await Promise.all([
+  // Fetch all data in parallel — no waterfall
+  const [sessions, rooms, resolvedClinicianRoomIds] = await Promise.all([
     fetchRunsheetSessions(locationId),
     fetchLocationRooms(locationId),
+    // Clinicians need their assigned room IDs to filter the run sheet.
+    // clinic_owner sees all rooms (has practice manager permissions).
+    role === "clinician"
+      ? fetchClinicianRoomIds(userId, locationId)
+      : Promise.resolve(undefined),
   ]);
-
-  // For clinicians, fetch their assigned room IDs to filter the run sheet.
-  // clinic_owner sees all rooms (has practice manager permissions).
-  if (role === "clinician") {
-    clinicianRoomIds = await fetchClinicianRoomIds(userId, locationId);
-  }
+  clinicianRoomIds = resolvedClinicianRoomIds;
 
   return (
     <RunsheetShell
