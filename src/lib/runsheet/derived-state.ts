@@ -61,20 +61,30 @@ export function isRunningOver(session: RunsheetSession, now: Date): boolean {
 /** Enrich a session with its derived state. */
 export function enrichSession(
   session: RunsheetSession,
-  now: Date
+  now: Date,
+  connectedSessions?: Set<string>
 ): EnrichedSession {
+  const derived_state = getDerivedState(session, now);
+  const patient_disconnected =
+    connectedSessions !== undefined &&
+    (session.status === 'waiting' || session.status === 'in_session') &&
+    session.patient_arrived &&
+    !connectedSessions.has(session.session_id);
+
   return {
     ...session,
-    derived_state: getDerivedState(session, now),
+    derived_state,
+    patient_disconnected,
   };
 }
 
 /** Enrich all sessions. */
 export function enrichSessions(
   sessions: RunsheetSession[],
-  now: Date
+  now: Date,
+  connectedSessions?: Set<string>
 ): EnrichedSession[] {
-  return sessions.map((s) => enrichSession(s, now));
+  return sessions.map((s) => enrichSession(s, now, connectedSessions));
 }
 
 /** Left border colour class for a derived state. */

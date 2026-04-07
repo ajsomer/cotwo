@@ -6,6 +6,7 @@ import { RoomContainer } from "./room-container";
 import { enrichSessions } from "@/lib/runsheet/derived-state";
 import { groupSessionsByRoom, calculateSummary } from "@/lib/runsheet/grouping";
 import { useRealtimeRunsheet } from "@/hooks/useRealtimeRunsheet";
+import { usePatientPresence } from "@/hooks/usePatientPresence";
 import { useTabNotifications } from "@/hooks/useTabNotifications";
 import { useFaviconBadge } from "@/hooks/useFaviconBadge";
 import { seedDemoData, nukeSessions } from "@/lib/runsheet/seed";
@@ -37,6 +38,9 @@ export function RunsheetShell({
     locationId,
   });
 
+  // Patient presence tracking
+  const connectedSessions = usePatientPresence(locationId);
+
   // Tick `now` every 30s for derived state recalculation
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -53,7 +57,7 @@ export function RunsheetShell({
   }, [rooms, clinicianRoomIds]);
 
   // Enrich sessions with derived state and group by room
-  const enriched = useMemo(() => enrichSessions(sessions, now), [sessions, now]);
+  const enriched = useMemo(() => enrichSessions(sessions, now, connectedSessions), [sessions, now, connectedSessions]);
   const groups = useMemo(
     () => groupSessionsByRoom(enriched, visibleRooms),
     [enriched, visibleRooms]

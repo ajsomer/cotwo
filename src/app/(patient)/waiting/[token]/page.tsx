@@ -48,6 +48,7 @@ export default async function WaitingRoomPage({
   return (
     <WaitingRoomClient
       sessionId={session.id}
+      locationId={location.id}
       clinicName={org.name}
       logoUrl={org.logo_url}
       roomName={room.name}

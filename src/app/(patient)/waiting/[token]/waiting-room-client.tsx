@@ -4,6 +4,7 @@ import { WaitingRoom } from '@/components/patient/waiting-room';
 
 interface WaitingRoomClientProps {
   sessionId: string;
+  locationId: string;
   clinicName: string;
   logoUrl: string | null;
   roomName: string;

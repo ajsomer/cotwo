@@ -138,6 +138,7 @@ export interface RunsheetSession {
 /** A RunsheetSession enriched with its derived display state. */
 export interface EnrichedSession extends RunsheetSession {
   derived_state: DerivedDisplayState;
+  patient_disconnected: boolean;
 }
 
 /** Sessions grouped by room for rendering. */

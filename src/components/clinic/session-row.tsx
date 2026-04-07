@@ -1,5 +1,6 @@
 "use client";
 
+import { WifiOff } from "lucide-react";
 import { StatusBadge } from "./status-badge";
 import { ActionButton } from "./action-button";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -69,6 +70,15 @@ export function SessionRow({ session, onAction, onClick, onPatientClick }: Sessi
 
         {/* Status badge */}
         <StatusBadge state={session.derived_state} className="flex-shrink-0" />
+
+        {/* Disconnect indicator */}
+        {session.patient_disconnected && (
+          <Tooltip content="Patient disconnected">
+            <span className="ml-1.5 flex-shrink-0 inline-flex items-center text-amber-500">
+              <WifiOff size={14} />
+            </span>
+          </Tooltip>
+        )}
 
         {/* Appointment type */}
         {session.type_name && (

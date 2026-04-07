@@ -6,6 +6,7 @@ import { PersistentHeader } from './persistent-header';
 
 interface WaitingRoomProps {
   sessionId: string;
+  locationId: string;
   clinicName: string;
   logoUrl: string | null;
   roomName: string;
@@ -17,6 +18,7 @@ type SessionStatus = 'waiting' | 'in_session' | 'complete' | 'done';
 
 export function WaitingRoom({
   sessionId,
+  locationId,
   clinicName,
   logoUrl,
   roomName,
@@ -43,7 +45,7 @@ export function WaitingRoom({
     );
 
     const channel = supabase
-      .channel(`waiting:${sessionId}`)
+      .channel(`presence:location:${locationId}`)
       .on(
         'postgres_changes',
         {
@@ -63,31 +65,19 @@ export function WaitingRoom({
           }
         }
       )
-      .subscribe();
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await channel.track({
+            session_id: sessionId,
+            connected_at: new Date().toISOString(),
+          });
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [sessionId]);
-
-  // Fallback polling (30s) in case realtime drops
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/patient/resolve`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: sessionId }),
-        });
-        // Fallback doesn't use the token — we'd need a session status endpoint
-        // For now, realtime is the primary mechanism
-      } catch {
-        // Ignore polling errors
-      }
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, [sessionId]);
+  }, [sessionId, locationId]);
 
   if (status === 'in_session') {
     return (
