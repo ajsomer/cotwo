@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
     const appointmentIds = [...runsByAppointment.keys()];
     const { data: appointmentsData } = await supabase
       .from("appointments")
-      .select("id, scheduled_at, patient_id, clinician_id, location_id")
+      .select("id, scheduled_at, patient_id, clinician_id, location_id, phone_number")
       .in("id", appointmentIds)
       .eq("location_id", locationId);
 
@@ -132,15 +132,23 @@ export async function GET(request: NextRequest) {
       if (!appt) continue;
 
       if (!grouped.has(appt.id)) {
-        const patient = patientMap.get(appt.patient_id);
+        const patient = appt.patient_id ? patientMap.get(appt.patient_id) : null;
+        // When patient_id is null (patient hasn't gone through entry flow yet),
+        // display the phone number from the appointment as the name fallback.
+        const firstName = patient?.first_name ?? (appt.phone_number ? appt.phone_number : "Unknown");
+        const lastName = patient?.last_name ?? "";
+        const phone = appt.patient_id
+          ? phoneMap.get(appt.patient_id) ?? appt.phone_number ?? null
+          : appt.phone_number ?? null;
+
         grouped.set(appt.id, {
           appointment_id: appt.id,
           scheduled_at: appt.scheduled_at,
-          patient_id: appt.patient_id,
-          patient_first_name: patient?.first_name ?? "Unknown",
-          patient_last_name: patient?.last_name ?? "",
+          patient_id: appt.patient_id ?? "",
+          patient_first_name: firstName,
+          patient_last_name: lastName,
           clinician_name: appt.clinician_id ? clinicianMap.get(appt.clinician_id) ?? null : null,
-          primary_phone: phoneMap.get(appt.patient_id) ?? null,
+          primary_phone: phone,
           total_actions: 0,
           completed_actions: 0,
           outstanding_actions: 0,
@@ -209,7 +217,7 @@ async function legacyFormAssignmentsQuery(
 
   const { data: appointmentsData } = await supabase
     .from("appointments")
-    .select("id, scheduled_at, patient_id, clinician_id, location_id")
+    .select("id, scheduled_at, patient_id, clinician_id, location_id, phone_number")
     .in("id", appointmentIds)
     .eq("location_id", locationId);
 
