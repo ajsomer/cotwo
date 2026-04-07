@@ -6,6 +6,21 @@ import { Badge } from "@/components/ui/badge";
 import { PatientContactCard } from "./patient-contact-card";
 import { PatientSlideOverProvider } from "./patient-slide-over-context";
 import { PatientNameLink } from "./patient-name-link";
+import { ActionTypeIcon } from "./action-type-icon";
+import type { ActionType } from "@/lib/workflows/types";
+
+interface WorkflowAction {
+  action_id: string;
+  action_type: string;
+  action_label: string;
+  status: string;
+  scheduled_for: string;
+  fired_at: string | null;
+  error_message: string | null;
+  form_name: string | null;
+  offset_minutes: number;
+  offset_direction: string;
+}
 
 interface OutstandingForm {
   assignment_id: string;
@@ -23,6 +38,10 @@ interface ReadinessAppointment {
   patient_last_name: string;
   clinician_name: string | null;
   primary_phone: string | null;
+  total_actions: number;
+  completed_actions: number;
+  outstanding_actions: number;
+  actions: WorkflowAction[];
   outstanding_forms: OutstandingForm[];
 }
 
@@ -30,6 +49,19 @@ interface DateSection {
   label: string;
   appointments: ReadinessAppointment[];
 }
+
+const ACTION_STATUS_BADGE: Record<string, { label: string; variant: "gray" | "amber" | "teal" | "blue" | "red" | "green" }> = {
+  scheduled: { label: "Scheduled", variant: "gray" },
+  firing: { label: "Firing", variant: "amber" },
+  sent: { label: "Sent", variant: "amber" },
+  opened: { label: "Opened", variant: "amber" },
+  completed: { label: "Completed", variant: "teal" },
+  captured: { label: "Captured", variant: "teal" },
+  verified: { label: "Verified", variant: "teal" },
+  skipped: { label: "Skipped", variant: "gray" },
+  failed: { label: "Failed", variant: "red" },
+  pending: { label: "Pending", variant: "gray" },
+};
 
 export function ReadinessShell() {
   const { selectedLocation } = useLocation();
@@ -60,7 +92,7 @@ export function ReadinessShell() {
     fetchData();
   }, [fetchData]);
 
-  // Optional polling every 30s
+  // Polling every 30s
   useEffect(() => {
     if (!selectedLocation) return;
     const interval = setInterval(fetchData, 30000);
@@ -79,15 +111,18 @@ export function ReadinessShell() {
   const handleResendAll = async (appt: ReadinessAppointment) => {
     setResendingId(appt.appointment_id);
     try {
-      await Promise.all(
-        appt.outstanding_forms.map((f) =>
-          fetch("/api/forms/assignments/send", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ assignment_id: f.assignment_id }),
-          })
-        )
-      );
+      // Resend legacy form assignments
+      if (appt.outstanding_forms.length > 0) {
+        await Promise.all(
+          appt.outstanding_forms.map((f) =>
+            fetch("/api/forms/assignments/send", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ assignment_id: f.assignment_id }),
+            })
+          )
+        );
+      }
     } catch {
       // silent
     }
@@ -114,7 +149,6 @@ export function ReadinessShell() {
     }, 2000);
   };
 
-  // Group appointments by date
   const sections = groupByDate(appointments);
 
   if (!selectedLocation) {
@@ -129,7 +163,7 @@ export function ReadinessShell() {
         <div className="mb-6">
           <h1 className="text-2xl font-semibold text-gray-800">Readiness</h1>
           <p className="mt-1 text-sm text-gray-500">
-            Outstanding forms for upcoming appointments at {selectedLocation.name}
+            Outstanding workflow actions for upcoming appointments at {selectedLocation.name}
           </p>
         </div>
 
@@ -173,7 +207,6 @@ export function ReadinessShell() {
           <div className="space-y-6">
             {sections.map((section) => (
               <div key={section.label}>
-                {/* Section header */}
                 <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-gray-500">
                   {section.label}
                 </h2>
@@ -182,6 +215,9 @@ export function ReadinessShell() {
                   {section.appointments.map((appt, idx) => {
                     const isExpanded = expandedIds.has(appt.appointment_id);
                     const isLast = idx === section.appointments.length - 1;
+                    const hasWorkflowActions = appt.actions.length > 0;
+                    const hasLegacyForms = appt.outstanding_forms.length > 0;
+
                     return (
                       <div key={appt.appointment_id}>
                         {/* Collapsed row */}
@@ -191,44 +227,48 @@ export function ReadinessShell() {
                           }`}
                           onClick={() => toggleExpanded(appt.appointment_id)}
                         >
-                          {/* Patient name */}
                           <div className="min-w-0 flex-1">
                             <PatientNameLink patientId={appt.patient_id} className="text-sm">
                               {appt.patient_first_name} {appt.patient_last_name}
                             </PatientNameLink>
                           </div>
 
-                          {/* Time */}
                           <span className="text-sm text-gray-500 whitespace-nowrap font-mono">
                             {formatTime(appt.scheduled_at)}
                           </span>
 
-                          {/* Clinician */}
                           {appt.clinician_name && (
                             <span className="hidden sm:block text-sm text-gray-400 truncate max-w-[120px]">
                               {appt.clinician_name}
                             </span>
                           )}
 
-                          {/* Outstanding count */}
-                          <Badge variant="amber">
-                            {appt.outstanding_forms.length} form{appt.outstanding_forms.length !== 1 ? "s" : ""}
-                          </Badge>
+                          {/* Status summary */}
+                          {hasWorkflowActions ? (
+                            <Badge variant="amber">
+                              {appt.completed_actions} of {appt.total_actions} complete
+                            </Badge>
+                          ) : (
+                            <Badge variant="amber">
+                              {appt.outstanding_forms.length} form{appt.outstanding_forms.length !== 1 ? "s" : ""}
+                            </Badge>
+                          )}
 
-                          {/* Actions */}
                           <div
                             className="flex items-center gap-2"
                             onClick={(e) => e.stopPropagation()}
                           >
-                            <button
-                              type="button"
-                              onClick={() => handleResendAll(appt)}
-                              className="rounded px-2 py-1 text-xs text-teal-600 hover:bg-teal-50 whitespace-nowrap"
-                            >
-                              {resendingId === appt.appointment_id
-                                ? "Sent!"
-                                : "Resend SMS"}
-                            </button>
+                            {hasLegacyForms && (
+                              <button
+                                type="button"
+                                onClick={() => handleResendAll(appt)}
+                                className="rounded px-2 py-1 text-xs text-teal-600 hover:bg-teal-50 whitespace-nowrap"
+                              >
+                                {resendingId === appt.appointment_id
+                                  ? "Sent!"
+                                  : "Resend SMS"}
+                              </button>
+                            )}
                             {appt.primary_phone && (
                               <a
                                 href={`tel:${appt.primary_phone}`}
@@ -239,7 +279,6 @@ export function ReadinessShell() {
                             )}
                           </div>
 
-                          {/* Expand indicator */}
                           <svg
                             className={`h-4 w-4 text-gray-400 transition-transform ${
                               isExpanded ? "rotate-180" : ""
@@ -257,58 +296,98 @@ export function ReadinessShell() {
                           </svg>
                         </div>
 
-                        {/* Expanded form details */}
+                        {/* Expanded: action timeline or legacy forms */}
                         {isExpanded && (
                           <div
                             className={`bg-gray-50/50 px-4 py-3 space-y-2 ${
                               !isLast ? "border-b border-gray-100" : ""
                             }`}
                           >
-                            {appt.outstanding_forms.map((form) => (
-                              <div
-                                key={form.assignment_id}
-                                className="flex items-center justify-between rounded-lg bg-white px-3 py-2 border border-gray-100"
-                              >
-                                <div>
-                                  <span className="text-sm text-gray-800">
-                                    {form.form_name}
-                                  </span>
-                                  {form.sent_at && (
-                                    <span className="ml-2 text-xs text-gray-400">
-                                      Sent {relativeTime(form.sent_at)}
+                            {/* Workflow actions */}
+                            {hasWorkflowActions &&
+                              appt.actions
+                                .sort((a, b) => b.offset_minutes - a.offset_minutes)
+                                .map((action) => {
+                                  const badge = ACTION_STATUS_BADGE[action.status] ?? { label: action.status, variant: "gray" as const };
+                                  return (
+                                    <div
+                                      key={action.action_id}
+                                      className="flex items-center justify-between rounded-lg bg-white px-3 py-2 border border-gray-100"
+                                    >
+                                      <div className="flex items-center gap-2.5">
+                                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-400">
+                                          <ActionTypeIcon actionType={action.action_type as ActionType} size={14} />
+                                        </span>
+                                        <div>
+                                          <span className="text-sm text-gray-800">
+                                            {action.action_label}
+                                          </span>
+                                          {action.fired_at && (
+                                            <span className="ml-2 text-xs text-gray-400">
+                                              Fired {relativeTime(action.fired_at)}
+                                            </span>
+                                          )}
+                                          {action.error_message && (
+                                            <span className="ml-2 text-xs text-red-500">
+                                              {action.error_message}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <Badge variant={badge.variant}>
+                                        {badge.label}
+                                      </Badge>
+                                    </div>
+                                  );
+                                })}
+
+                            {/* Legacy form assignments */}
+                            {!hasWorkflowActions &&
+                              appt.outstanding_forms.map((form) => (
+                                <div
+                                  key={form.assignment_id}
+                                  className="flex items-center justify-between rounded-lg bg-white px-3 py-2 border border-gray-100"
+                                >
+                                  <div>
+                                    <span className="text-sm text-gray-800">
+                                      {form.form_name}
                                     </span>
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <Badge
-                                    variant={
-                                      form.status === "opened"
-                                        ? "amber"
-                                        : form.status === "sent"
+                                    {form.sent_at && (
+                                      <span className="ml-2 text-xs text-gray-400">
+                                        Sent {relativeTime(form.sent_at)}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <Badge
+                                      variant={
+                                        form.status === "opened"
                                           ? "amber"
-                                          : "gray"
-                                    }
-                                  >
-                                    {form.status === "opened"
-                                      ? "Opened"
-                                      : form.status === "sent"
-                                        ? "Sent"
-                                        : "Pending"}
-                                  </Badge>
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      handleResendOne(form.assignment_id)
-                                    }
-                                    className="text-xs text-teal-600 hover:text-teal-700"
-                                  >
-                                    {resendingId === form.assignment_id
-                                      ? "Sent!"
-                                      : "Resend"}
-                                  </button>
+                                          : form.status === "sent"
+                                            ? "amber"
+                                            : "gray"
+                                      }
+                                    >
+                                      {form.status === "opened"
+                                        ? "Opened"
+                                        : form.status === "sent"
+                                          ? "Sent"
+                                          : "Pending"}
+                                    </Badge>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleResendOne(form.assignment_id)
+                                      }
+                                      className="text-xs text-teal-600 hover:text-teal-700"
+                                    >
+                                      {resendingId === form.assignment_id
+                                        ? "Sent!"
+                                        : "Resend"}
+                                    </button>
+                                  </div>
                                 </div>
-                              </div>
-                            ))}
+                              ))}
                           </div>
                         )}
                       </div>
@@ -357,7 +436,6 @@ function groupByDate(appointments: ReadinessAppointment[]): DateSection[] {
 
   const sections: DateSection[] = [];
 
-  // Past first
   if (groups.has("__past__")) {
     sections.push({
       label: "Past \u2014 clinical record incomplete",
@@ -366,7 +444,6 @@ function groupByDate(appointments: ReadinessAppointment[]): DateSection[] {
     groups.delete("__past__");
   }
 
-  // Remaining dates in order
   const sortedKeys = [...groups.keys()].sort();
   for (const key of sortedKeys) {
     const date = new Date(key + "T00:00:00");
