@@ -2,6 +2,7 @@
 
 import { createClient as createServerClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
+import { seedDefaultWorkflows } from "@/lib/workflows/seed-defaults";
 
 /**
  * Seeds the database with demo data for the run sheet.
@@ -144,100 +145,8 @@ export async function seedDemoData() {
       { id: "00000000-0000-0000-0000-00000000c003", patient_id: "00000000-0000-0000-0000-000000004004", stripe_payment_method_id: "pm_test_004", card_last_four: "1234", card_brand: "Visa", card_expiry: "03/28", is_default: true },
     ]);
 
-    // ========================================================================
-    // Workflow seed data: templates, action blocks, links, outcome pathways
-    // ========================================================================
-
-    // Look up form IDs by name in this org (forms were created separately)
-    const { data: orgForms } = await supabase
-      .from("forms")
-      .select("id, name")
-      .eq("org_id", ORG_ID)
-      .eq("status", "published");
-
-    const formByName = new Map((orgForms ?? []).map((f) => [f.name, f.id]));
-    const intakeFormId = formByName.get("New Patient Intake") ?? null;
-    const k10FormId = formByName.get("Mental Health Assessment (K10)") ?? null;
-    const satisfactionFormId = formByName.get("Patient Satisfaction Survey") ?? null;
-
-    // --- Pre-appointment workflow templates ---
-
-    const PRE_TEMPLATE_1 = "00000000-0000-0000-0000-000000008001"; // Standard new patient intake
-    const PRE_TEMPLATE_2 = "00000000-0000-0000-0000-000000008002"; // Returning patient quick check
-    const PRE_TEMPLATE_3 = "00000000-0000-0000-0000-000000008003"; // Telehealth-specific setup
-    const PRE_TEMPLATE_4 = "00000000-0000-0000-0000-000000008004"; // Minimal reminder only
-
-    await supabase.from("workflow_templates").upsert([
-      { id: PRE_TEMPLATE_1, org_id: ORG_ID, name: "Standard New Patient Intake", direction: "pre_appointment", status: "published" },
-      { id: PRE_TEMPLATE_2, org_id: ORG_ID, name: "Returning Patient Quick Check", direction: "pre_appointment", status: "published" },
-      { id: PRE_TEMPLATE_3, org_id: ORG_ID, name: "Telehealth-specific Setup", direction: "pre_appointment", status: "published" },
-      { id: PRE_TEMPLATE_4, org_id: ORG_ID, name: "Minimal Reminder Only", direction: "pre_appointment", status: "published" },
-    ]);
-
-    // Pre-workflow action blocks
-    await supabase.from("workflow_action_blocks").upsert([
-      // Template 1: Standard New Patient Intake (4 actions)
-      { id: "00000000-0000-0000-0000-00000000a001", template_id: PRE_TEMPLATE_1, action_type: "deliver_form", offset_minutes: 20160, offset_direction: "before", form_id: intakeFormId, config: {}, precondition: null, sort_order: 0 },
-      { id: "00000000-0000-0000-0000-00000000a002", template_id: PRE_TEMPLATE_1, action_type: "send_reminder", offset_minutes: 4320, offset_direction: "before", config: { message: "Hi {first_name}, just a reminder you have an appointment with {clinic_name} in 3 days. Please complete your intake form if you haven't already." }, precondition: { type: "form_not_completed", form_id: intakeFormId ?? "" }, sort_order: 1 },
-      { id: "00000000-0000-0000-0000-00000000a003", template_id: PRE_TEMPLATE_1, action_type: "capture_card", offset_minutes: 2880, offset_direction: "before", config: {}, precondition: { type: "card_not_on_file" }, sort_order: 2 },
-      { id: "00000000-0000-0000-0000-00000000a004", template_id: PRE_TEMPLATE_1, action_type: "send_reminder", offset_minutes: 1440, offset_direction: "before", config: { message: "Hi {first_name}, your appointment with {clinician_name} at {clinic_name} is tomorrow at {appointment_time}. See you then!" }, precondition: null, sort_order: 3 },
-
-      // Template 2: Returning Patient Quick Check (2 actions)
-      { id: "00000000-0000-0000-0000-00000000a005", template_id: PRE_TEMPLATE_2, action_type: "send_reminder", offset_minutes: 2880, offset_direction: "before", config: { message: "Hi {first_name}, just a reminder about your appointment with {clinic_name} in 2 days at {appointment_time}." }, precondition: null, sort_order: 0 },
-      { id: "00000000-0000-0000-0000-00000000a006", template_id: PRE_TEMPLATE_2, action_type: "capture_card", offset_minutes: 1440, offset_direction: "before", config: {}, precondition: { type: "card_not_on_file" }, sort_order: 1 },
-
-      // Template 3: Telehealth-specific Setup (2 actions)
-      { id: "00000000-0000-0000-0000-00000000a007", template_id: PRE_TEMPLATE_3, action_type: "verify_contact", offset_minutes: 10080, offset_direction: "before", config: {}, precondition: { type: "contact_not_verified" }, sort_order: 0 },
-      { id: "00000000-0000-0000-0000-00000000a008", template_id: PRE_TEMPLATE_3, action_type: "send_reminder", offset_minutes: 1440, offset_direction: "before", config: { message: "Hi {first_name}, your telehealth appointment with {clinician_name} is tomorrow at {appointment_time}. Make sure you're in a quiet spot with good internet." }, precondition: null, sort_order: 1 },
-
-      // Template 4: Minimal Reminder Only (1 action)
-      { id: "00000000-0000-0000-0000-00000000a009", template_id: PRE_TEMPLATE_4, action_type: "send_reminder", offset_minutes: 1440, offset_direction: "before", config: { message: "Hi {first_name}, quick reminder about your check-in with {clinic_name} tomorrow at {appointment_time}." }, precondition: null, sort_order: 0 },
-    ]);
-
-    // Link pre-workflows to appointment types
-    await supabase.from("type_workflow_links").upsert([
-      { id: "00000000-0000-0000-0000-000000009001", appointment_type_id: "00000000-0000-0000-0000-000000003001", workflow_template_id: PRE_TEMPLATE_1, direction: "pre_appointment" },
-      { id: "00000000-0000-0000-0000-000000009002", appointment_type_id: "00000000-0000-0000-0000-000000003002", workflow_template_id: PRE_TEMPLATE_2, direction: "pre_appointment" },
-      { id: "00000000-0000-0000-0000-000000009003", appointment_type_id: "00000000-0000-0000-0000-000000003003", workflow_template_id: PRE_TEMPLATE_2, direction: "pre_appointment" },
-      { id: "00000000-0000-0000-0000-000000009004", appointment_type_id: "00000000-0000-0000-0000-000000003004", workflow_template_id: PRE_TEMPLATE_3, direction: "pre_appointment" },
-      { id: "00000000-0000-0000-0000-000000009005", appointment_type_id: "00000000-0000-0000-0000-000000003005", workflow_template_id: PRE_TEMPLATE_4, direction: "pre_appointment" },
-    ]);
-
-    // --- Post-appointment workflow templates ---
-
-    const POST_TEMPLATE_1 = "00000000-0000-0000-0000-000000008005"; // Discharge with home exercises
-    const POST_TEMPLATE_2 = "00000000-0000-0000-0000-000000008006"; // Continue treatment
-    const POST_TEMPLATE_3 = "00000000-0000-0000-0000-000000008007"; // Discharge complete
-
-    await supabase.from("workflow_templates").upsert([
-      { id: POST_TEMPLATE_1, org_id: ORG_ID, name: "Discharge with Home Exercises", direction: "post_appointment", status: "published" },
-      { id: POST_TEMPLATE_2, org_id: ORG_ID, name: "Continue Treatment", direction: "post_appointment", status: "published" },
-      { id: POST_TEMPLATE_3, org_id: ORG_ID, name: "Discharge Complete", direction: "post_appointment", status: "published" },
-    ]);
-
-    // Post-workflow action blocks (editor only in v1, execution deferred to v2)
-    await supabase.from("workflow_action_blocks").upsert([
-      // Template 5: Discharge with Home Exercises (4 actions)
-      { id: "00000000-0000-0000-0000-00000000a010", template_id: POST_TEMPLATE_1, action_type: "send_sms", offset_minutes: 0, offset_direction: "after", config: { message: "Hi {first_name}, thanks for your appointment today with {clinician_name}. We'll send your exercise program shortly." }, precondition: null, sort_order: 0 },
-      { id: "00000000-0000-0000-0000-00000000a011", template_id: POST_TEMPLATE_1, action_type: "send_file", offset_minutes: 1440, offset_direction: "after", config: { message: "Hi {first_name}, here's your home exercise program as discussed." }, precondition: null, sort_order: 1 },
-      { id: "00000000-0000-0000-0000-00000000a012", template_id: POST_TEMPLATE_1, action_type: "deliver_form", offset_minutes: 20160, offset_direction: "after", form_id: satisfactionFormId, config: {}, precondition: null, sort_order: 2 },
-      { id: "00000000-0000-0000-0000-00000000a013", template_id: POST_TEMPLATE_1, action_type: "send_rebooking_nudge", offset_minutes: 43200, offset_direction: "after", config: { message: "Hi {first_name}, it's been a month since your last appointment with {clinic_name}. Would you like to book a follow-up?" }, precondition: { type: "no_future_appointment" }, sort_order: 3 },
-
-      // Template 6: Continue Treatment (2 actions)
-      { id: "00000000-0000-0000-0000-00000000a014", template_id: POST_TEMPLATE_2, action_type: "send_sms", offset_minutes: 0, offset_direction: "after", config: { message: "Hi {first_name}, thanks for your appointment today. We'll be in touch about your next visit." }, precondition: null, sort_order: 0 },
-      { id: "00000000-0000-0000-0000-00000000a015", template_id: POST_TEMPLATE_2, action_type: "send_rebooking_nudge", offset_minutes: 10080, offset_direction: "after", config: { message: "Hi {first_name}, time to book your next appointment with {clinic_name}." }, precondition: { type: "no_future_appointment" }, sort_order: 1 },
-
-      // Template 7: Discharge Complete (2 actions)
-      { id: "00000000-0000-0000-0000-00000000a016", template_id: POST_TEMPLATE_3, action_type: "send_sms", offset_minutes: 0, offset_direction: "after", config: { message: "Hi {first_name}, your treatment with {clinic_name} is now complete. If you need anything in the future, don't hesitate to get in touch." }, precondition: null, sort_order: 0 },
-      { id: "00000000-0000-0000-0000-00000000a017", template_id: POST_TEMPLATE_3, action_type: "deliver_form", offset_minutes: 20160, offset_direction: "after", form_id: k10FormId, config: {}, precondition: null, sort_order: 1 },
-    ]);
-
-    // Outcome pathways linked to post-workflow templates
-    await supabase.from("outcome_pathways").upsert([
-      { id: "00000000-0000-0000-0000-000000007001", org_id: ORG_ID, name: "Discharge with Home Exercises", description: "Send exercise program, PROMs at 2 weeks, rebooking nudge at 30 days", workflow_template_id: POST_TEMPLATE_1 },
-      { id: "00000000-0000-0000-0000-000000007002", org_id: ORG_ID, name: "Continue Treatment", description: "Send summary and rebooking nudge in 7 days if no appointment booked", workflow_template_id: POST_TEMPLATE_2 },
-      { id: "00000000-0000-0000-0000-000000007003", org_id: ORG_ID, name: "Discharge Complete", description: "Send discharge summary and outcome measures at 2 weeks", workflow_template_id: POST_TEMPLATE_3 },
-    ]);
+    // Seed default workflow templates (idempotent — skips existing)
+    await seedDefaultWorkflows(ORG_ID);
 
     // ========================================================================
     // Read existing rooms at the user's location and generate time-aware sessions

@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { generateSlug } from "@/lib/utils/slug";
+import { seedDefaultWorkflows } from "@/lib/workflows/seed-defaults";
 import { NextResponse, type NextRequest } from "next/server";
 
 export async function POST(request: NextRequest) {
@@ -101,6 +102,13 @@ export async function POST(request: NextRequest) {
       { error: "Failed to create staff assignment." },
       { status: 500 }
     );
+  }
+
+  // Seed default workflow templates for the new org
+  try {
+    await seedDefaultWorkflows(org.id);
+  } catch (err) {
+    console.error("[setup/clinic] Workflow seed failed (non-blocking):", err);
   }
 
   console.log("[setup/clinic] Success. org:", org.id, "location:", location.id);
