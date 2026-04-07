@@ -143,7 +143,7 @@ export async function fetchLocationRooms(locationId: string): Promise<Room[]> {
 
   const { data, error } = await supabase
     .from('rooms')
-    .select('id, location_id, name, room_type, link_token, sort_order')
+    .select('id, location_id, name, room_type, link_token, sort_order, payments_enabled')
     .eq('location_id', locationId)
     .order('sort_order', { ascending: true });
 

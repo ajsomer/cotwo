@@ -1,7 +1,5 @@
+import { PaymentsSettingsShell } from "@/components/clinic/payments-settings-shell";
+
 export default function PaymentSettingsPage() {
-  return (
-    <div className="p-6">
-      <h1 className="text-2xl font-semibold text-gray-800">Payment Settings</h1>
-    </div>
-  );
+  return <PaymentsSettingsShell />;
 }

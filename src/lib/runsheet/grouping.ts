@@ -112,6 +112,7 @@ export function groupSessionsByRoom(
       room_type: room.room_type,
       room_sort_order: room.sort_order,
       link_token: room.link_token,
+      payments_enabled: room.payments_enabled,
       clinician_name: clinicianName,
       sessions: sorted,
       counts: countSessions(sorted),

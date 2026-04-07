@@ -181,7 +181,21 @@ export function RoomContainer({
           <span className="text-lg font-semibold text-gray-800 truncate">
             {group.room_name}
           </span>
+
         </button>
+
+        {/* Payments enabled indicator */}
+        {group.payments_enabled && (
+          <Tooltip content="Payments enabled">
+            <span className="flex-shrink-0 inline-flex items-center text-green-500">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="1.5" y="3.5" width="13" height="9" rx="1.5" />
+                <path d="M1.5 6.5h13" />
+                <path d="M4 10h3" />
+              </svg>
+            </span>
+          </Tooltip>
+        )}
 
         {/* Kebab menu */}
         <div className="flex items-center flex-shrink-0" ref={menuRef}>

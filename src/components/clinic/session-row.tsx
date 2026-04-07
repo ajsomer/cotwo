@@ -66,11 +66,6 @@ export function SessionRow({ session, onAction, onClick, onPatientClick }: Sessi
         {/* Card indicator */}
         <CardIndicator hasCard={session.has_card_on_file} />
 
-        <span className="mx-2 text-gray-300 leading-none flex-shrink-0">&middot;</span>
-
-        {/* Status badge */}
-        <StatusBadge state={session.derived_state} className="flex-shrink-0" />
-
         {/* Disconnect indicator */}
         {session.patient_disconnected && (
           <Tooltip content="Patient disconnected">
@@ -79,6 +74,11 @@ export function SessionRow({ session, onAction, onClick, onPatientClick }: Sessi
             </span>
           </Tooltip>
         )}
+
+        <span className="mx-2 text-gray-300 leading-none flex-shrink-0">&middot;</span>
+
+        {/* Status badge */}
+        <StatusBadge state={session.derived_state} className="flex-shrink-0" />
 
         {/* Appointment type */}
         {session.type_name && (

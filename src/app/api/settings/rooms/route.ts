@@ -174,6 +174,7 @@ export async function PATCH(request: NextRequest) {
   if (name !== undefined) updates.name = name;
   if (room_type !== undefined) updates.room_type = room_type;
   if (sort_order !== undefined) updates.sort_order = sort_order;
+  if (body.payments_enabled !== undefined) updates.payments_enabled = body.payments_enabled;
 
   if (Object.keys(updates).length > 0) {
     const { error } = await supabase

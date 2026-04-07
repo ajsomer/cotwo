@@ -40,12 +40,12 @@ async function resolveToken(token: string): Promise<EntryContext | null> {
     .select(`
       id, entry_token, status, appointment_id, notification_sent,
       prep_completed, card_captured, device_tested,
-      rooms!inner (id, name, room_type,
+      rooms!inner (id, name, room_type, payments_enabled,
         locations!inner (id, name, stripe_account_id,
-          organisations!inner (id, name, logo_url, tier)
+          organisations!inner (id, name, logo_url, tier, stripe_routing)
         )
       ),
-      appointments!left (scheduled_at, phone_number,
+      appointments!left (scheduled_at, phone_number, clinician_id,
         users!left (full_name)
       )
     `)
@@ -57,6 +57,10 @@ async function resolveToken(token: string): Promise<EntryContext | null> {
     const location = room.locations as any;
     const org = location.organisations as any;
     const appointment = session.appointments as any;
+
+    const paymentsEnabled = await resolvePaymentsEnabled(
+      supabase, room, location, org, appointment?.clinician_id
+    );
 
     return {
       entry_type: 'session',
@@ -72,7 +76,7 @@ async function resolveToken(token: string): Promise<EntryContext | null> {
         phone_number: appointment?.phone_number || null,
         clinician_name: appointment?.users?.full_name || null,
       },
-      payments_enabled: !!location.stripe_account_id,
+      payments_enabled: paymentsEnabled,
     };
   }
 
@@ -80,9 +84,9 @@ async function resolveToken(token: string): Promise<EntryContext | null> {
   const { data: room } = await supabase
     .from('rooms')
     .select(`
-      id, name, room_type,
+      id, name, room_type, payments_enabled,
       locations!inner (id, name, stripe_account_id,
-        organisations!inner (id, name, logo_url, tier)
+        organisations!inner (id, name, logo_url, tier, stripe_routing)
       )
     `)
     .eq('link_token', token)
@@ -92,13 +96,17 @@ async function resolveToken(token: string): Promise<EntryContext | null> {
     const location = (room as any).locations as any;
     const org = location.organisations as any;
 
+    const paymentsEnabled = await resolvePaymentsEnabled(
+      supabase, room, location, org, null
+    );
+
     return {
       entry_type: 'on_demand',
       org: { id: org.id, name: org.name, logo_url: org.logo_url, tier: org.tier },
       location: { id: location.id, name: location.name, stripe_account_id: location.stripe_account_id },
       room: { id: room.id, name: room.name, room_type: room.room_type },
       session: null,
-      payments_enabled: !!location.stripe_account_id,
+      payments_enabled: paymentsEnabled,
     };
   }
 
@@ -121,9 +129,47 @@ async function resolveToken(token: string): Promise<EntryContext | null> {
       location: { id: location.id, name: location.name, stripe_account_id: location.stripe_account_id },
       room: null,
       session: null,
+      // QR code has no room context yet — fall back to location-level check
       payments_enabled: !!location.stripe_account_id,
     };
   }
 
   return null;
+}
+
+/**
+ * Resolve whether payments are enabled for this entry, considering:
+ * 1. Room-level toggle (payments_enabled)
+ * 2. Routing mode (clinic vs per-clinician)
+ * 3. Whether the relevant Stripe account is connected
+ */
+async function resolvePaymentsEnabled(
+  supabase: any,
+  room: any,
+  location: any,
+  org: any,
+  clinicianId: string | null
+): Promise<boolean> {
+  // Room has payments disabled — skip regardless
+  if (!room.payments_enabled) return false;
+
+  // Clinic-level routing: check location's Stripe account
+  if (org.stripe_routing === 'location') {
+    return !!location.stripe_account_id;
+  }
+
+  // Per-clinician routing: check the assigned clinician's Stripe account
+  if (org.stripe_routing === 'clinician' && clinicianId) {
+    const { data: assignment } = await supabase
+      .from('staff_assignments')
+      .select('stripe_account_id')
+      .eq('user_id', clinicianId)
+      .eq('location_id', location.id)
+      .single();
+
+    return !!assignment?.stripe_account_id;
+  }
+
+  // Per-clinician but no clinician assigned (on-demand) — no payment
+  return false;
 }

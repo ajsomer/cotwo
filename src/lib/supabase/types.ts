@@ -51,6 +51,7 @@ export interface Room {
   room_type: RoomType;
   link_token: string;
   sort_order: number;
+  payments_enabled: boolean;
 }
 
 export interface AppointmentType {
@@ -148,6 +149,7 @@ export interface RoomGroup {
   room_type: RoomType;
   room_sort_order: number;
   link_token: string;
+  payments_enabled: boolean;
   clinician_name: string | null;
   sessions: EnrichedSession[];
   counts: RoomCounts;
