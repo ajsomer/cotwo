@@ -67,7 +67,7 @@ export function DeviceTest({
       setResults((r) => ({ ...r, camera: 'fail' }));
     }
 
-    // Microphone test
+    // Microphone test — listens until speech detected or 10s timeout
     setResults((r) => ({ ...r, microphone: 'testing' }));
     try {
       const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -78,18 +78,24 @@ export function DeviceTest({
       analyser.fftSize = 256;
 
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      let detected = false;
 
-      // Sample audio level for 2 seconds
-      const checkInterval = setInterval(() => {
-        analyser.getByteFrequencyData(dataArray);
-        const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-        setAudioLevel(avg / 128);
-        if (avg > 5) detected = true;
-      }, 100);
+      const detected = await new Promise<boolean>((resolve) => {
+        const timeout = setTimeout(() => {
+          clearInterval(checkInterval);
+          resolve(false);
+        }, 10_000);
 
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      clearInterval(checkInterval);
+        const checkInterval = setInterval(() => {
+          analyser.getByteFrequencyData(dataArray);
+          const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+          setAudioLevel(avg / 128);
+          if (avg > 5) {
+            clearInterval(checkInterval);
+            clearTimeout(timeout);
+            resolve(true);
+          }
+        }, 100);
+      });
 
       audioStream.getTracks().forEach((t) => t.stop());
       await audioContext.close();
@@ -106,10 +112,7 @@ export function DeviceTest({
     setResults((r) => ({ ...r, connection: 'testing' }));
     try {
       const start = Date.now();
-      await fetch('/api/patient/resolve', { method: 'HEAD' }).catch(() => {
-        // HEAD may not be supported, try GET with empty body
-        return fetch('/api/runsheet');
-      });
+      await fetch(window.location.href, { method: 'HEAD', cache: 'no-store' });
       const latency = Date.now() - start;
 
       setResults((r) => ({

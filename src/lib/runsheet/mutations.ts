@@ -103,6 +103,32 @@ export async function createSessions(
       continue;
     }
 
+    // Resolve existing patient by phone number and link to session
+    const { data: phoneMatch } = await supabase
+      .from("patient_phone_numbers")
+      .select("patient_id, patients!inner (id, org_id)")
+      .eq("phone_number", input.phone_number)
+      .limit(10);
+
+    const matchedPatient = (phoneMatch ?? []).find((row: Record<string, unknown>) => {
+      const p = row.patients as Record<string, unknown> | null;
+      return p?.org_id === orgId;
+    });
+
+    if (matchedPatient) {
+      await supabase.from("session_participants").insert({
+        session_id: session.id,
+        patient_id: matchedPatient.patient_id,
+        role: "patient",
+      });
+
+      // Also set patient_id on the appointment
+      await supabase
+        .from("appointments")
+        .update({ patient_id: matchedPatient.patient_id })
+        .eq("id", appointment.id);
+    }
+
     // Send SMS based on timing
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
     const entryLink = `${appUrl}/entry/${session.entry_token}`;

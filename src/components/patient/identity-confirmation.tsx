@@ -17,7 +17,7 @@ interface IdentityConfirmationProps {
   onConfirmed: (patient: PatientContact) => void;
 }
 
-type Mode = 'confirm_single' | 'select_multiple' | 'new_patient';
+type Mode = 'select_multiple' | 'new_patient';
 
 export function IdentityConfirmation({
   clinicName,
@@ -34,9 +34,7 @@ export function IdentityConfirmation({
   const initialMode: Mode =
     existingPatients.length === 0
       ? 'new_patient'
-      : existingPatients.length === 1
-        ? 'confirm_single'
-        : 'select_multiple';
+      : 'select_multiple';
 
   const [mode, setMode] = useState<Mode>(initialMode);
   const [firstName, setFirstName] = useState('');
@@ -123,32 +121,7 @@ export function IdentityConfirmation({
       />
 
       <div className="w-full space-y-4">
-        {/* Single existing contact: confirm */}
-        {mode === 'confirm_single' && existingPatients.length === 1 && (
-          <>
-            <h1 className="text-xl font-semibold text-gray-800">
-              Is this appointment for{' '}
-              {existingPatients[0].first_name} {existingPatients[0].last_name}?
-            </h1>
-
-            <button
-              onClick={() => confirmExisting(existingPatients[0].id)}
-              disabled={loading}
-              className="w-full rounded-lg bg-teal-500 px-6 py-3 text-base font-medium text-white transition-colors hover:bg-teal-600 disabled:opacity-50"
-            >
-              {loading ? 'Confirming...' : "Yes, that's me"}
-            </button>
-
-            <button
-              onClick={() => setMode('new_patient')}
-              className="w-full text-center text-sm font-medium text-teal-500 hover:text-teal-600"
-            >
-              Someone else
-            </button>
-          </>
-        )}
-
-        {/* Multiple contacts: select */}
+        {/* Patient list: always a list of cards + "Someone else" */}
         {mode === 'select_multiple' && (
           <>
             <h1 className="text-xl font-semibold text-gray-800">
@@ -173,14 +146,17 @@ export function IdentityConfirmation({
                   )}
                 </button>
               ))}
-            </div>
 
-            <button
-              onClick={() => setMode('new_patient')}
-              className="w-full text-center text-sm font-medium text-teal-500 hover:text-teal-600"
-            >
-              Someone else
-            </button>
+              <button
+                onClick={() => setMode('new_patient')}
+                disabled={loading}
+                className="w-full rounded-xl border border-dashed border-gray-300 bg-white px-4 py-3 text-left transition-colors hover:border-teal-500 hover:bg-teal-50 disabled:opacity-50"
+              >
+                <span className="text-base font-medium text-teal-500">
+                  Someone else
+                </span>
+              </button>
+            </div>
           </>
         )}
 
@@ -241,7 +217,7 @@ export function IdentityConfirmation({
 
             {existingPatients.length > 0 && (
               <button
-                onClick={() => setMode(existingPatients.length === 1 ? 'confirm_single' : 'select_multiple')}
+                onClick={() => setMode('select_multiple')}
                 className="w-full text-center text-sm text-gray-400 hover:text-gray-600"
               >
                 Back
