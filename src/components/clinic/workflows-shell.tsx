@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useOrg } from "@/hooks/useOrg";
 import type {
   DbWorkflowTemplate,
   DbWorkflowActionBlock,
@@ -33,48 +34,31 @@ interface OutcomePathwayRow {
   action_count: number;
 }
 
-interface WorkflowsShellProps {
-  initialAppointmentTypes: AppointmentTypeRow[];
-  initialForms: { id: string; name: string }[];
-  initialTemplate: DbWorkflowTemplate | null;
-  initialBlocks: unknown[];
-  orgId: string;
-}
+export function WorkflowsShell() {
+  const { org } = useOrg();
+  const orgId = org?.id ?? "";
 
-export function WorkflowsShell({
-  initialAppointmentTypes,
-  initialForms,
-  initialTemplate,
-  initialBlocks,
-  orgId,
-}: WorkflowsShellProps) {
   const [direction, setDirection] = useState<WorkflowDirection>("pre_appointment");
-  const [selectedId, setSelectedId] = useState<string | null>(
-    initialAppointmentTypes.length > 0 ? initialAppointmentTypes[0].id : null
-  );
-  const [loading, setLoading] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Sidebar data — initialized from server props
-  const [appointmentTypes, setAppointmentTypes] = useState<AppointmentTypeRow[]>(initialAppointmentTypes);
+  // Sidebar data
+  const [appointmentTypes, setAppointmentTypes] = useState<AppointmentTypeRow[]>([]);
   const [outcomePathways, setOutcomePathways] = useState<OutcomePathwayRow[]>([]);
 
-  // Detail data — initialized from server props
-  const [template, setTemplate] = useState<DbWorkflowTemplate | null>(initialTemplate);
-  const [originalBlocks, setOriginalBlocks] = useState<DbWorkflowActionBlock[]>(
-    initialBlocks as DbWorkflowActionBlock[]
-  );
-  const [workingBlocks, setWorkingBlocks] = useState<DbWorkflowActionBlock[]>(
-    initialBlocks as DbWorkflowActionBlock[]
-  );
+  // Detail data
+  const [template, setTemplate] = useState<DbWorkflowTemplate | null>(null);
+  const [originalBlocks, setOriginalBlocks] = useState<DbWorkflowActionBlock[]>([]);
+  const [workingBlocks, setWorkingBlocks] = useState<DbWorkflowActionBlock[]>([]);
 
   // Metadata edits
   const [metadataEdits, setMetadataEdits] = useState<Record<string, unknown>>({});
 
-  // Forms for pickers — initialized from server props
-  const [forms] = useState<{ id: string; name: string }[]>(initialForms);
+  // Forms for pickers
+  const [forms, setForms] = useState<{ id: string; name: string }[]>([]);
 
   // Mid-flight warning
   const [showWarning, setShowWarning] = useState(false);
@@ -107,6 +91,15 @@ export function WorkflowsShell({
       if (data.error) throw new Error(data.error);
       return { types: [] as AppointmentTypeRow[], pathways: data.outcome_pathways ?? [] as OutcomePathwayRow[] };
     }
+  }
+
+  /** Fetch published forms for the picker dropdowns. */
+  async function fetchFormsList() {
+    const res = await fetch(`/api/forms?org_id=${orgId}`);
+    const data = await res.json();
+    return (data.forms ?? [])
+      .filter((f: { status: string }) => f.status === "published")
+      .map((f: { id: string; name: string }) => ({ id: f.id, name: f.name }));
   }
 
   /** Load detail for a specific item. Called explicitly by event handlers. */
@@ -149,39 +142,67 @@ export function WorkflowsShell({
   }
 
   // ---------------------------------------------------------------------------
+  // Initial load — single useEffect, fires on mount and direction toggle
+  // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    if (!orgId) return;
+    let cancelled = false;
+
+    async function loadInitialData() {
+      setLoading(true);
+      setError(null);
+      try {
+        const [sidebarData, formsData] = await Promise.all([
+          fetchSidebar(direction),
+          fetchFormsList(),
+        ]);
+        if (cancelled) return;
+
+        setAppointmentTypes(sidebarData.types);
+        setOutcomePathways(sidebarData.pathways);
+        setForms(formsData);
+        setLoading(false);
+
+        const items = direction === "pre_appointment" ? sidebarData.types : sidebarData.pathways;
+        if (items.length > 0) {
+          const firstId = items[0].id;
+          setSelectedId(firstId);
+          await loadDetail(firstId, direction, sidebarData.types, sidebarData.pathways);
+        } else {
+          setSelectedId(null);
+          setTemplate(null);
+          setOriginalBlocks([]);
+          setWorkingBlocks([]);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError((err as Error).message);
+          setLoading(false);
+        }
+      }
+    }
+
+    loadInitialData();
+    return () => { cancelled = true; };
+  }, [orgId, direction]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---------------------------------------------------------------------------
   // Event handlers
   // ---------------------------------------------------------------------------
 
-  const handleDirectionChange = async (newDir: WorkflowDirection) => {
+  const handleDirectionChange = (newDir: WorkflowDirection) => {
     if (newDir === direction) return;
     if (dirtyRef.current) {
       if (!window.confirm("You have unsaved changes. Discard them?")) return;
     }
-
-    setDirection(newDir);
+    // Reset state — useEffect will handle the fetch via direction dep
     setSelectedId(null);
     setTemplate(null);
     setOriginalBlocks([]);
     setWorkingBlocks([]);
     setMetadataEdits({});
-    setLoading(true);
-
-    try {
-      const sidebarData = await fetchSidebar(newDir);
-      setAppointmentTypes(sidebarData.types);
-      setOutcomePathways(sidebarData.pathways);
-      setLoading(false);
-
-      const items = newDir === "pre_appointment" ? sidebarData.types : sidebarData.pathways;
-      if (items.length > 0) {
-        const firstId = items[0].id;
-        setSelectedId(firstId);
-        await loadDetail(firstId, newDir, sidebarData.types, sidebarData.pathways);
-      }
-    } catch (err) {
-      setError((err as Error).message);
-      setLoading(false);
-    }
+    setDirection(newDir);
   };
 
   const handleSelect = (id: string) => {
