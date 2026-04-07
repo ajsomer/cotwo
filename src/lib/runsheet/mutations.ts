@@ -2,11 +2,14 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { getSmsProvider } from "@/lib/sms";
+import { scheduleWorkflowForAppointment } from "@/lib/workflows/scanner";
 
 interface SessionInput {
   phone_number: string;
   scheduled_at: string;
   room_id: string;
+  /** Optional: appointment type for Complete tier workflow scheduling */
+  appointment_type_id?: string;
 }
 
 /**
@@ -72,6 +75,7 @@ export async function createSessions(
         location_id: locationId,
         scheduled_at: input.scheduled_at,
         phone_number: input.phone_number,
+        appointment_type_id: input.appointment_type_id ?? null,
       })
       .select("id")
       .single();
@@ -79,6 +83,20 @@ export async function createSessions(
     if (apptError) {
       console.error("[CREATE] Failed to create appointment:", apptError);
       continue;
+    }
+
+    // Schedule pre-appointment workflow if appointment type is provided
+    if (input.appointment_type_id) {
+      try {
+        await scheduleWorkflowForAppointment(
+          appointment.id,
+          input.appointment_type_id,
+          input.scheduled_at
+        );
+      } catch (err) {
+        // Workflow scheduling failure should not block appointment creation
+        console.error("[CREATE] Failed to schedule workflow:", err);
+      }
     }
 
     // Create session

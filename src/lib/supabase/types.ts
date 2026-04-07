@@ -1273,6 +1273,7 @@ export type Database = {
         | "captured"
         | "verified"
         | "cancelled"
+        | "firing"
       action_type:
         | "send_sms"
         | "deliver_form"
@@ -1456,6 +1457,7 @@ export const Constants = {
         "captured",
         "verified",
         "cancelled",
+        "firing",
       ],
       action_type: [
         "send_sms",

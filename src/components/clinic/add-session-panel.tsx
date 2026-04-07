@@ -17,10 +17,16 @@ interface AddSessionPanelProps {
   timezone: string;
 }
 
+interface AppointmentTypeOption {
+  id: string;
+  name: string;
+}
+
 interface PatientRow {
   id: string;
   phone: string;
   time: string;
+  appointment_type_id: string;
 }
 
 interface RoomState {
@@ -40,6 +46,23 @@ export function AddSessionPanel({
   const { org } = useOrg();
   const [planningTomorrow, setPlanningTomorrow] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [appointmentTypes, setAppointmentTypes] = useState<AppointmentTypeOption[]>([]);
+
+  // Fetch appointment types for Complete tier orgs
+  useEffect(() => {
+    if (!org?.id || org.tier !== "complete") return;
+    fetch(`/api/appointment-types?org_id=${org.id}`)
+      .then((r) => r.json())
+      .then((data) => {
+        setAppointmentTypes(
+          (data.appointment_types ?? []).map((t: { id: string; name: string }) => ({
+            id: t.id,
+            name: t.name,
+          }))
+        );
+      })
+      .catch(() => {});
+  }, [org?.id, org?.tier]);
 
   const today = new Date();
   const tomorrow = new Date(today);
@@ -109,6 +132,7 @@ export function AddSessionPanel({
                 timeZone: timezone,
               })
             : "",
+          appointment_type_id: s.appointment_type_id ?? "",
         })),
       };
     }
@@ -133,7 +157,7 @@ export function AddSessionPanel({
           ? prev[roomId].patients
           : prev[roomId].patients.length > 0
             ? prev[roomId].patients
-            : [{ id: crypto.randomUUID(), phone: "+61", time: "" }],
+            : [{ id: crypto.randomUUID(), phone: "+61", time: "", appointment_type_id: "" }],
       },
     }));
   }
@@ -145,7 +169,7 @@ export function AddSessionPanel({
         ...prev[roomId],
         patients: [
           ...prev[roomId].patients,
-          { id: crypto.randomUUID(), phone: "+61", time: "" },
+          { id: crypto.randomUUID(), phone: "+61", time: "", appointment_type_id: "" },
         ],
       },
     }));
@@ -154,7 +178,7 @@ export function AddSessionPanel({
   function updatePatientRow(
     roomId: string,
     rowId: string,
-    field: "phone" | "time",
+    field: "phone" | "time" | "appointment_type_id",
     value: string
   ) {
     setRoomStates((prev) => ({
@@ -185,6 +209,7 @@ export function AddSessionPanel({
       phone_number: string;
       scheduled_at: string;
       room_id: string;
+      appointment_type_id?: string;
     }> = [];
 
     const updates: Array<{
@@ -219,6 +244,9 @@ export function AddSessionPanel({
             phone_number: patient.phone,
             scheduled_at: scheduledDate.toISOString(),
             room_id: roomId,
+            ...(patient.appointment_type_id
+              ? { appointment_type_id: patient.appointment_type_id }
+              : {}),
           });
         }
       }
@@ -382,53 +410,80 @@ export function AddSessionPanel({
                       {state.patients.map((patient, i) => (
                         <div
                           key={patient.id}
-                          className={`flex items-center gap-2 px-4 py-2 ${
+                          className={`px-4 py-2 ${
                             i < state.patients.length - 1 ? "border-b border-gray-100" : ""
                           }`}
                         >
-                          {/* Phone input with +61 prefix */}
-                          <div className="flex min-w-0 flex-shrink">
-                            <span className="inline-flex items-center px-2 text-xs text-gray-500 bg-gray-50 border border-r-0 border-gray-200 rounded-l-lg flex-shrink-0">
-                              +61
-                            </span>
-                            <input
-                              type="tel"
-                              value={patient.phone.replace(/^\+61\s?/, "")}
-                              onChange={(e) =>
-                                updatePatientRow(
-                                  room.id,
-                                  patient.id,
-                                  "phone",
-                                  "+61" + e.target.value.replace(/^\+61\s?/, "")
-                                )
+                          <div className="flex items-center gap-2">
+                            {/* Phone input with +61 prefix */}
+                            <div className="flex min-w-0 flex-shrink">
+                              <span className="inline-flex items-center px-2 text-xs text-gray-500 bg-gray-50 border border-r-0 border-gray-200 rounded-l-lg flex-shrink-0">
+                                +61
+                              </span>
+                              <input
+                                type="tel"
+                                value={patient.phone.replace(/^\+61\s?/, "")}
+                                onChange={(e) =>
+                                  updatePatientRow(
+                                    room.id,
+                                    patient.id,
+                                    "phone",
+                                    "+61" + e.target.value.replace(/^\+61\s?/, "")
+                                  )
+                                }
+                                className="w-full min-w-0 text-sm border border-gray-200 rounded-r-lg px-2.5 py-1.5 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none"
+                              />
+                            </div>
+
+                            {/* Time input — hour : minute AM/PM */}
+                            <TimeInput
+                              value={patient.time}
+                              onChange={(val) =>
+                                updatePatientRow(room.id, patient.id, "time", val)
                               }
-                              className="w-full min-w-0 text-sm border border-gray-200 rounded-r-lg px-2.5 py-1.5 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none"
                             />
+
+                            {/* Delete button */}
+                            <button
+                              onClick={() =>
+                                editingSessionId &&
+                                sessions.find((s) => s.session_id === patient.id)
+                                  ? handleDeleteSession(patient.id, room.id)
+                                  : removePatientRow(room.id, patient.id)
+                              }
+                              className="p-1 text-gray-400 hover:text-red-500 transition-colors flex-shrink-0"
+                              title="Remove"
+                            >
+                              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
                           </div>
 
-                          {/* Time input — hour : minute AM/PM */}
-                          <TimeInput
-                            value={patient.time}
-                            onChange={(val) =>
-                              updatePatientRow(room.id, patient.id, "time", val)
-                            }
-                          />
-
-                          {/* Delete button */}
-                          <button
-                            onClick={() =>
-                              editingSessionId &&
-                              sessions.find((s) => s.session_id === patient.id)
-                                ? handleDeleteSession(patient.id, room.id)
-                                : removePatientRow(room.id, patient.id)
-                            }
-                            className="p-1 text-gray-400 hover:text-red-500 transition-colors flex-shrink-0"
-                            title="Remove"
-                          >
-                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                          </button>
+                          {/* Appointment type (Complete tier, new patients only) */}
+                          {org?.tier === "complete" &&
+                            appointmentTypes.length > 0 &&
+                            !existingSessionIds.has(patient.id) && (
+                              <select
+                                value={patient.appointment_type_id}
+                                onChange={(e) =>
+                                  updatePatientRow(
+                                    room.id,
+                                    patient.id,
+                                    "appointment_type_id",
+                                    e.target.value
+                                  )
+                                }
+                                className="mt-1.5 w-full rounded-lg border border-gray-200 px-2.5 py-1 text-xs text-gray-600 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                              >
+                                <option value="">No appointment type</option>
+                                {appointmentTypes.map((t) => (
+                                  <option key={t.id} value={t.id}>
+                                    {t.name}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
                         </div>
                       ))}
                     </div>
