@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ appointment_types: [] });
     }
 
-    // Fetch pre-workflow links with action block counts
+    // Fetch links, block counts, and in-flight counts in parallel
     const { data: links } = await supabase
       .from("type_workflow_links")
       .select("appointment_type_id, workflow_template_id")
@@ -40,29 +40,26 @@ export async function GET(request: NextRequest) {
       (links ?? []).map((l) => [l.appointment_type_id, l.workflow_template_id])
     );
 
-    // Count action blocks per template
     let blockCounts: Record<string, number> = {};
-    if (templateIds.length > 0) {
-      const { data: blocks } = await supabase
-        .from("workflow_action_blocks")
-        .select("template_id")
-        .in("template_id", templateIds);
+    let inFlightCounts: Record<string, number> = {};
 
-      for (const b of blocks ?? []) {
+    if (templateIds.length > 0) {
+      const [blocksRes, runsRes] = await Promise.all([
+        supabase
+          .from("workflow_action_blocks")
+          .select("template_id")
+          .in("template_id", templateIds),
+        supabase
+          .from("appointment_workflow_runs")
+          .select("workflow_template_id")
+          .in("workflow_template_id", templateIds)
+          .eq("status", "active"),
+      ]);
+
+      for (const b of blocksRes.data ?? []) {
         blockCounts[b.template_id] = (blockCounts[b.template_id] || 0) + 1;
       }
-    }
-
-    // Count in-flight runs per template
-    let inFlightCounts: Record<string, number> = {};
-    if (templateIds.length > 0) {
-      const { data: runs } = await supabase
-        .from("appointment_workflow_runs")
-        .select("workflow_template_id")
-        .in("workflow_template_id", templateIds)
-        .eq("status", "active");
-
-      for (const r of runs ?? []) {
+      for (const r of runsRes.data ?? []) {
         inFlightCounts[r.workflow_template_id] =
           (inFlightCounts[r.workflow_template_id] || 0) + 1;
       }

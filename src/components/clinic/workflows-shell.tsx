@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useOrg } from "@/hooks/useOrg";
 import type {
   DbWorkflowTemplate,
@@ -72,81 +72,60 @@ export function WorkflowsShell() {
 
   const isPre = direction === "pre_appointment";
 
-  // Fetch sidebar data
-  const fetchSidebarData = useCallback(async () => {
-    if (!org?.id) return;
-    setLoading(true);
-    setError(null);
-    try {
-      if (direction === "pre_appointment") {
-        const res = await fetch(`/api/appointment-types?org_id=${org.id}`);
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
-        setAppointmentTypes(data.appointment_types ?? []);
-        // Auto-select first
-        if (!selectedId && data.appointment_types?.length > 0) {
-          setSelectedId(data.appointment_types[0].id);
-        }
-      } else {
-        const res = await fetch(`/api/outcome-pathways?org_id=${org.id}`);
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
-        setOutcomePathways(data.outcome_pathways ?? []);
-        if (!selectedId && data.outcome_pathways?.length > 0) {
-          setSelectedId(data.outcome_pathways[0].id);
-        }
-      }
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [org?.id, direction, selectedId]);
+  // ---------------------------------------------------------------------------
+  // Data fetching — event-driven, not effect-driven
+  // ---------------------------------------------------------------------------
 
-  // Fetch forms for pickers
-  const fetchForms = useCallback(async () => {
-    if (!org?.id) return;
-    try {
-      const res = await fetch(`/api/forms?org_id=${org.id}`);
+  /** Fetch sidebar items. Returns the data directly (does not auto-select). */
+  async function fetchSidebar(orgId: string, dir: WorkflowDirection) {
+    if (dir === "pre_appointment") {
+      const res = await fetch(`/api/appointment-types?org_id=${orgId}`);
       const data = await res.json();
-      setForms(
-        (data.forms ?? [])
-          .filter((f: { status: string }) => f.status === "published")
-          .map((f: { id: string; name: string }) => ({
-            id: f.id,
-            name: f.name,
-          }))
-      );
-    } catch {
-      // Forms are optional for the editor
+      if (data.error) throw new Error(data.error);
+      return { types: data.appointment_types ?? [] as AppointmentTypeRow[], pathways: [] as OutcomePathwayRow[] };
+    } else {
+      const res = await fetch(`/api/outcome-pathways?org_id=${orgId}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      return { types: [] as AppointmentTypeRow[], pathways: data.outcome_pathways ?? [] as OutcomePathwayRow[] };
     }
-  }, [org?.id]);
+  }
 
-  // Fetch detail for selected item
-  const fetchDetail = useCallback(async () => {
-    if (!selectedId) return;
+  /** Fetch published forms for the picker dropdowns. */
+  async function fetchForms(orgId: string) {
+    const res = await fetch(`/api/forms?org_id=${orgId}`);
+    const data = await res.json();
+    return (data.forms ?? [])
+      .filter((f: { status: string }) => f.status === "published")
+      .map((f: { id: string; name: string }) => ({ id: f.id, name: f.name }));
+  }
 
-    if (isPre) {
-      const type = appointmentTypes.find((t) => t.id === selectedId);
+  /** Load detail for a specific item. Called explicitly — not via effects. */
+  async function loadDetail(
+    itemId: string,
+    dir: WorkflowDirection,
+    types: AppointmentTypeRow[],
+    pathways: OutcomePathwayRow[]
+  ) {
+    setMetadataEdits({});
+
+    if (dir === "pre_appointment") {
+      const type = types.find((t) => t.id === itemId);
       if (!type?.pre_workflow_template_id) {
         setTemplate(null);
         setOriginalBlocks([]);
         setWorkingBlocks([]);
-        setMetadataEdits({});
         return;
       }
 
       setDetailLoading(true);
       try {
-        const res = await fetch(
-          `/api/workflows/${type.pre_workflow_template_id}`
-        );
+        const res = await fetch(`/api/workflows/${type.pre_workflow_template_id}`);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         setTemplate(data.template);
         setOriginalBlocks(data.blocks ?? []);
         setWorkingBlocks(data.blocks ?? []);
-        setMetadataEdits({});
       } catch (err) {
         setError((err as Error).message);
       } finally {
@@ -154,24 +133,68 @@ export function WorkflowsShell() {
       }
     } else {
       // Post: data already fetched with the pathway
-      const pathway = outcomePathways.find((p) => p.id === selectedId);
+      const pathway = pathways.find((p) => p.id === itemId);
       setTemplate(pathway?.template ?? null);
       setOriginalBlocks(pathway?.blocks ?? []);
       setWorkingBlocks(pathway?.blocks ?? []);
-      setMetadataEdits({});
     }
-  }, [selectedId, isPre, appointmentTypes, outcomePathways]);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Initial load — the ONLY useEffect
+  // ---------------------------------------------------------------------------
 
   useEffect(() => {
-    fetchSidebarData();
-    fetchForms();
-  }, [fetchSidebarData, fetchForms]);
+    if (!org?.id) return;
 
-  useEffect(() => {
-    fetchDetail();
-  }, [fetchDetail]);
+    let cancelled = false;
 
-  // Handle direction toggle
+    async function loadInitialData() {
+      setLoading(true);
+      setError(null);
+
+      try {
+        // Fetch sidebar + forms in parallel
+        const [sidebarData, formsData] = await Promise.all([
+          fetchSidebar(org!.id, direction),
+          fetchForms(org!.id),
+        ]);
+
+        if (cancelled) return;
+
+        setAppointmentTypes(sidebarData.types);
+        setOutcomePathways(sidebarData.pathways);
+        setForms(formsData);
+        setLoading(false);
+
+        // Auto-select first item and load its detail
+        const items = direction === "pre_appointment" ? sidebarData.types : sidebarData.pathways;
+        if (items.length > 0) {
+          const firstId = items[0].id;
+          setSelectedId(firstId);
+          await loadDetail(firstId, direction, sidebarData.types, sidebarData.pathways);
+        } else {
+          setSelectedId(null);
+          setTemplate(null);
+          setOriginalBlocks([]);
+          setWorkingBlocks([]);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError((err as Error).message);
+          setLoading(false);
+        }
+      }
+    }
+
+    loadInitialData();
+    return () => { cancelled = true; };
+  }, [org?.id, direction]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---------------------------------------------------------------------------
+  // Event handlers — direct function calls, no effect cascades
+  // ---------------------------------------------------------------------------
+
   const handleDirectionChange = (newDir: WorkflowDirection) => {
     if (dirtyRef.current) {
       if (!window.confirm("You have unsaved changes. Discard them?")) return;
@@ -181,72 +204,70 @@ export function WorkflowsShell() {
     setOriginalBlocks([]);
     setWorkingBlocks([]);
     setMetadataEdits({});
-    setDirection(newDir);
+    setDirection(newDir); // Triggers the useEffect to reload
   };
 
-  // Handle sidebar selection
-  const handleSelect = (id: string) => {
+  const handleSelect = async (id: string) => {
     if (id === selectedId) return;
     if (dirtyRef.current) {
       if (!window.confirm("You have unsaved changes. Discard them?")) return;
     }
     setSelectedId(id);
+    await loadDetail(id, direction, appointmentTypes, outcomePathways);
   };
 
-  // Create new appointment type
   const handleCreateType = async () => {
     if (!org?.id) return;
     try {
       const res = await fetch("/api/appointment-types", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          org_id: org.id,
-          name: "New appointment type",
-        }),
+        body: JSON.stringify({ org_id: org.id, name: "New appointment type" }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      await fetchSidebarData();
+
+      // Refresh sidebar and select the new item
+      const sidebarData = await fetchSidebar(org.id, direction);
+      setAppointmentTypes(sidebarData.types);
       setSelectedId(data.appointment_type.id);
+      await loadDetail(data.appointment_type.id, direction, sidebarData.types, []);
     } catch (err) {
       setError((err as Error).message);
     }
   };
 
-  // Create new outcome pathway
   const handleCreatePathway = async () => {
     if (!org?.id) return;
     try {
       const res = await fetch("/api/outcome-pathways", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          org_id: org.id,
-          name: "New post-workflow",
-          create_workflow: true,
-        }),
+        body: JSON.stringify({ org_id: org.id, name: "New post-workflow", create_workflow: true }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      await fetchSidebarData();
+
+      const sidebarData = await fetchSidebar(org.id, direction);
+      setOutcomePathways(sidebarData.pathways);
       setSelectedId(data.outcome_pathway.id);
+      await loadDetail(data.outcome_pathway.id, direction, [], sidebarData.pathways);
     } catch (err) {
       setError((err as Error).message);
     }
   };
 
-  // Create workflow for an appointment type that doesn't have one
   const handleCreateWorkflow = async () => {
-    if (!selectedId) return;
+    if (!selectedId || !org?.id) return;
     try {
-      const res = await fetch(
-        `/api/appointment-types/${selectedId}/workflow`,
-        { method: "POST" }
-      );
+      const res = await fetch(`/api/appointment-types/${selectedId}/workflow`, { method: "POST" });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      await fetchSidebarData();
+
+      // Refresh sidebar to update the workflow status dot
+      const sidebarData = await fetchSidebar(org.id, direction);
+      setAppointmentTypes(sidebarData.types);
+
       setTemplate(data.template);
       setOriginalBlocks([]);
       setWorkingBlocks([]);
@@ -255,54 +276,42 @@ export function WorkflowsShell() {
     }
   };
 
-  // Compute change summary for mid-flight warning
+  // ---------------------------------------------------------------------------
+  // Save flow
+  // ---------------------------------------------------------------------------
+
   const computeChangeSummary = () => {
-    const originalIds = new Set(
-      originalBlocks.filter((b) => !b.id.startsWith("temp-")).map((b) => b.id)
-    );
     const workingIds = new Set(
       workingBlocks.filter((b) => !b.id.startsWith("temp-")).map((b) => b.id)
     );
-
     const added = workingBlocks.filter((b) => b.id.startsWith("temp-")).length;
-    const removed = originalBlocks.filter(
-      (b) => !workingIds.has(b.id)
-    ).length;
+    const removed = originalBlocks.filter((b) => !workingIds.has(b.id)).length;
     const retimed = workingBlocks.filter((b) => {
       if (b.id.startsWith("temp-")) return false;
       const orig = originalBlocks.find((o) => o.id === b.id);
       return orig && orig.offset_minutes !== b.offset_minutes;
     }).length;
-
     return { added, removed, retimed };
   };
 
-  // Save flow
   const handleSave = async () => {
     if (!template) return;
-
-    // Check in-flight first
     try {
-      const res = await fetch(
-        `/api/workflows/in-flight?template_id=${template.id}`
-      );
+      const res = await fetch(`/api/workflows/in-flight?template_id=${template.id}`);
       const data = await res.json();
-      const count = data.in_flight_count ?? 0;
-
-      if (count > 0) {
-        setInFlightCount(count);
+      if ((data.in_flight_count ?? 0) > 0) {
+        setInFlightCount(data.in_flight_count);
         setShowWarning(true);
         return;
       }
     } catch {
-      // Continue with save even if in-flight check fails
+      // Continue with save
     }
-
     await executeSave();
   };
 
   const executeSave = async () => {
-    if (!template) return;
+    if (!template || !org?.id) return;
     setIsSaving(true);
     setShowWarning(false);
 
@@ -326,10 +335,7 @@ export function WorkflowsShell() {
 
       // Save blocks
       const deletedIds = originalBlocks
-        .filter(
-          (ob) =>
-            !workingBlocks.some((wb) => wb.id === ob.id)
-        )
+        .filter((ob) => !workingBlocks.some((wb) => wb.id === ob.id))
         .map((b) => b.id);
 
       const blocksToSend = workingBlocks.map((b, i) => ({
@@ -346,10 +352,7 @@ export function WorkflowsShell() {
       const res = await fetch(`/api/workflows/${template.id}/blocks`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          blocks: blocksToSend,
-          deleted_ids: deletedIds,
-        }),
+        body: JSON.stringify({ blocks: blocksToSend, deleted_ids: deletedIds }),
       });
 
       const data = await res.json();
@@ -360,8 +363,10 @@ export function WorkflowsShell() {
       setWorkingBlocks(data.blocks ?? []);
       setMetadataEdits({});
 
-      // Refresh sidebar to update counts
-      await fetchSidebarData();
+      // Refresh sidebar to update counts (single fetch, no cascade)
+      const sidebarData = await fetchSidebar(org.id, direction);
+      setAppointmentTypes(sidebarData.types);
+      setOutcomePathways(sidebarData.pathways);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -374,7 +379,10 @@ export function WorkflowsShell() {
     setMetadataEdits({});
   };
 
-  // Build sidebar items
+  // ---------------------------------------------------------------------------
+  // Derived render data
+  // ---------------------------------------------------------------------------
+
   const sidebarItems: SidebarItem[] = isPre
     ? appointmentTypes.map((t) => ({
         id: t.id,
@@ -391,26 +399,19 @@ export function WorkflowsShell() {
         hasWorkflow: !!p.workflow_template_id,
       }));
 
-  // Get selected metadata
-  const selectedType = isPre
-    ? appointmentTypes.find((t) => t.id === selectedId)
-    : null;
-  const selectedPathway = !isPre
-    ? outcomePathways.find((p) => p.id === selectedId)
-    : null;
+  const selectedType = isPre ? appointmentTypes.find((t) => t.id === selectedId) : null;
+  const selectedPathway = !isPre ? outcomePathways.find((p) => p.id === selectedId) : null;
 
   const preMetadata = selectedType
     ? {
         id: selectedType.id,
         name: metadataEdits.name !== undefined ? (metadataEdits.name as string) : selectedType.name,
-        duration_minutes:
-          metadataEdits.duration_minutes !== undefined
-            ? (metadataEdits.duration_minutes as number)
-            : selectedType.duration_minutes,
-        default_fee_cents:
-          metadataEdits.default_fee_cents !== undefined
-            ? (metadataEdits.default_fee_cents as number)
-            : selectedType.default_fee_cents,
+        duration_minutes: metadataEdits.duration_minutes !== undefined
+          ? (metadataEdits.duration_minutes as number)
+          : selectedType.duration_minutes,
+        default_fee_cents: metadataEdits.default_fee_cents !== undefined
+          ? (metadataEdits.default_fee_cents as number)
+          : selectedType.default_fee_cents,
         source: selectedType.source,
         pms_provider: selectedType.pms_provider,
       }
@@ -420,12 +421,15 @@ export function WorkflowsShell() {
     ? {
         id: selectedPathway.id,
         name: metadataEdits.name !== undefined ? (metadataEdits.name as string) : selectedPathway.name,
-        description:
-          metadataEdits.description !== undefined
-            ? (metadataEdits.description as string)
-            : selectedPathway.description,
+        description: metadataEdits.description !== undefined
+          ? (metadataEdits.description as string)
+          : selectedPathway.description,
       }
     : null;
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
 
   return (
     <div className="flex h-full flex-col">
@@ -467,10 +471,7 @@ export function WorkflowsShell() {
       {error && (
         <div className="border-b border-red-200 bg-red-50 px-6 py-3 text-sm text-red-700">
           {error}
-          <button
-            onClick={() => setError(null)}
-            className="ml-2 underline"
-          >
+          <button onClick={() => setError(null)} className="ml-2 underline">
             Dismiss
           </button>
         </div>
