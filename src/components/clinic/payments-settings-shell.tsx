@@ -1,35 +1,16 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { useLocation } from "@/hooks/useLocation";
 import { useRole } from "@/hooks/useRole";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
+import type { PaymentsData, RoomPayment } from "@/stores/clinic-store";
 import type { RoomType } from "@/lib/supabase/types";
 
 type RoutingMode = "location" | "clinician";
 type Tab = "configuration" | "rooms";
-
-interface ClinicianAccount {
-  staff_assignment_id: string;
-  user_id: string;
-  role: string;
-  full_name: string;
-  stripe_account_id: string | null;
-}
-
-interface PaymentsData {
-  routing_mode: RoutingMode;
-  location_stripe_account_id: string | null;
-  clinicians: ClinicianAccount[];
-}
-
-interface RoomPayment {
-  id: string;
-  name: string;
-  room_type: RoomType;
-  payments_enabled: boolean;
-}
 
 const ROOM_TYPE_BADGE: Record<
   RoomType,
@@ -45,46 +26,18 @@ export function PaymentsSettingsShell() {
   const { selectedLocation } = useLocation();
   const { role, userId } = useRole();
   const [tab, setTab] = useState<Tab>("configuration");
-  const [data, setData] = useState<PaymentsData | null>(null);
-  const [rooms, setRooms] = useState<RoomPayment[]>([]);
-  const [loading, setLoading] = useState(true);
+  const data = useClinicStore((s) => s.paymentConfig);
+  const rooms = useClinicStore((s) => s.paymentRooms);
+  const loading = !useClinicStore((s) => s.paymentConfigLoaded);
   const [saving, setSaving] = useState(false);
 
   const isAdmin =
     role === "clinic_owner" || role === "practice_manager";
   const isClinician = role === "clinician" || role === "clinic_owner";
 
-  // Fetch payment config
-  const fetchData = useCallback(async () => {
-    if (!selectedLocation) return;
-    setLoading(true);
-    try {
-      const [payRes, roomRes] = await Promise.all([
-        fetch(`/api/settings/payments?location_id=${selectedLocation.id}`),
-        fetch(`/api/settings/rooms?location_id=${selectedLocation.id}`),
-      ]);
-      if (payRes.ok) {
-        setData(await payRes.json());
-      }
-      if (roomRes.ok) {
-        const roomData = await roomRes.json();
-        setRooms(
-          (roomData.rooms ?? []).map((r: any) => ({
-            id: r.id,
-            name: r.name,
-            room_type: r.room_type,
-            payments_enabled: r.payments_enabled ?? true,
-          }))
-        );
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedLocation]);
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  const refetchPayments = () => {
+    if (selectedLocation) getClinicStore().refreshPaymentConfig(selectedLocation.id);
+  };
 
   // Routing mode change
   const handleRoutingChange = async (mode: RoutingMode) => {
@@ -110,7 +63,7 @@ export function PaymentsSettingsShell() {
         }),
       });
       if (res.ok) {
-        setData((prev) => (prev ? { ...prev, routing_mode: mode } : prev));
+        if (data) getClinicStore().setPaymentConfig({ ...data, routing_mode: mode });
       }
     } finally {
       setSaving(false);
@@ -139,7 +92,7 @@ export function PaymentsSettingsShell() {
         }),
       });
       if (res.ok) {
-        fetchData();
+        refetchPayments();
       }
     } finally {
       setSaving(false);
@@ -169,18 +122,30 @@ export function PaymentsSettingsShell() {
         }),
       });
       if (res.ok) {
-        fetchData();
+        refetchPayments();
       }
     } finally {
       setSaving(false);
     }
   };
 
-  // Room payment toggle
+  // Room payment toggle — updates paymentRooms, rooms, and roomsWithClinicians
   const handleRoomToggle = async (roomId: string, enabled: boolean) => {
-    // Optimistic update
-    setRooms((prev) =>
-      prev.map((r) =>
+    const store = getClinicStore();
+
+    // Optimistic update across all room slices
+    store.setPaymentRooms(
+      store.paymentRooms.map((r) =>
+        r.id === roomId ? { ...r, payments_enabled: enabled } : r
+      )
+    );
+    store.setRooms(
+      store.rooms.map((r) =>
+        r.id === roomId ? { ...r, payments_enabled: enabled } : r
+      )
+    );
+    store.setRoomsWithClinicians(
+      store.roomsWithClinicians.map((r) =>
         r.id === roomId ? { ...r, payments_enabled: enabled } : r
       )
     );
@@ -192,9 +157,19 @@ export function PaymentsSettingsShell() {
     });
 
     if (!res.ok) {
-      // Revert on failure
-      setRooms((prev) =>
-        prev.map((r) =>
+      // Revert across all room slices
+      store.setPaymentRooms(
+        store.paymentRooms.map((r) =>
+          r.id === roomId ? { ...r, payments_enabled: !enabled } : r
+        )
+      );
+      store.setRooms(
+        store.rooms.map((r) =>
+          r.id === roomId ? { ...r, payments_enabled: !enabled } : r
+        )
+      );
+      store.setRoomsWithClinicians(
+        store.roomsWithClinicians.map((r) =>
           r.id === roomId ? { ...r, payments_enabled: !enabled } : r
         )
       );

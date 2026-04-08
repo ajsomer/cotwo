@@ -1,22 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useOrg } from "@/hooks/useOrg";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { FormAssignmentsPanel } from "./form-assignments-panel";
+import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
+import type { FormRow } from "@/stores/clinic-store";
 import type { FormStatus } from "@/lib/supabase/types";
-
-interface FormRow {
-  id: string;
-  name: string;
-  description: string | null;
-  status: FormStatus;
-  schema: Record<string, unknown>;
-  updated_at: string;
-  assignment_counts: { total: number; completed: number };
-}
 
 const STATUS_BADGE: Record<
   FormStatus,
@@ -30,30 +22,13 @@ const STATUS_BADGE: Record<
 export function FormsShell() {
   const { org } = useOrg();
   const router = useRouter();
-  const [forms, setForms] = useState<FormRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const forms = useClinicStore((s) => s.forms);
+  const loading = !useClinicStore((s) => s.formsLoaded);
   const [sendingForm, setSendingForm] = useState<FormRow | null>(null);
 
-  const fetchForms = useCallback(async () => {
-    if (!org) return;
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/forms?org_id=${org.id}`);
-      const data = await res.json();
-      if (res.ok) {
-        setForms(data.forms);
-      } else {
-        setError(data.error);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [org]);
-
-  useEffect(() => {
-    fetchForms();
-  }, [fetchForms]);
+  const refetchForms = () => {
+    if (org) getClinicStore().refreshForms(org.id);
+  };
 
   const handleDelete = async (formId: string, formName: string) => {
     if (!confirm(`Delete "${formName}"? This cannot be undone.`)) return;
@@ -66,7 +41,7 @@ export function FormsShell() {
       return;
     }
 
-    fetchForms();
+    refetchForms();
   };
 
   const handleNew = async () => {
@@ -109,12 +84,6 @@ export function FormsShell() {
         </div>
         <Button onClick={handleNew}>+ New form</Button>
       </div>
-
-      {error && (
-        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
-          {error}
-        </div>
-      )}
 
       {loading ? (
         <div className="space-y-3">
@@ -229,7 +198,7 @@ export function FormsShell() {
           open={!!sendingForm}
           onClose={() => {
             setSendingForm(null);
-            fetchForms();
+            refetchForms();
           }}
           formId={sendingForm.id}
           formName={sendingForm.name}

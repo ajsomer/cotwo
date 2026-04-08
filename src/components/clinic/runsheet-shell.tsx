@@ -6,14 +6,14 @@ import { RunsheetHeader } from "./runsheet-header";
 import { RoomContainer } from "./room-container";
 import { enrichSessions } from "@/lib/runsheet/derived-state";
 import { groupSessionsByRoom, calculateSummary } from "@/lib/runsheet/grouping";
-import { useRealtimeRunsheet } from "@/hooks/useRealtimeRunsheet";
-import { usePatientPresence } from "@/hooks/usePatientPresence";
 import { useTabNotifications } from "@/hooks/useTabNotifications";
 import { useFaviconBadge } from "@/hooks/useFaviconBadge";
 import { seedDemoData, nukeSessions } from "@/lib/runsheet/seed";
 import { PatientContactCard } from "./patient-contact-card";
 import { PatientSlideOverProvider } from "./patient-slide-over-context";
-import type { RunsheetSession, Room, UserRole } from "@/lib/supabase/types";
+import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
+import { useLocation } from "@/hooks/useLocation";
+import { useRole } from "@/hooks/useRole";
 
 // Lazy-load heavy modals — only downloaded when first opened
 const ProcessFlowDynamic = dynamic(
@@ -25,33 +25,24 @@ const AddSessionPanelDynamic = dynamic(
   { ssr: false }
 );
 
-interface RunsheetShellProps {
-  initialSessions: RunsheetSession[];
-  rooms: Room[];
-  locationId: string;
-  locationName: string;
-  timezone: string;
-  role: UserRole;
-  clinicianRoomIds?: string[];
-}
+export function RunsheetShell() {
+  // Read from Zustand store (kept fresh by Realtime subscriptions in layout)
+  const sessions = useClinicStore((s) => s.sessions);
+  const rooms = useClinicStore((s) => s.rooms);
+  const clinicianRoomIds = useClinicStore((s) => s.clinicianRoomIds);
+  const connectedSessions = useClinicStore((s) => s.connectedSessions);
+  const sessionsLoaded = useClinicStore((s) => s.sessionsLoaded);
 
-export function RunsheetShell({
-  initialSessions,
-  rooms,
-  locationId,
-  locationName,
-  timezone,
-  role,
-  clinicianRoomIds,
-}: RunsheetShellProps) {
-  // Real-time session state
-  const { sessions, refetch } = useRealtimeRunsheet({
-    initialSessions,
-    locationId,
-  });
+  // Context (persists across navigations)
+  const { selectedLocation } = useLocation();
+  const { role } = useRole();
+  const locationId = selectedLocation?.id ?? "";
+  const timezone = selectedLocation?.timezone ?? "Australia/Sydney";
 
-  // Patient presence tracking
-  const connectedSessions = usePatientPresence(locationId);
+  // Refetch helper — delegates to store
+  const refetch = useCallback(async () => {
+    if (locationId) await getClinicStore().refreshSessions(locationId);
+  }, [locationId]);
 
   // Tick `now` every 30s for derived state recalculation
   const [now, setNow] = useState(() => new Date());
@@ -62,11 +53,11 @@ export function RunsheetShell({
 
   // Filter rooms for clinician view
   const visibleRooms = useMemo(() => {
-    if (clinicianRoomIds) {
+    if (clinicianRoomIds.length > 0 && (role === "clinician")) {
       return rooms.filter((r) => clinicianRoomIds.includes(r.id));
     }
     return rooms;
-  }, [rooms, clinicianRoomIds]);
+  }, [rooms, clinicianRoomIds, role]);
 
   // Enrich sessions with derived state and group by room
   const enriched = useMemo(() => enrichSessions(sessions, now, connectedSessions), [sessions, now, connectedSessions]);
@@ -80,7 +71,7 @@ export function RunsheetShell({
   useTabNotifications(summary);
   useFaviconBadge(summary);
 
-  const isReceptionist = role === "receptionist" || role === "practice_manager" || role === "clinic_owner";
+  const isReceptionist = (role === "receptionist" || role === "practice_manager" || role === "clinic_owner");
   const isClinician = role === "clinician" || role === "clinic_owner";
   const singleRoom = false;
 

@@ -1,6 +1,8 @@
-# Navigation Performance: TanStack Query + Next.js App Router
+# ~~Navigation Performance: TanStack Query + Next.js App Router~~
 
-## Goal
+> **SUPERSEDED** — This plan has been replaced by the Zustand + Supabase Realtime architecture. See the implementation in `src/stores/clinic-store.ts` and `src/components/clinic/clinic-data-provider.tsx`. The Zustand store provides a centralized cache with Realtime subscriptions in the layout, eliminating the need for TanStack Query.
+
+## Goal (Original)
 
 Make every sidebar navigation feel instant. No spinners, no blank screens, no re-fetching data the user already saw 30 seconds ago. Navigating between Run Sheet → Readiness → Workflows → Forms → Settings should feel like switching tabs in a native app.
 

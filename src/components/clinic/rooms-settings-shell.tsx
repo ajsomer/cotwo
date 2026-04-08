@@ -1,26 +1,15 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { useLocation } from "@/hooks/useLocation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { RoomFormPanel } from "./room-form-panel";
+import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
+import type { RoomWithClinicians } from "@/stores/clinic-store";
 import type { RoomType } from "@/lib/supabase/types";
 
-interface RoomClinician {
-  staff_assignment_id: string;
-  full_name: string;
-}
-
-export interface RoomWithClinicians {
-  id: string;
-  location_id: string;
-  name: string;
-  room_type: RoomType;
-  link_token: string;
-  sort_order: number;
-  clinicians: RoomClinician[];
-}
+export type { RoomWithClinicians };
 
 const ROOM_TYPE_BADGE: Record<
   RoomType,
@@ -34,35 +23,16 @@ const ROOM_TYPE_BADGE: Record<
 
 export function RoomsSettingsShell() {
   const { selectedLocation } = useLocation();
-  const [rooms, setRooms] = useState<RoomWithClinicians[]>([]);
-  const [loading, setLoading] = useState(true);
+  const rooms = useClinicStore((s) => s.roomsWithClinicians);
+  const loading = !useClinicStore((s) => s.roomsLoaded);
   const [panelOpen, setPanelOpen] = useState(false);
   const [editingRoom, setEditingRoom] = useState<RoomWithClinicians | null>(
     null
   );
-  const [error, setError] = useState<string | null>(null);
 
-  const fetchRooms = useCallback(async () => {
-    if (!selectedLocation) return;
-    setLoading(true);
-    try {
-      const res = await fetch(
-        `/api/settings/rooms?location_id=${selectedLocation.id}`
-      );
-      const data = await res.json();
-      if (res.ok) {
-        setRooms(data.rooms);
-      } else {
-        setError(data.error);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedLocation]);
-
-  useEffect(() => {
-    fetchRooms();
-  }, [fetchRooms]);
+  const refetchRooms = () => {
+    if (selectedLocation) getClinicStore().refreshRooms(selectedLocation.id);
+  };
 
   const handleDelete = async (roomId: string, roomName: string) => {
     if (!confirm(`Delete "${roomName}"? This cannot be undone.`)) return;
@@ -77,7 +47,7 @@ export function RoomsSettingsShell() {
       return;
     }
 
-    fetchRooms();
+    refetchRooms();
   };
 
   const handleEdit = (room: RoomWithClinicians) => {
@@ -97,7 +67,7 @@ export function RoomsSettingsShell() {
 
   const handleSaved = () => {
     handlePanelClose();
-    fetchRooms();
+    refetchRooms();
   };
 
   if (!selectedLocation) {
@@ -117,12 +87,6 @@ export function RoomsSettingsShell() {
         </div>
         <Button onClick={handleAdd}>+ Add room</Button>
       </div>
-
-      {error && (
-        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
-          {error}
-        </div>
-      )}
 
       {loading ? (
         <div className="space-y-3">

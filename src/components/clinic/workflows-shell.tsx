@@ -10,29 +10,8 @@ import type {
 import { WorkflowSidebar, type SidebarItem } from "./workflow-sidebar";
 import { WorkflowMiddlePane } from "./workflow-middle-pane";
 import { MidFlightWarningModal } from "./mid-flight-warning-modal";
-
-interface AppointmentTypeRow {
-  id: string;
-  name: string;
-  duration_minutes: number;
-  default_fee_cents: number;
-  modality: string;
-  source: string;
-  pms_provider: string | null;
-  pre_workflow_template_id: string | null;
-  action_count: number;
-  in_flight_count: number;
-}
-
-interface OutcomePathwayRow {
-  id: string;
-  name: string;
-  description: string | null;
-  workflow_template_id: string | null;
-  template: DbWorkflowTemplate | null;
-  blocks: DbWorkflowActionBlock[];
-  action_count: number;
-}
+import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
+import type { AppointmentTypeRow, OutcomePathwayRow } from "@/stores/clinic-store";
 
 export function WorkflowsShell() {
   const { org } = useOrg();
@@ -40,17 +19,27 @@ export function WorkflowsShell() {
 
   const [direction, setDirection] = useState<WorkflowDirection>("pre_appointment");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Sidebar data
-  const [appointmentTypes, setAppointmentTypes] = useState<AppointmentTypeRow[]>([]);
-  const [outcomePathways, setOutcomePathways] = useState<OutcomePathwayRow[]>([]);
+  // Read from Zustand store (kept fresh by Realtime subscriptions in layout)
+  const appointmentTypes = useClinicStore((s) => s.appointmentTypes);
+  const outcomePathways = useClinicStore((s) => s.outcomePathways);
+  const workflowsLoaded = useClinicStore((s) => s.workflowsLoaded);
+  const preTemplatesMap = useClinicStore((s) => s.preWorkflowTemplates);
+  const preBlocksMap = useClinicStore((s) => s.preWorkflowBlocks);
+  const postTemplatesMap = useClinicStore((s) => s.postWorkflowTemplates);
+  const postBlocksMap = useClinicStore((s) => s.postWorkflowBlocks);
+  const storeForms = useClinicStore((s) => s.forms);
 
-  // Prefetched data maps — all templates + blocks loaded upfront for instant switching
-  const [templatesMap, setTemplatesMap] = useState<Record<string, DbWorkflowTemplate>>({});
-  const [blocksMap, setBlocksMap] = useState<Record<string, DbWorkflowActionBlock[]>>({});
+  // Direction-dependent maps
+  const isPre = direction === "pre_appointment";
+  const templatesMap = isPre ? preTemplatesMap : postTemplatesMap;
+  const blocksMap = isPre ? preBlocksMap : postBlocksMap;
+  const loading = !workflowsLoaded;
+
+  // Forms for pickers (just id + name from the store's full FormRow[])
+  const forms = storeForms.map((f) => ({ id: f.id, name: f.name }));
 
   // Detail data for the currently selected item (read from maps)
   const [template, setTemplate] = useState<DbWorkflowTemplate | null>(null);
@@ -59,9 +48,6 @@ export function WorkflowsShell() {
 
   // Metadata edits
   const [metadataEdits, setMetadataEdits] = useState<Record<string, unknown>>({});
-
-  // Forms for pickers
-  const [forms, setForms] = useState<{ id: string; name: string }[]>([]);
 
   // Mid-flight warning
   const [showWarning, setShowWarning] = useState(false);
@@ -74,44 +60,6 @@ export function WorkflowsShell() {
 
   const dirtyRef = useRef(isDirty);
   dirtyRef.current = isDirty;
-
-  const isPre = direction === "pre_appointment";
-
-  // ---------------------------------------------------------------------------
-  // Data fetching — event-driven, not effect-driven
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Fetch everything the page needs in a single API call.
-   * Returns sidebar items, forms, and first item's detail.
-   */
-  async function fetchInit(dir: WorkflowDirection) {
-    const res = await fetch(`/api/workflows/init?org_id=${orgId}&direction=${dir}`);
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
-    return data as {
-      appointment_types: AppointmentTypeRow[];
-      outcome_pathways: OutcomePathwayRow[];
-      forms: { id: string; name: string }[];
-      templates: Record<string, DbWorkflowTemplate>;
-      blocks: Record<string, DbWorkflowActionBlock[]>;
-    };
-  }
-
-  /** Fetch sidebar only (used after create/save to refresh counts). */
-  async function fetchSidebar(dir: WorkflowDirection) {
-    if (dir === "pre_appointment") {
-      const res = await fetch(`/api/appointment-types?org_id=${orgId}`);
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      return { types: data.appointment_types ?? [] as AppointmentTypeRow[], pathways: [] as OutcomePathwayRow[] };
-    } else {
-      const res = await fetch(`/api/outcome-pathways?org_id=${orgId}`);
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      return { types: [] as AppointmentTypeRow[], pathways: data.outcome_pathways ?? [] as OutcomePathwayRow[] };
-    }
-  }
 
   /**
    * Load detail for a specific item. Synchronous — reads from prefetched maps.
@@ -157,47 +105,20 @@ export function WorkflowsShell() {
   }
 
   // ---------------------------------------------------------------------------
-  // Initial load — single useEffect, fires on mount and direction toggle
+  // Auto-select first item when direction or data changes
   // ---------------------------------------------------------------------------
 
   useEffect(() => {
-    if (!orgId) return;
-    let cancelled = false;
+    if (!workflowsLoaded) return;
+    const items = isPre ? appointmentTypes : outcomePathways;
+    const currentTplMap = isPre ? preTemplatesMap : postTemplatesMap;
+    const currentBlkMap = isPre ? preBlocksMap : postBlocksMap;
 
-    async function loadInitialData() {
-      setLoading(true);
-      setError(null);
-      try {
-        // Single API call returns sidebar + forms + all templates + all blocks
-        const data = await fetchInit(direction);
-        if (cancelled) return;
-
-        setAppointmentTypes(data.appointment_types);
-        setOutcomePathways(data.outcome_pathways);
-        setForms(data.forms);
-        setTemplatesMap(data.templates);
-        setBlocksMap(data.blocks);
-
-        const items = direction === "pre_appointment" ? data.appointment_types : data.outcome_pathways;
-        if (items.length > 0) {
-          setSelectedId(items[0].id);
-          loadDetail(items[0].id, direction, data.appointment_types, data.outcome_pathways, data.templates, data.blocks);
-        } else {
-          setSelectedId(null);
-          setTemplate(null);
-          setOriginalBlocks([]);
-          setWorkingBlocks([]);
-        }
-      } catch (err) {
-        if (!cancelled) setError((err as Error).message);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+    if (items.length > 0 && !selectedId) {
+      setSelectedId(items[0].id);
+      loadDetail(items[0].id, direction, appointmentTypes, outcomePathways, currentTplMap, currentBlkMap);
     }
-
-    loadInitialData();
-    return () => { cancelled = true; };
-  }, [orgId, direction]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [workflowsLoaded, direction]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------------------------------------------------------------------------
   // Event handlers
@@ -223,23 +144,23 @@ export function WorkflowsShell() {
       if (!window.confirm("You have unsaved changes. Discard them?")) return;
     }
     setSelectedId(id);
-    loadDetail(id, direction, appointmentTypes, outcomePathways, templatesMap, blocksMap);
+    const store = getClinicStore();
+    const currentTplMap = isPre ? store.preWorkflowTemplates : store.postWorkflowTemplates;
+    const currentBlkMap = isPre ? store.preWorkflowBlocks : store.postWorkflowBlocks;
+    loadDetail(id, direction, store.appointmentTypes, store.outcomePathways, currentTplMap, currentBlkMap);
   };
 
   /** After mutations, refetch everything to refresh maps + sidebar. */
   async function refreshAll(selectId?: string) {
     try {
-      const data = await fetchInit(direction);
-      setAppointmentTypes(data.appointment_types);
-      setOutcomePathways(data.outcome_pathways);
-      setForms(data.forms);
-      setTemplatesMap(data.templates);
-      setBlocksMap(data.blocks);
-
+      await getClinicStore().refreshWorkflows(orgId);
       const id = selectId ?? selectedId;
       if (id) {
         setSelectedId(id);
-        loadDetail(id, direction, data.appointment_types, data.outcome_pathways, data.templates, data.blocks);
+        const store = getClinicStore();
+        const currentTplMap = isPre ? store.preWorkflowTemplates : store.postWorkflowTemplates;
+        const currentBlkMap = isPre ? store.preWorkflowBlocks : store.postWorkflowBlocks;
+        loadDetail(id, direction, store.appointmentTypes, store.outcomePathways, currentTplMap, currentBlkMap);
       }
     } catch (err) {
       setError((err as Error).message);
@@ -283,16 +204,16 @@ export function WorkflowsShell() {
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
-      // Update maps locally with the new template
-      setTemplatesMap((prev) => ({ ...prev, [data.template.id]: data.template }));
-      setBlocksMap((prev) => ({ ...prev, [data.template.id]: [] }));
+      // Update store maps locally with the new template
+      const store = getClinicStore();
+      store.setPreWorkflowTemplates({ ...store.preWorkflowTemplates, [data.template.id]: data.template });
+      store.setPreWorkflowBlocks({ ...store.preWorkflowBlocks, [data.template.id]: [] });
       setTemplate(data.template);
       setOriginalBlocks([]);
       setWorkingBlocks([]);
 
-      // Refresh sidebar to update the dot
-      const sidebarData = await fetchSidebar(direction);
-      setAppointmentTypes(sidebarData.types);
+      // Refresh workflows to update sidebar counts
+      await store.refreshWorkflows(orgId);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -383,13 +304,15 @@ export function WorkflowsShell() {
       setWorkingBlocks(savedBlocks);
       setMetadataEdits({});
 
-      // Update local maps so next sidebar click sees saved data
-      setBlocksMap((prev) => ({ ...prev, [template.id]: savedBlocks }));
+      // Update store maps so next sidebar click sees saved data
+      if (isPre) {
+        getClinicStore().setPreWorkflowBlocks({ ...getClinicStore().preWorkflowBlocks, [template.id]: savedBlocks });
+      } else {
+        getClinicStore().setPostWorkflowBlocks({ ...getClinicStore().postWorkflowBlocks, [template.id]: savedBlocks });
+      }
 
-      // Refresh sidebar counts
-      const sidebarData = await fetchSidebar(direction);
-      setAppointmentTypes(sidebarData.types);
-      setOutcomePathways(sidebarData.pathways);
+      // Refresh workflows to update sidebar counts
+      await getClinicStore().refreshWorkflows(orgId);
     } catch (err) {
       setError((err as Error).message);
     } finally {

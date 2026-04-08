@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 
 // GET /api/appointment-types?org_id=xxx
-// Returns appointment types with pre-workflow action counts.
+// Returns appointment types with pre-workflow template IDs, action counts,
+// and in-flight counts in a single query batch.
 export async function GET(request: NextRequest) {
   const orgId = request.nextUrl.searchParams.get("org_id");
   if (!orgId) {
@@ -12,61 +13,56 @@ export async function GET(request: NextRequest) {
   try {
     const supabase = createServiceClient();
 
-    // Fetch appointment types
-    const { data: types, error } = await supabase
-      .from("appointment_types")
-      .select("*")
-      .eq("org_id", orgId)
-      .order("name");
+    // Single parallel batch: types + links + all blocks + all runs
+    const [typesRes, linksRes, blocksRes, runsRes] = await Promise.all([
+      supabase
+        .from("appointment_types")
+        .select("*")
+        .eq("org_id", orgId)
+        .order("name"),
+      supabase
+        .from("type_workflow_links")
+        .select("appointment_type_id, workflow_template_id")
+        .eq("direction", "pre_appointment"),
+      supabase
+        .from("workflow_action_blocks")
+        .select("template_id"),
+      supabase
+        .from("appointment_workflow_runs")
+        .select("workflow_template_id")
+        .eq("status", "active"),
+    ]);
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    if (typesRes.error) {
+      return NextResponse.json({ error: typesRes.error.message }, { status: 500 });
     }
 
-    const typeIds = (types ?? []).map((t) => t.id);
-    if (typeIds.length === 0) {
-      return NextResponse.json({ appointment_types: [] });
-    }
+    const types = typesRes.data ?? [];
+    const typeIds = new Set(types.map((t) => t.id));
 
-    // Fetch links, block counts, and in-flight counts in parallel
-    const { data: links } = await supabase
-      .from("type_workflow_links")
-      .select("appointment_type_id, workflow_template_id")
-      .in("appointment_type_id", typeIds)
-      .eq("direction", "pre_appointment");
+    // Filter links to only those for our types
+    const links = (linksRes.data ?? []).filter((l) => typeIds.has(l.appointment_type_id));
+    const linkByType = new Map(links.map((l) => [l.appointment_type_id, l.workflow_template_id]));
+    const templateIds = new Set(links.map((l) => l.workflow_template_id));
 
-    const templateIds = (links ?? []).map((l) => l.workflow_template_id);
-    const linkByType = new Map(
-      (links ?? []).map((l) => [l.appointment_type_id, l.workflow_template_id])
-    );
-
-    let blockCounts: Record<string, number> = {};
-    let inFlightCounts: Record<string, number> = {};
-
-    if (templateIds.length > 0) {
-      const [blocksRes, runsRes] = await Promise.all([
-        supabase
-          .from("workflow_action_blocks")
-          .select("template_id")
-          .in("template_id", templateIds),
-        supabase
-          .from("appointment_workflow_runs")
-          .select("workflow_template_id")
-          .in("workflow_template_id", templateIds)
-          .eq("status", "active"),
-      ]);
-
-      for (const b of blocksRes.data ?? []) {
+    // Count blocks per template
+    const blockCounts: Record<string, number> = {};
+    for (const b of blocksRes.data ?? []) {
+      if (templateIds.has(b.template_id)) {
         blockCounts[b.template_id] = (blockCounts[b.template_id] || 0) + 1;
       }
-      for (const r of runsRes.data ?? []) {
+    }
+
+    // Count in-flight runs per template
+    const inFlightCounts: Record<string, number> = {};
+    for (const r of runsRes.data ?? []) {
+      if (templateIds.has(r.workflow_template_id)) {
         inFlightCounts[r.workflow_template_id] =
           (inFlightCounts[r.workflow_template_id] || 0) + 1;
       }
     }
 
-    // Assemble response
-    const result = (types ?? []).map((t) => {
+    const result = types.map((t) => {
       const templateId = linkByType.get(t.id) ?? null;
       return {
         ...t,
@@ -87,7 +83,6 @@ export async function GET(request: NextRequest) {
 }
 
 // POST /api/appointment-types
-// Creates a new Coviu-created appointment type.
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -130,8 +125,6 @@ export async function POST(request: NextRequest) {
 }
 
 // PATCH /api/appointment-types
-// Updates an existing appointment type. When source='pms', name and
-// duration_minutes are read-only (overwritten on PMS sync).
 export async function PATCH(request: NextRequest) {
   try {
     const body = await request.json();
@@ -143,7 +136,6 @@ export async function PATCH(request: NextRequest) {
 
     const supabase = createServiceClient();
 
-    // Check if PMS-sourced
     const { data: existing } = await supabase
       .from("appointment_types")
       .select("source")
@@ -159,7 +151,6 @@ export async function PATCH(request: NextRequest) {
 
     const updates: Record<string, unknown> = {};
 
-    // PMS-sourced types: only fee and modality are editable
     if (existing.source === "pms") {
       if (default_fee_cents !== undefined)
         updates.default_fee_cents = default_fee_cents;
@@ -200,12 +191,9 @@ export async function PATCH(request: NextRequest) {
 }
 
 // DELETE /api/appointment-types?id=xxx
-// Deletes an appointment type.
-// Cascade behaviour:
-// - type_workflow_links: CASCADE — junction row removed
-// - workflow_templates: NOT deleted — may be reused by other types
-// - appointment_workflow_runs: reference appointments, not types — unaffected
-// - appointments.appointment_type_id: SET NULL
+// Cascade: type_workflow_links removed, workflow_templates NOT deleted,
+// appointment_workflow_runs unaffected (reference appointments not types),
+// appointments.appointment_type_id SET NULL.
 export async function DELETE(request: NextRequest) {
   const id = request.nextUrl.searchParams.get("id");
   if (!id) {

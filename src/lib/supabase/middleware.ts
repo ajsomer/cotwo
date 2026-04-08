@@ -161,13 +161,30 @@ export async function updateSession(request: NextRequest) {
     return supabaseResponse;
   }
 
-  // All clinic routes — require complete setup
+  // All clinic routes — require complete setup.
+  // Performance cache: skip the 2 DB queries if we already verified recently.
+  // This cookie is a performance hint only — the JWT validation above is the
+  // actual security boundary. Do not promote this cookie to a security check.
+  const setupCookie = request.cookies.get("x-setup-complete")?.value;
+  if (setupCookie === "1") {
+    return supabaseResponse;
+  }
+
   const state = await getSetupState(user.id);
   if (state !== "complete") {
     const url = request.nextUrl.clone();
     url.pathname = redirectForState(state);
     return NextResponse.redirect(url);
   }
+
+  // Setup verified — cache for 5 minutes to skip DB queries on subsequent navigations
+  supabaseResponse.cookies.set("x-setup-complete", "1", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 300,
+    path: "/",
+  });
 
   return supabaseResponse;
 }

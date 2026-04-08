@@ -1,6 +1,6 @@
 "use client";
 
-import type { ConnectionStatus } from "@/hooks/useRealtimeRunsheet";
+type ConnectionStatus = "connected" | "connecting" | "disconnected";
 
 interface ConnectionIndicatorProps {
   status: ConnectionStatus;

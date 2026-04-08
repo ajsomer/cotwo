@@ -22,7 +22,8 @@
     "survey-core": "^2.5.18",
     "survey-creator-core": "^2.5.18",
     "survey-creator-react": "^2.5.18",
-    "survey-react-ui": "^2.5.18"
+    "survey-react-ui": "^2.5.18",
+    "zustand": "^5.0.12"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

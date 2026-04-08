@@ -6,6 +6,7 @@ import { OrgContext } from "@/hooks/useOrg";
 import { RoleContext } from "@/hooks/useRole";
 import { Sidebar } from "./sidebar";
 import { TopBar } from "./top-bar";
+import { ClinicDataProvider } from "./clinic-data-provider";
 import type { Location, Organisation, UserRole } from "@/lib/supabase/types";
 
 interface StaffAssignmentData {
@@ -86,7 +87,11 @@ export function ClinicProviders({
             <Sidebar onDevSwitch={handleDevSwitch} />
             <div className="flex flex-1 flex-col min-w-0">
               <TopBar />
-              <main className="flex-1 overflow-y-auto">{children}</main>
+              <main className="flex-1 overflow-y-auto">
+                <ClinicDataProvider>
+                  {children}
+                </ClinicDataProvider>
+              </main>
             </div>
           </div>
         </RoleContext>

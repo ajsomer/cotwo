@@ -1,49 +1,15 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { useLocation } from "@/hooks/useLocation";
 import { Badge } from "@/components/ui/badge";
 import { PatientContactCard } from "./patient-contact-card";
 import { PatientSlideOverProvider } from "./patient-slide-over-context";
 import { PatientNameLink } from "./patient-name-link";
 import { ActionTypeIcon } from "./action-type-icon";
+import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
+import type { ReadinessAppointment } from "@/stores/clinic-store";
 import type { ActionType } from "@/lib/workflows/types";
-
-interface WorkflowAction {
-  action_id: string;
-  action_type: string;
-  action_label: string;
-  status: string;
-  scheduled_for: string;
-  fired_at: string | null;
-  error_message: string | null;
-  form_name: string | null;
-  offset_minutes: number;
-  offset_direction: string;
-}
-
-interface OutstandingForm {
-  assignment_id: string;
-  form_name: string;
-  status: string;
-  sent_at: string | null;
-  created_at: string;
-}
-
-interface ReadinessAppointment {
-  appointment_id: string;
-  scheduled_at: string;
-  patient_id: string;
-  patient_first_name: string;
-  patient_last_name: string;
-  clinician_name: string | null;
-  primary_phone: string | null;
-  total_actions: number;
-  completed_actions: number;
-  outstanding_actions: number;
-  actions: WorkflowAction[];
-  outstanding_forms: OutstandingForm[];
-}
 
 interface DateSection {
   label: string;
@@ -65,39 +31,15 @@ const ACTION_STATUS_BADGE: Record<string, { label: string; variant: "gray" | "am
 
 export function ReadinessShell() {
   const { selectedLocation } = useLocation();
-  const [appointments, setAppointments] = useState<ReadinessAppointment[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const appointments = useClinicStore((s) => s.readinessAppointments);
+  const loading = !useClinicStore((s) => s.readinessLoaded);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [contactPatientId, setContactPatientId] = useState<string | null>(null);
   const [resendingId, setResendingId] = useState<string | null>(null);
 
-  const fetchData = useCallback(async () => {
-    if (!selectedLocation) return;
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/readiness?location_id=${selectedLocation.id}`);
-      const data = await res.json();
-      if (res.ok) {
-        setAppointments(data.appointments);
-      } else {
-        setError(data.error);
-      }
-    } finally {
-      setLoading(false);
-    }
+  const refetchReadiness = useCallback(() => {
+    if (selectedLocation) getClinicStore().refreshReadiness(selectedLocation.id);
   }, [selectedLocation]);
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  // Polling every 30s
-  useEffect(() => {
-    if (!selectedLocation) return;
-    const interval = setInterval(fetchData, 30000);
-    return () => clearInterval(interval);
-  }, [fetchData, selectedLocation]);
 
   const toggleExpanded = (id: string) => {
     setExpandedIds((prev) => {
@@ -128,7 +70,7 @@ export function ReadinessShell() {
     }
     setTimeout(() => {
       setResendingId(null);
-      fetchData();
+      refetchReadiness();
     }, 2000);
   };
 
@@ -145,7 +87,7 @@ export function ReadinessShell() {
     }
     setTimeout(() => {
       setResendingId(null);
-      fetchData();
+      refetchReadiness();
     }, 2000);
   };
 
@@ -166,12 +108,6 @@ export function ReadinessShell() {
             Outstanding workflow actions for upcoming appointments at {selectedLocation.name}
           </p>
         </div>
-
-        {error && (
-          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
-            {error}
-          </div>
-        )}
 
         {loading ? (
           <div className="space-y-3">
