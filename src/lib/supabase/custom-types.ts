@@ -1,0 +1,310 @@
+/**
+ * Custom type aliases and interfaces for the Coviu platform.
+ *
+ * These are maintained manually and live in a separate file from the
+ * Supabase-generated types.ts so that `supabase gen types` can safely
+ * overwrite types.ts without losing these definitions.
+ *
+ * All consumers should import from '@/lib/supabase/types' — the generated
+ * file re-exports everything from this file.
+ */
+
+import type { Database } from './types';
+
+// ============================================================================
+// Enum Aliases
+// ============================================================================
+
+export type UserRole = 'clinic_owner' | 'practice_manager' | 'receptionist' | 'clinician';
+export type RoomType = 'clinical' | 'reception' | 'shared' | 'triage';
+export type AppointmentModality = 'telehealth' | 'in_person';
+export type SessionStatus = 'queued' | 'waiting' | 'checked_in' | 'in_session' | 'complete' | 'done';
+export type OrgTier = 'core' | 'complete';
+
+export type DerivedDisplayState =
+  | 'queued'
+  | 'upcoming'
+  | 'late'
+  | 'waiting'
+  | 'checked_in'
+  | 'in_session'
+  | 'running_over'
+  | 'complete'
+  | 'done';
+
+// ============================================================================
+// Entity Interfaces
+// ============================================================================
+
+export interface Organisation {
+  id: string;
+  name: string;
+  slug: string;
+  tier: OrgTier;
+  logo_url: string | null;
+  stripe_routing: 'location' | 'clinician';
+  timezone: string;
+}
+
+export interface Location {
+  id: string;
+  org_id: string;
+  name: string;
+  address: string | null;
+  timezone: string;
+  qr_token: string;
+  stripe_account_id: string | null;
+}
+
+export interface Room {
+  id: string;
+  location_id: string;
+  name: string;
+  room_type: RoomType;
+  link_token: string;
+  sort_order: number;
+  payments_enabled: boolean;
+}
+
+export interface AppointmentType {
+  id: string;
+  org_id: string;
+  name: string;
+  modality: AppointmentModality;
+  duration_minutes: number;
+  default_fee_cents: number;
+}
+
+export interface Patient {
+  id: string;
+  org_id: string;
+  first_name: string;
+  last_name: string;
+  date_of_birth: string | null;
+}
+
+export interface StaffAssignment {
+  id: string;
+  user_id: string;
+  location_id: string;
+  role: UserRole;
+  employment_type: 'full_time' | 'part_time';
+  stripe_account_id: string | null;
+}
+
+export interface User {
+  id: string;
+  email: string;
+  full_name: string;
+  avatar_url: string | null;
+}
+
+// ============================================================================
+// Run Sheet Types
+// ============================================================================
+
+/** The flat row returned by the run sheet query, with all joins resolved. */
+export interface RunsheetSession {
+  // Session fields
+  session_id: string;
+  status: SessionStatus;
+  entry_token: string;
+  video_call_id: string | null;
+  notification_sent: boolean;
+  notification_sent_at: string | null;
+  patient_arrived: boolean;
+  patient_arrived_at: string | null;
+  session_started_at: string | null;
+  session_ended_at: string | null;
+  session_created_at: string;
+
+  // Appointment fields (nullable for on-demand sessions)
+  appointment_id: string | null;
+  scheduled_at: string | null;
+  appointment_status: string | null;
+  phone_number: string | null;
+
+  // Appointment type
+  appointment_type_id: string | null;
+  type_name: string | null;
+  modality: AppointmentModality | null;
+  duration_minutes: number | null;
+  default_fee_cents: number | null;
+
+  // Patient
+  patient_id: string | null;
+  patient_first_name: string | null;
+  patient_last_name: string | null;
+
+  // Room
+  room_id: string | null;
+  room_name: string | null;
+  room_type: RoomType | null;
+  room_sort_order: number | null;
+
+  // Clinician (assigned to appointment)
+  clinician_id: string | null;
+  clinician_name: string | null;
+
+  // Payment method on file
+  has_card_on_file: boolean;
+  card_last_four: string | null;
+  card_brand: string | null;
+}
+
+/** A RunsheetSession enriched with its derived display state. */
+export interface EnrichedSession extends RunsheetSession {
+  derived_state: DerivedDisplayState;
+  patient_disconnected: boolean;
+}
+
+/** Sessions grouped by room for rendering. */
+export interface RoomGroup {
+  room_id: string;
+  room_name: string;
+  room_type: RoomType;
+  room_sort_order: number;
+  link_token: string;
+  payments_enabled: boolean;
+  clinician_name: string | null;
+  sessions: EnrichedSession[];
+  counts: RoomCounts;
+}
+
+export interface RoomCounts {
+  total: number;
+  late: number;
+  upcoming: number;
+  waiting: number;
+  active: number;
+  complete: number;
+  done: number;
+}
+
+/** Aggregate summary across all rooms for the summary bar. */
+export interface RunsheetSummary {
+  total: number;
+  late: number;
+  upcoming: number;
+  waiting: number;
+  active: number;
+  complete: number;
+  done: number;
+}
+
+/** Badge config for a derived state. */
+export interface StatusBadgeConfig {
+  label: string;
+  variant: 'red' | 'amber' | 'amber-soft' | 'teal' | 'teal-muted' | 'blue' | 'blue-muted' | 'gray' | 'gray-muted' | 'faded' | 'green';
+}
+
+/** Action button config for a derived state. */
+export type ActionConfig = {
+  label: string;
+  variant: 'red' | 'amber' | 'teal' | 'blue';
+  action: 'call' | 'nudge' | 'admit' | 'process';
+} | null;
+
+// ============================================================================
+// Patient Entry Flow Types
+// ============================================================================
+
+/** The type of token used to enter the patient flow. */
+export type EntryType = 'session' | 'on_demand' | 'qr_code';
+
+/** Context resolved from the entry token. */
+export interface EntryContext {
+  entry_type: EntryType;
+  org: { id: string; name: string; logo_url: string | null; tier: OrgTier };
+  location: { id: string; name: string; stripe_account_id: string | null };
+  room: { id: string; name: string; room_type: RoomType } | null;
+  session: {
+    id: string;
+    entry_token: string;
+    status: SessionStatus;
+    appointment_id: string | null;
+    scheduled_at: string | null;
+    phone_number: string | null;
+    clinician_name: string | null;
+  } | null;
+  payments_enabled: boolean;
+}
+
+/** State tracked as the patient progresses through the flow. */
+export interface PatientFlowState {
+  current_step: number;
+  total_steps: number;
+  phone_verified: boolean;
+  phone_number: string | null;
+  verification_id: string | null;
+  patient_id: string | null;
+  patient_name: string | null;
+  identity_confirmed: boolean;
+  card_on_file: boolean;
+  card_last_four: string | null;
+  card_brand: string | null;
+  device_tested: boolean;
+  session_id: string | null;
+}
+
+/** Patient contact returned during identity step. */
+export interface PatientContact {
+  id: string;
+  first_name: string;
+  last_name: string;
+  date_of_birth: string | null;
+}
+
+/** Phone verification record. */
+export interface PhoneVerification {
+  id: string;
+  phone_number: string;
+  code: string;
+  expires_at: string;
+  verified_at: string | null;
+  session_id: string | null;
+  created_at: string;
+}
+
+// ============================================================================
+// Forms Types
+// ============================================================================
+
+export type FormStatus = 'draft' | 'published' | 'archived';
+export type FormAssignmentStatus = 'pending' | 'sent' | 'opened' | 'completed';
+
+export interface Form {
+  id: string;
+  org_id: string;
+  name: string;
+  description: string | null;
+  schema: Record<string, unknown>;
+  status: FormStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FormAssignment {
+  id: string;
+  form_id: string;
+  appointment_id: string | null;
+  patient_id: string;
+  token: string;
+  schema_snapshot: Record<string, unknown>;
+  status: FormAssignmentStatus;
+  sent_at: string | null;
+  opened_at: string | null;
+  completed_at: string | null;
+  submission_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FormSubmission {
+  id: string;
+  form_id: string;
+  patient_id: string;
+  appointment_id: string | null;
+  responses: Record<string, unknown>;
+  created_at: string;
+}

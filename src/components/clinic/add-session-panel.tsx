@@ -17,16 +17,10 @@ interface AddSessionPanelProps {
   timezone: string;
 }
 
-interface AppointmentTypeOption {
-  id: string;
-  name: string;
-}
-
 interface PatientRow {
   id: string;
   phone: string;
   time: string;
-  appointment_type_id: string;
 }
 
 interface RoomState {
@@ -46,23 +40,6 @@ export function AddSessionPanel({
   const { org } = useOrg();
   const [planningTomorrow, setPlanningTomorrow] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [appointmentTypes, setAppointmentTypes] = useState<AppointmentTypeOption[]>([]);
-
-  // Fetch appointment types for Complete tier orgs
-  useEffect(() => {
-    if (!org?.id || org.tier !== "complete") return;
-    fetch(`/api/appointment-types?org_id=${org.id}`)
-      .then((r) => r.json())
-      .then((data) => {
-        setAppointmentTypes(
-          (data.appointment_types ?? []).map((t: { id: string; name: string }) => ({
-            id: t.id,
-            name: t.name,
-          }))
-        );
-      })
-      .catch(() => {});
-  }, [org?.id, org?.tier]);
 
   const today = new Date();
   const tomorrow = new Date(today);
@@ -132,7 +109,6 @@ export function AddSessionPanel({
                 timeZone: timezone,
               })
             : "",
-          appointment_type_id: s.appointment_type_id ?? "",
         })),
       };
     }
@@ -157,7 +133,7 @@ export function AddSessionPanel({
           ? prev[roomId].patients
           : prev[roomId].patients.length > 0
             ? prev[roomId].patients
-            : [{ id: crypto.randomUUID(), phone: "+61", time: "", appointment_type_id: "" }],
+            : [{ id: crypto.randomUUID(), phone: "+61", time: "" }],
       },
     }));
   }
@@ -169,7 +145,7 @@ export function AddSessionPanel({
         ...prev[roomId],
         patients: [
           ...prev[roomId].patients,
-          { id: crypto.randomUUID(), phone: "+61", time: "", appointment_type_id: "" },
+          { id: crypto.randomUUID(), phone: "+61", time: "" },
         ],
       },
     }));
@@ -178,7 +154,7 @@ export function AddSessionPanel({
   function updatePatientRow(
     roomId: string,
     rowId: string,
-    field: "phone" | "time" | "appointment_type_id",
+    field: "phone" | "time",
     value: string
   ) {
     setRoomStates((prev) => ({
@@ -209,7 +185,6 @@ export function AddSessionPanel({
       phone_number: string;
       scheduled_at: string;
       room_id: string;
-      appointment_type_id?: string;
     }> = [];
 
     const updates: Array<{
@@ -244,9 +219,6 @@ export function AddSessionPanel({
             phone_number: patient.phone,
             scheduled_at: scheduledDate.toISOString(),
             room_id: roomId,
-            ...(patient.appointment_type_id
-              ? { appointment_type_id: patient.appointment_type_id }
-              : {}),
           });
         }
       }
@@ -459,31 +431,6 @@ export function AddSessionPanel({
                               </svg>
                             </button>
                           </div>
-
-                          {/* Appointment type (Complete tier, new patients only) */}
-                          {org?.tier === "complete" &&
-                            appointmentTypes.length > 0 &&
-                            !existingSessionIds.has(patient.id) && (
-                              <select
-                                value={patient.appointment_type_id}
-                                onChange={(e) =>
-                                  updatePatientRow(
-                                    room.id,
-                                    patient.id,
-                                    "appointment_type_id",
-                                    e.target.value
-                                  )
-                                }
-                                className="mt-1.5 w-full rounded-lg border border-gray-200 px-2.5 py-1 text-xs text-gray-600 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
-                              >
-                                <option value="">No appointment type</option>
-                                {appointmentTypes.map((t) => (
-                                  <option key={t.id} value={t.id}>
-                                    {t.name}
-                                  </option>
-                                ))}
-                              </select>
-                            )}
                         </div>
                       ))}
                     </div>

@@ -52,7 +52,7 @@ export async function executeScheduledActions(): Promise<ScanResult> {
   const blockIds = [...new Set(actions.map((a) => a.action_block_id))];
   const { data: blocks } = await supabase
     .from("workflow_action_blocks")
-    .select("id, action_type, config, precondition, form_id")
+    .select("id, action_type, config, precondition, form_id, parent_action_block_id")
     .in("id", blockIds);
 
   const blockMap = new Map(
@@ -217,13 +217,14 @@ export async function executeScheduledActions(): Promise<ScanResult> {
         patientId,
         patientFirstName: patient.first_name,
         phoneNumber: patient.phone_number,
-        scheduledAt: appt.scheduled_at,
+        scheduledAt: appt.scheduled_at ?? null,
         clinicName: orgNameMap.get(appt.org_id) ?? "the clinic",
         clinicianName: appt.clinician_id
           ? clinicianNameMap.get(appt.clinician_id) ?? null
           : null,
         formId: block.form_id,
         config: (block.config as Record<string, unknown>) ?? {},
+        parentActionBlockId: block.parent_action_block_id ?? null,
       }
     );
 

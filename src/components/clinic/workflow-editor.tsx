@@ -74,6 +74,7 @@ export function WorkflowEditor({
       form_id: null,
       config: {},
       precondition: null,
+      parent_action_block_id: null,
       sort_order: blocks.length,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),

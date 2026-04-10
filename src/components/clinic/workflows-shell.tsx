@@ -10,6 +10,7 @@ import type {
 import { WorkflowSidebar, type SidebarItem } from "./workflow-sidebar";
 import { WorkflowMiddlePane } from "./workflow-middle-pane";
 import { MidFlightWarningModal } from "./mid-flight-warning-modal";
+import { AppointmentTypesSettingsShell } from "./appointment-types-settings-shell";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import type { AppointmentTypeRow, OutcomePathwayRow } from "@/stores/clinic-store";
 
@@ -411,53 +412,65 @@ export function WorkflowsShell() {
         </div>
       </div>
 
-      {error && (
-        <div className="border-b border-red-200 bg-red-50 px-6 py-3 text-sm text-red-700">
-          {error}
-          <button onClick={() => setError(null)} className="ml-2 underline">
-            Dismiss
-          </button>
+      {/* Pre-appointment: new intake package configuration surface */}
+      {isPre && (
+        <div className="flex-1 overflow-y-auto">
+          <AppointmentTypesSettingsShell />
         </div>
       )}
 
-      <div className="flex flex-1 overflow-hidden">
-        <WorkflowSidebar
-          direction={direction}
-          items={sidebarItems}
-          selectedId={selectedId}
-          onSelect={handleSelect}
-          onCreate={isPre ? handleCreateType : handleCreatePathway}
-          loading={loading}
-        />
+      {/* Post-appointment: existing granular action block editor */}
+      {!isPre && (
+        <>
+          {error && (
+            <div className="border-b border-red-200 bg-red-50 px-6 py-3 text-sm text-red-700">
+              {error}
+              <button onClick={() => setError(null)} className="ml-2 underline">
+                Dismiss
+              </button>
+            </div>
+          )}
 
-        <WorkflowMiddlePane
-          direction={direction}
-          preMetadata={preMetadata}
-          postMetadata={postMetadata}
-          template={template}
-          blocks={workingBlocks}
-          forms={forms}
-          inFlightCount={selectedType?.in_flight_count ?? 0}
-          isDirty={isDirty}
-          isSaving={isSaving}
-          onMetadataChange={(updates) =>
-            setMetadataEdits({ ...metadataEdits, ...updates })
-          }
-          onBlocksChange={setWorkingBlocks}
-          onCreateWorkflow={handleCreateWorkflow}
-          onSave={handleSave}
-          onCancel={handleCancel}
-          loading={false}
-        />
-      </div>
+          <div className="flex flex-1 overflow-hidden">
+            <WorkflowSidebar
+              direction={direction}
+              items={sidebarItems}
+              selectedId={selectedId}
+              onSelect={handleSelect}
+              onCreate={handleCreatePathway}
+              loading={loading}
+            />
 
-      <MidFlightWarningModal
-        open={showWarning}
-        inFlightCount={inFlightCount}
-        changeSummary={computeChangeSummary()}
-        onConfirm={executeSave}
-        onCancel={() => setShowWarning(false)}
-      />
+            <WorkflowMiddlePane
+              direction={direction}
+              preMetadata={preMetadata}
+              postMetadata={postMetadata}
+              template={template}
+              blocks={workingBlocks}
+              forms={forms}
+              inFlightCount={selectedType?.in_flight_count ?? 0}
+              isDirty={isDirty}
+              isSaving={isSaving}
+              onMetadataChange={(updates) =>
+                setMetadataEdits({ ...metadataEdits, ...updates })
+              }
+              onBlocksChange={setWorkingBlocks}
+              onCreateWorkflow={handleCreateWorkflow}
+              onSave={handleSave}
+              onCancel={handleCancel}
+              loading={false}
+            />
+          </div>
+
+          <MidFlightWarningModal
+            open={showWarning}
+            inFlightCount={inFlightCount}
+            changeSummary={computeChangeSummary()}
+            onConfirm={executeSave}
+            onCancel={() => setShowWarning(false)}
+          />
+        </>
+      )}
     </div>
   );
 }

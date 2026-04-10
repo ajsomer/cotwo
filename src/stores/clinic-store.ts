@@ -16,6 +16,7 @@ export interface AppointmentTypeRow {
   source: string;
   pms_provider: string | null;
   pre_workflow_template_id: string | null;
+  terminal_type: 'run_sheet' | 'collection_only' | null;
   action_count: number;
   in_flight_count: number;
 }
@@ -51,6 +52,7 @@ export interface WorkflowAction {
   form_name: string | null;
   offset_minutes: number;
   offset_direction: string;
+  updated_at?: string | null;
 }
 
 export interface OutstandingForm {
@@ -61,14 +63,24 @@ export interface OutstandingForm {
   created_at: string;
 }
 
+export type ReadinessDirection = 'pre_appointment' | 'post_appointment';
+
+export interface ReadinessCounts {
+  pre: number;
+  post: number;
+}
+
 export interface ReadinessAppointment {
   appointment_id: string;
-  scheduled_at: string;
+  scheduled_at: string | null;
   patient_id: string;
   patient_first_name: string;
   patient_last_name: string;
   clinician_name: string | null;
   primary_phone: string | null;
+  room_name: string | null;
+  appointment_type_name: string | null;
+  priority: string;
   total_actions: number;
   completed_actions: number;
   outstanding_actions: number;
@@ -156,6 +168,8 @@ export interface ClinicStore {
   // Tier 2: Volatile
   sessions: RunsheetSession[];
   readinessAppointments: ReadinessAppointment[];
+  readinessDirection: ReadinessDirection;
+  readinessCounts: ReadinessCounts;
 
   // Tier 3: Real-time
   connectedSessions: Set<string>;
@@ -205,6 +219,8 @@ export interface ClinicStore {
   setRoomsWithClinicians: (rooms: RoomWithClinicians[]) => void;
   setSessions: (sessions: RunsheetSession[]) => void;
   setReadinessAppointments: (appointments: ReadinessAppointment[]) => void;
+  setReadinessDirection: (direction: ReadinessDirection) => void;
+  setReadinessCounts: (counts: ReadinessCounts) => void;
   setForms: (forms: FormRow[]) => void;
   setAppointmentTypes: (types: AppointmentTypeRow[]) => void;
   setOutcomePathways: (pathways: OutcomePathwayRow[]) => void;
@@ -253,6 +269,8 @@ export const useClinicStore = create<ClinicStore>()(
       paymentRooms: [],
       sessions: [],
       readinessAppointments: [],
+      readinessDirection: 'pre_appointment' as ReadinessDirection,
+      readinessCounts: { pre: 0, post: 0 },
       connectedSessions: new Set(),
       locationId: null,
       orgId: null,
@@ -347,11 +365,19 @@ export const useClinicStore = create<ClinicStore>()(
 
       refreshReadiness: async (locationId) => {
         try {
-          const data = await fetchJson<{ appointments: ReadinessAppointment[] }>(
-            `/api/readiness?location_id=${locationId}`
+          const direction = get().readinessDirection;
+          const data = await fetchJson<{
+            appointments: ReadinessAppointment[];
+            counts?: ReadinessCounts;
+          }>(
+            `/api/readiness?location_id=${locationId}&direction=${direction}`
           );
           set(
-            { readinessAppointments: data.appointments ?? [], readinessLoaded: true },
+            {
+              readinessAppointments: data.appointments ?? [],
+              readinessCounts: data.counts ?? { pre: 0, post: 0 },
+              readinessLoaded: true,
+            },
             false,
             "refreshReadiness"
           );
@@ -509,6 +535,14 @@ export const useClinicStore = create<ClinicStore>()(
           false,
           "setReadinessAppointments"
         ),
+      setReadinessDirection: (direction) => {
+        set({ readinessDirection: direction }, false, "setReadinessDirection");
+        // Immediately refresh with new direction
+        const locId = get().locationId;
+        if (locId) get().refreshReadiness(locId);
+      },
+      setReadinessCounts: (counts) =>
+        set({ readinessCounts: counts }, false, "setReadinessCounts"),
       setForms: (forms) => set({ forms, formsLoaded: true }, false, "setForms"),
       setAppointmentTypes: (types) =>
         set({ appointmentTypes: types }, false, "setAppointmentTypes"),
@@ -539,6 +573,8 @@ export const useClinicStore = create<ClinicStore>()(
             roomsWithClinicians: [],
             sessions: [],
             readinessAppointments: [],
+            readinessDirection: 'pre_appointment' as ReadinessDirection,
+            readinessCounts: { pre: 0, post: 0 },
             clinicianRoomIds: [],
             paymentConfig: null,
             paymentRooms: [],

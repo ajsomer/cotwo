@@ -2,15 +2,23 @@
 
 import { useEffect, useState } from "react";
 import { SlideOver } from "@/components/ui/slide-over";
+import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "./status-badge";
+import { ActionTypeIcon } from "./action-type-icon";
 import { formatPhoneNumber } from "@/lib/runsheet/format";
 import type { EnrichedSession } from "@/lib/supabase/types";
+import type { ReadinessAppointment } from "@/stores/clinic-store";
+import type { ActionType } from "@/lib/workflows/types";
 
 interface PatientContactCardProps {
   session?: EnrichedSession | null;
   patientId?: string | null;
   open: boolean;
   onClose: () => void;
+  // Readiness-specific (optional — omit for run sheet usage)
+  appointment?: ReadinessAppointment | null;
+  onOpenFormHandoff?: (actionId: string, formName: string) => void;
+  onDeleted?: () => void;
 }
 
 interface PatientDetails {
@@ -45,12 +53,37 @@ interface PatientDetails {
   }[];
 }
 
-export function PatientContactCard({ session, patientId: propPatientId, open, onClose }: PatientContactCardProps) {
+const ACTION_STATUS_BADGE: Record<string, { label: string; variant: string }> = {
+  scheduled: { label: "Scheduled", variant: "gray" },
+  pending: { label: "Pending", variant: "gray" },
+  firing: { label: "Firing", variant: "amber" },
+  sent: { label: "Sent", variant: "amber" },
+  opened: { label: "Opened", variant: "amber" },
+  completed: { label: "Completed", variant: "teal" },
+  captured: { label: "Captured", variant: "teal" },
+  verified: { label: "Verified", variant: "teal" },
+  transcribed: { label: "Transcribed", variant: "teal" },
+  skipped: { label: "Skipped", variant: "gray" },
+  failed: { label: "Failed", variant: "red" },
+};
+
+export function PatientContactCard({
+  session,
+  patientId: propPatientId,
+  open,
+  onClose,
+  appointment,
+  onOpenFormHandoff,
+  onDeleted,
+}: PatientContactCardProps) {
   const [details, setDetails] = useState<PatientDetails | null>(null);
   const [loading, setLoading] = useState(false);
   const [resendingId, setResendingId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const resolvedPatientId = propPatientId || session?.patient_id || null;
+  const resolvedPatientId = propPatientId || appointment?.patient_id || session?.patient_id || null;
+  const isReadinessMode = !!appointment;
 
   useEffect(() => {
     if (!open || !resolvedPatientId) {
@@ -68,6 +101,43 @@ export function PatientContactCard({ session, patientId: propPatientId, open, on
       .catch((err) => console.error("[ContactCard] fetch failed:", err))
       .finally(() => setLoading(false));
   }, [open, resolvedPatientId, session?.session_id]);
+
+  // Reset delete confirm when panel closes
+  useEffect(() => {
+    if (!open) setConfirmDelete(false);
+  }, [open]);
+
+  const handleDelete = async () => {
+    if (!appointment) return;
+    setDeleting(true);
+    try {
+      const res = await fetch("/api/readiness/delete-appointment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ appointment_id: appointment.appointment_id }),
+      });
+      if (res.ok) {
+        onDeleted?.();
+      }
+    } catch (err) {
+      console.error("Failed to delete:", err);
+    } finally {
+      setDeleting(false);
+      setConfirmDelete(false);
+    }
+  };
+
+  // Readiness: completed form actions for the handoff section
+  const formActions = appointment?.actions.filter(
+    (a) =>
+      a.action_type === "deliver_form" &&
+      (a.status === "completed" || a.status === "transcribed")
+  ) ?? [];
+
+  // Readiness: all actions sorted by offset for the workflow timeline
+  const sortedActions = appointment
+    ? [...appointment.actions].sort((a, b) => b.offset_minutes - a.offset_minutes)
+    : [];
 
   return (
     <SlideOver open={open} onClose={onClose} title="Patient details">
@@ -123,6 +193,37 @@ export function PatientContactCard({ session, patientId: propPatientId, open, on
                 }}
               />
             </div>
+
+            {/* Delete button (readiness only) */}
+            {isReadinessMode && onDeleted && (
+              <div className="pt-1">
+                {confirmDelete ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">Delete appointment?</span>
+                    <button
+                      onClick={handleDelete}
+                      disabled={deleting}
+                      className="rounded-lg px-2.5 py-1 text-xs font-medium bg-red-500 text-white hover:bg-red-500/90 disabled:opacity-50 transition-colors"
+                    >
+                      {deleting ? "..." : "Yes"}
+                    </button>
+                    <button
+                      onClick={() => setConfirmDelete(false)}
+                      className="rounded-lg px-2.5 py-1 text-xs font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
+                    >
+                      No
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setConfirmDelete(true)}
+                    className="text-xs text-gray-400 hover:text-red-500 transition-colors"
+                  >
+                    Delete appointment
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="h-px bg-gray-200" />
@@ -153,6 +254,145 @@ export function PatientContactCard({ session, patientId: propPatientId, open, on
           </section>
 
           <div className="h-px bg-gray-200" />
+
+          {/* Appointment details (readiness only) */}
+          {isReadinessMode && appointment && (
+            <>
+              <section>
+                <h4 className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
+                  Appointment
+                </h4>
+                <div className="rounded-lg bg-gray-50 px-3 py-3 space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    {appointment.scheduled_at && (
+                      <span className="text-sm font-medium text-gray-800">
+                        {new Date(appointment.scheduled_at).toLocaleDateString("en-AU", {
+                          weekday: "short",
+                          day: "numeric",
+                          month: "short",
+                        })}{" "}
+                        at{" "}
+                        {formatTime(appointment.scheduled_at)}
+                      </span>
+                    )}
+                  </div>
+                  {appointment.appointment_type_name && (
+                    <p className="text-xs text-gray-500">{appointment.appointment_type_name}</p>
+                  )}
+                  {appointment.room_name && (
+                    <p className="text-xs text-gray-500">{appointment.room_name}</p>
+                  )}
+                </div>
+              </section>
+
+              <div className="h-px bg-gray-200" />
+            </>
+          )}
+
+          {/* Workflow timeline (readiness only) */}
+          {isReadinessMode && sortedActions.length > 0 && (
+            <>
+              <section>
+                <h4 className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
+                  Workflow
+                </h4>
+                <div className="relative space-y-3 pl-5">
+                  {/* Vertical line */}
+                  <div className="absolute left-[7px] top-1 bottom-1 w-px bg-gray-200" />
+
+                  {sortedActions.map((action) => {
+                    const badge = ACTION_STATUS_BADGE[action.status] ?? {
+                      label: action.status,
+                      variant: "gray",
+                    };
+                    return (
+                      <div key={action.action_id} className="relative flex items-start gap-2">
+                        <div className="absolute left-[-16px] top-1 w-2 h-2 rounded-full bg-gray-300 border-2 border-white" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <ActionTypeIcon
+                              actionType={action.action_type as ActionType}
+                              size={14}
+                              className="text-gray-400 shrink-0"
+                            />
+                            <span className="text-xs text-gray-700 truncate">
+                              {action.action_label}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <Badge
+                              variant={badge.variant as "red" | "amber" | "teal" | "gray" | "faded"}
+                            >
+                              {badge.label}
+                            </Badge>
+                            {action.fired_at && (
+                              <span className="text-[10px] text-gray-400">
+                                {new Date(action.fired_at).toLocaleString("en-AU", {
+                                  day: "numeric",
+                                  month: "short",
+                                  hour: "numeric",
+                                  minute: "2-digit",
+                                })}
+                              </span>
+                            )}
+                          </div>
+                          {action.error_message && (
+                            <p className="text-[10px] text-red-500 mt-0.5">
+                              {action.error_message}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+
+              <div className="h-px bg-gray-200" />
+            </>
+          )}
+
+          {/* Completed forms with handoff (readiness only) */}
+          {isReadinessMode && formActions.length > 0 && (
+            <>
+              <section>
+                <h4 className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
+                  Completed Forms
+                </h4>
+                <div className="space-y-1.5">
+                  {formActions.map((action) => (
+                    <div
+                      key={action.action_id}
+                      className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2"
+                    >
+                      <span className="text-sm text-gray-800 truncate">
+                        {action.form_name ?? "Form"}
+                      </span>
+                      {action.status === "transcribed" ? (
+                        <Badge variant="teal">Transcribed</Badge>
+                      ) : onOpenFormHandoff ? (
+                        <button
+                          onClick={() =>
+                            onOpenFormHandoff(
+                              action.action_id,
+                              action.form_name ?? "Form"
+                            )
+                          }
+                          className="rounded-full bg-amber-500/15 px-3 py-1 text-xs font-medium text-amber-700 hover:bg-amber-500/25"
+                        >
+                          Review
+                        </button>
+                      ) : (
+                        <Badge variant="teal">Completed</Badge>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <div className="h-px bg-gray-200" />
+            </>
+          )}
 
           {/* Payment */}
           <section>
@@ -187,7 +427,7 @@ export function PatientContactCard({ session, patientId: propPatientId, open, on
 
           <div className="h-px bg-gray-200" />
 
-          {/* Today's Session */}
+          {/* Today's Session (run sheet only) */}
           {session && (
             <section>
               <h4 className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
@@ -222,7 +462,7 @@ export function PatientContactCard({ session, patientId: propPatientId, open, on
             </section>
           )}
 
-          <div className="h-px bg-gray-200" />
+          {session && <div className="h-px bg-gray-200" />}
 
           {/* Visit History */}
           <section>
@@ -245,87 +485,94 @@ export function PatientContactCard({ session, patientId: propPatientId, open, on
             ) : (
               <p className="text-sm text-gray-400">First visit</p>
             )}
+            {isReadinessMode && (
+              <p className="text-[10px] text-gray-400 italic mt-1">
+                Coviu appointments only — not a complete clinical history
+              </p>
+            )}
           </section>
 
           <div className="h-px bg-gray-200" />
 
-          {/* Forms */}
-          <section>
-            <h4 className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
-              Forms
-            </h4>
-            {details.form_assignments && details.form_assignments.length > 0 ? (
-              <div className="space-y-1.5">
-                {details.form_assignments.map((fa) => (
-                  <div
-                    key={fa.id}
-                    className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <span className="text-sm text-gray-800 block truncate">
-                        {fa.form_name}
-                      </span>
-                      <span className="text-xs text-gray-400">
-                        {fa.status === "completed" && fa.completed_at
-                          ? `Completed ${relativeTime(fa.completed_at)}`
-                          : fa.sent_at
-                            ? `Sent ${relativeTime(fa.sent_at)}`
-                            : "Pending"}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 ml-2 flex-shrink-0">
-                      <span
-                        className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                          fa.status === "completed"
-                            ? "bg-teal-500/15 text-teal-700"
-                            : fa.status === "opened"
-                              ? "bg-amber-500/15 text-amber-700"
-                              : fa.status === "sent"
+          {/* Forms (run sheet / legacy) */}
+          {!isReadinessMode && (
+            <section>
+              <h4 className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
+                Forms
+              </h4>
+              {details.form_assignments && details.form_assignments.length > 0 ? (
+                <div className="space-y-1.5">
+                  {details.form_assignments.map((fa) => (
+                    <div
+                      key={fa.id}
+                      className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <span className="text-sm text-gray-800 block truncate">
+                          {fa.form_name}
+                        </span>
+                        <span className="text-xs text-gray-400">
+                          {fa.status === "completed" && fa.completed_at
+                            ? `Completed ${relativeTime(fa.completed_at)}`
+                            : fa.sent_at
+                              ? `Sent ${relativeTime(fa.sent_at)}`
+                              : "Pending"}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 ml-2 flex-shrink-0">
+                        <span
+                          className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                            fa.status === "completed"
+                              ? "bg-teal-500/15 text-teal-700"
+                              : fa.status === "opened"
                                 ? "bg-amber-500/15 text-amber-700"
-                                : "bg-gray-200 text-gray-600"
-                        }`}
-                      >
-                        {fa.status === "completed" ? "Completed" : fa.status === "opened" ? "Opened" : fa.status === "sent" ? "Sent" : "Pending"}
-                      </span>
-                      {fa.status !== "completed" ? (
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            setResendingId(fa.id);
-                            try {
-                              await fetch("/api/forms/assignments/send", {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ assignment_id: fa.id }),
-                              });
-                            } catch {
-                              // silent
-                            }
-                            setTimeout(() => setResendingId(null), 2000);
-                          }}
-                          className="text-[11px] text-teal-600 hover:text-teal-700 whitespace-nowrap"
+                                : fa.status === "sent"
+                                  ? "bg-amber-500/15 text-amber-700"
+                                  : "bg-gray-200 text-gray-600"
+                          }`}
                         >
-                          {resendingId === fa.id ? "Sent!" : "Resend"}
-                        </button>
-                      ) : fa.submission_id ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            window.open(`/api/forms/submissions/${fa.submission_id}`, "_blank");
-                          }}
-                          className="text-[11px] text-teal-600 hover:text-teal-700 whitespace-nowrap"
-                        >
-                          View
-                        </button>
-                      ) : null}
+                          {fa.status === "completed" ? "Completed" : fa.status === "opened" ? "Opened" : fa.status === "sent" ? "Sent" : "Pending"}
+                        </span>
+                        {fa.status !== "completed" ? (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              setResendingId(fa.id);
+                              try {
+                                await fetch("/api/forms/assignments/send", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ assignment_id: fa.id }),
+                                });
+                              } catch {
+                                // silent
+                              }
+                              setTimeout(() => setResendingId(null), 2000);
+                            }}
+                            className="text-[11px] text-teal-600 hover:text-teal-700 whitespace-nowrap"
+                          >
+                            {resendingId === fa.id ? "Sent!" : "Resend"}
+                          </button>
+                        ) : fa.submission_id ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              window.open(`/api/forms/submissions/${fa.submission_id}`, "_blank");
+                            }}
+                            className="text-[11px] text-teal-600 hover:text-teal-700 whitespace-nowrap"
+                          >
+                            View
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm text-gray-400">No forms sent to this patient.</p>
-            )}
-          </section>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-400">No forms sent to this patient.</p>
+              )}
+            </section>
+          )}
         </div>
       )}
     </SlideOver>

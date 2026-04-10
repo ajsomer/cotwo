@@ -192,6 +192,39 @@ export function ClinicDataProvider({ children }: ClinicDataProviderProps) {
         .subscribe();
       channels.push(formsChannel);
 
+      // --- Readiness: appointment_actions changes ---
+      // KNOWN LIMITATION (production): Subscribing to all appointment_actions
+      // changes means we receive events for actions at other locations. For
+      // prototype scale this is fine. Production should filter by location_id
+      // (requires a join through appointments → location_id) or use a Postgres
+      // function to broadcast to location-specific channels.
+      let readinessDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+      const debouncedReadinessRefresh = () => {
+        // Leading-edge debounce: fire immediately on first event, then suppress
+        // for 250ms. This ensures the UI feels responsive while avoiding
+        // rapid-fire refetches when the workflow engine fires multiple actions.
+        if (readinessDebounceTimer) return;
+        const currentLocId = getClinicStore().locationId;
+        if (currentLocId) getClinicStore().refreshReadiness(currentLocId);
+        readinessDebounceTimer = setTimeout(() => {
+          readinessDebounceTimer = null;
+        }, 250);
+      };
+
+      const actionsChannel = supabase
+        .channel(`readiness-actions:${locId}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "appointment_actions",
+          },
+          debouncedReadinessRefresh
+        )
+        .subscribe();
+      channels.push(actionsChannel);
+
       channelsRef.current = channels;
     },
     [cleanupSubscriptions]

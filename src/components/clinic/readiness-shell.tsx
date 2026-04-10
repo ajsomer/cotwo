@@ -1,422 +1,774 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { useLocation } from "@/hooks/useLocation";
+import { useState, useMemo, useCallback } from "react";
+import { useClinicStore } from "@/stores/clinic-store";
+import type { ReadinessAppointment, ReadinessDirection } from "@/stores/clinic-store";
+import type { ReadinessPriority } from "@/lib/readiness/derived-state";
+import {
+  getPriorityBadgeConfig,
+  getActionButtonConfig,
+  isAttentionPriority,
+  getTriggeringActions,
+} from "@/lib/readiness/derived-state";
 import { Badge } from "@/components/ui/badge";
-import { PatientContactCard } from "./patient-contact-card";
-import { PatientSlideOverProvider } from "./patient-slide-over-context";
-import { PatientNameLink } from "./patient-name-link";
-import { ActionTypeIcon } from "./action-type-icon";
-import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
-import type { ReadinessAppointment } from "@/stores/clinic-store";
+import { Button } from "@/components/ui/button";
+import { ActionTypeIcon } from "@/components/clinic/action-type-icon";
 import type { ActionType } from "@/lib/workflows/types";
+import { ReadinessModeToggle } from "@/components/clinic/readiness-mode-toggle";
+import {
+  ReadinessFilterBar,
+  type ReadinessFilters,
+} from "@/components/clinic/readiness-filter-bar";
+import dynamic from "next/dynamic";
 
-interface DateSection {
+const AddPatientPanel = dynamic(
+  () =>
+    import("@/components/clinic/add-patient-panel").then(
+      (m) => m.AddPatientPanel
+    ),
+  { ssr: false }
+);
+
+import { PatientContactCard } from "@/components/clinic/patient-contact-card";
+
+const FormHandoffPanel = dynamic(
+  () =>
+    import("@/components/clinic/form-handoff-panel").then(
+      (m) => m.FormHandoffPanel
+    ),
+  { ssr: false }
+);
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type ActivePanel =
+  | { type: "add-patient" }
+  | { type: "detail"; appointment: ReadinessAppointment }
+  | {
+      type: "form-handoff";
+      appointment: ReadinessAppointment;
+      actionId: string;
+      formName: string;
+    }
+  | null;
+
+// ---------------------------------------------------------------------------
+// Priority slot config — matches run sheet room card pattern
+// ---------------------------------------------------------------------------
+
+const PRIORITY_SLOTS: {
+  key: ReadinessPriority;
   label: string;
-  appointments: ReadinessAppointment[];
-}
+  borderColor: string;
+  rowTint: string;
+  badgeVariant: string;
+}[] = [
+  {
+    key: "overdue",
+    label: "Overdue",
+    borderColor: "border-l-red-500",
+    rowTint: "bg-red-500/[0.03]",
+    badgeVariant: "red",
+  },
+  {
+    key: "form_completed_needs_transcription",
+    label: "Form Completed",
+    borderColor: "border-l-amber-500",
+    rowTint: "bg-amber-500/[0.03]",
+    badgeVariant: "amber",
+  },
+  {
+    key: "at_risk",
+    label: "At Risk",
+    borderColor: "border-l-amber-500",
+    rowTint: "bg-amber-500/[0.03]",
+    badgeVariant: "amber",
+  },
+  {
+    key: "in_progress",
+    label: "In Progress",
+    borderColor: "border-l-gray-200",
+    rowTint: "",
+    badgeVariant: "gray",
+  },
+  {
+    key: "recently_completed",
+    label: "Completed",
+    borderColor: "border-l-gray-200",
+    rowTint: "",
+    badgeVariant: "faded",
+  },
+];
 
-const ACTION_STATUS_BADGE: Record<string, { label: string; variant: "gray" | "amber" | "teal" | "blue" | "red" | "green" }> = {
-  scheduled: { label: "Scheduled", variant: "gray" },
-  firing: { label: "Firing", variant: "amber" },
-  sent: { label: "Sent", variant: "amber" },
-  opened: { label: "Opened", variant: "amber" },
-  completed: { label: "Completed", variant: "teal" },
-  captured: { label: "Captured", variant: "teal" },
-  verified: { label: "Verified", variant: "teal" },
-  skipped: { label: "Skipped", variant: "gray" },
-  failed: { label: "Failed", variant: "red" },
-  pending: { label: "Pending", variant: "gray" },
+const ACTION_BUTTON_VARIANT_MAP: Record<string, "danger" | "accent" | "primary"> = {
+  red: "danger",
+  amber: "accent",
+  teal: "primary",
 };
 
-export function ReadinessShell() {
-  const { selectedLocation } = useLocation();
-  const appointments = useClinicStore((s) => s.readinessAppointments);
-  const loading = !useClinicStore((s) => s.readinessLoaded);
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-  const [contactPatientId, setContactPatientId] = useState<string | null>(null);
-  const [resendingId, setResendingId] = useState<string | null>(null);
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
-  const refetchReadiness = useCallback(() => {
-    if (selectedLocation) getClinicStore().refreshReadiness(selectedLocation.id);
-  }, [selectedLocation]);
+function formatDateTime(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
 
-  const toggleExpanded = (id: string) => {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
+  if (isToday) {
+    return d.toLocaleTimeString("en-AU", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
     });
-  };
-
-  const handleResendAll = async (appt: ReadinessAppointment) => {
-    setResendingId(appt.appointment_id);
-    try {
-      // Resend legacy form assignments
-      if (appt.outstanding_forms.length > 0) {
-        await Promise.all(
-          appt.outstanding_forms.map((f) =>
-            fetch("/api/forms/assignments/send", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ assignment_id: f.assignment_id }),
-            })
-          )
-        );
-      }
-    } catch {
-      // silent
-    }
-    setTimeout(() => {
-      setResendingId(null);
-      refetchReadiness();
-    }, 2000);
-  };
-
-  const handleResendOne = async (assignmentId: string) => {
-    setResendingId(assignmentId);
-    try {
-      await fetch("/api/forms/assignments/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assignment_id: assignmentId }),
-      });
-    } catch {
-      // silent
-    }
-    setTimeout(() => {
-      setResendingId(null);
-      refetchReadiness();
-    }, 2000);
-  };
-
-  const sections = groupByDate(appointments);
-
-  if (!selectedLocation) {
-    return (
-      <div className="p-6 text-sm text-gray-500">No location selected.</div>
-    );
   }
 
-  return (
-    <PatientSlideOverProvider onOpenPatient={setContactPatientId}>
-      <div className="p-6 max-w-[860px] mx-auto">
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold text-gray-800">Readiness</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Outstanding workflow actions for upcoming appointments at {selectedLocation.name}
-          </p>
-        </div>
-
-        {loading ? (
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <div
-                key={i}
-                className="h-16 animate-pulse rounded-xl border border-gray-200 bg-white"
-              />
-            ))}
-          </div>
-        ) : appointments.length === 0 ? (
-          <div className="rounded-xl border border-gray-200 bg-white p-12 text-center">
-            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-teal-50">
-              <svg
-                className="h-6 w-6 text-teal-500"
-                fill="none"
-                viewBox="0 0 24 24"
-                strokeWidth={2}
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M4.5 12.75l6 6 9-13.5"
-                />
-              </svg>
-            </div>
-            <p className="text-sm text-gray-500">
-              All upcoming appointments are ready.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {sections.map((section) => (
-              <div key={section.label}>
-                <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-gray-500">
-                  {section.label}
-                </h2>
-
-                <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-                  {section.appointments.map((appt, idx) => {
-                    const isExpanded = expandedIds.has(appt.appointment_id);
-                    const isLast = idx === section.appointments.length - 1;
-                    const hasWorkflowActions = appt.actions.length > 0;
-                    const hasLegacyForms = appt.outstanding_forms.length > 0;
-
-                    return (
-                      <div key={appt.appointment_id}>
-                        {/* Collapsed row */}
-                        <div
-                          className={`flex items-center gap-4 px-4 py-3 cursor-pointer hover:bg-gray-50/50 transition-colors ${
-                            !isLast && !isExpanded ? "border-b border-gray-100" : ""
-                          }`}
-                          onClick={() => toggleExpanded(appt.appointment_id)}
-                        >
-                          <div className="min-w-0 flex-1">
-                            <PatientNameLink patientId={appt.patient_id} className="text-sm">
-                              {appt.patient_first_name} {appt.patient_last_name}
-                            </PatientNameLink>
-                          </div>
-
-                          <span className="text-sm text-gray-500 whitespace-nowrap font-mono">
-                            {formatTime(appt.scheduled_at)}
-                          </span>
-
-                          {appt.clinician_name && (
-                            <span className="hidden sm:block text-sm text-gray-400 truncate max-w-[120px]">
-                              {appt.clinician_name}
-                            </span>
-                          )}
-
-                          {/* Status summary */}
-                          {hasWorkflowActions ? (
-                            <Badge variant="amber">
-                              {appt.completed_actions} of {appt.total_actions} complete
-                            </Badge>
-                          ) : (
-                            <Badge variant="amber">
-                              {appt.outstanding_forms.length} form{appt.outstanding_forms.length !== 1 ? "s" : ""}
-                            </Badge>
-                          )}
-
-                          <div
-                            className="flex items-center gap-2"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {hasLegacyForms && (
-                              <button
-                                type="button"
-                                onClick={() => handleResendAll(appt)}
-                                className="rounded px-2 py-1 text-xs text-teal-600 hover:bg-teal-50 whitespace-nowrap"
-                              >
-                                {resendingId === appt.appointment_id
-                                  ? "Sent!"
-                                  : "Resend SMS"}
-                              </button>
-                            )}
-                            {appt.primary_phone && (
-                              <a
-                                href={`tel:${appt.primary_phone}`}
-                                className="rounded px-2 py-1 text-xs text-gray-600 hover:bg-gray-100"
-                              >
-                                Call
-                              </a>
-                            )}
-                          </div>
-
-                          <svg
-                            className={`h-4 w-4 text-gray-400 transition-transform ${
-                              isExpanded ? "rotate-180" : ""
-                            }`}
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            strokeWidth={2}
-                            stroke="currentColor"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              d="M19.5 8.25l-7.5 7.5-7.5-7.5"
-                            />
-                          </svg>
-                        </div>
-
-                        {/* Expanded: action timeline or legacy forms */}
-                        {isExpanded && (
-                          <div
-                            className={`bg-gray-50/50 px-4 py-3 space-y-2 ${
-                              !isLast ? "border-b border-gray-100" : ""
-                            }`}
-                          >
-                            {/* Workflow actions */}
-                            {hasWorkflowActions &&
-                              appt.actions
-                                .sort((a, b) => b.offset_minutes - a.offset_minutes)
-                                .map((action) => {
-                                  const badge = ACTION_STATUS_BADGE[action.status] ?? { label: action.status, variant: "gray" as const };
-                                  return (
-                                    <div
-                                      key={action.action_id}
-                                      className="flex items-center justify-between rounded-lg bg-white px-3 py-2 border border-gray-100"
-                                    >
-                                      <div className="flex items-center gap-2.5">
-                                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-400">
-                                          <ActionTypeIcon actionType={action.action_type as ActionType} size={14} />
-                                        </span>
-                                        <div>
-                                          <span className="text-sm text-gray-800">
-                                            {action.action_label}
-                                          </span>
-                                          {action.fired_at && (
-                                            <span className="ml-2 text-xs text-gray-400">
-                                              Fired {relativeTime(action.fired_at)}
-                                            </span>
-                                          )}
-                                          {action.error_message && (
-                                            <span className="ml-2 text-xs text-red-500">
-                                              {action.error_message}
-                                            </span>
-                                          )}
-                                        </div>
-                                      </div>
-                                      <Badge variant={badge.variant}>
-                                        {badge.label}
-                                      </Badge>
-                                    </div>
-                                  );
-                                })}
-
-                            {/* Legacy form assignments */}
-                            {!hasWorkflowActions &&
-                              appt.outstanding_forms.map((form) => (
-                                <div
-                                  key={form.assignment_id}
-                                  className="flex items-center justify-between rounded-lg bg-white px-3 py-2 border border-gray-100"
-                                >
-                                  <div>
-                                    <span className="text-sm text-gray-800">
-                                      {form.form_name}
-                                    </span>
-                                    {form.sent_at && (
-                                      <span className="ml-2 text-xs text-gray-400">
-                                        Sent {relativeTime(form.sent_at)}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    <Badge
-                                      variant={
-                                        form.status === "opened"
-                                          ? "amber"
-                                          : form.status === "sent"
-                                            ? "amber"
-                                            : "gray"
-                                      }
-                                    >
-                                      {form.status === "opened"
-                                        ? "Opened"
-                                        : form.status === "sent"
-                                          ? "Sent"
-                                          : "Pending"}
-                                    </Badge>
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        handleResendOne(form.assignment_id)
-                                      }
-                                      className="text-xs text-teal-600 hover:text-teal-700"
-                                    >
-                                      {resendingId === form.assignment_id
-                                        ? "Sent!"
-                                        : "Resend"}
-                                    </button>
-                                  </div>
-                                </div>
-                              ))}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <PatientContactCard
-          patientId={contactPatientId}
-          open={!!contactPatientId}
-          onClose={() => setContactPatientId(null)}
-        />
-      </div>
-    </PatientSlideOverProvider>
-  );
-}
-
-// --- Helpers ---
-
-function groupByDate(appointments: ReadinessAppointment[]): DateSection[] {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-
-  const groups = new Map<string, ReadinessAppointment[]>();
-
-  for (const appt of appointments) {
-    const date = new Date(appt.scheduled_at);
-    date.setHours(0, 0, 0, 0);
-
-    let key: string;
-    if (date < today) {
-      key = "__past__";
-    } else {
-      key = date.toISOString().split("T")[0];
-    }
-
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(appt);
-  }
-
-  const sections: DateSection[] = [];
-
-  if (groups.has("__past__")) {
-    sections.push({
-      label: "Past \u2014 clinical record incomplete",
-      appointments: groups.get("__past__")!,
-    });
-    groups.delete("__past__");
-  }
-
-  const sortedKeys = [...groups.keys()].sort();
-  for (const key of sortedKeys) {
-    const date = new Date(key + "T00:00:00");
-    let label: string;
-    if (date.getTime() === today.getTime()) {
-      label = "Today";
-    } else if (date.getTime() === tomorrow.getTime()) {
-      label = "Tomorrow";
-    } else {
-      label = date.toLocaleDateString("en-AU", {
-        weekday: "short",
-        day: "numeric",
-        month: "long",
-      });
-    }
-    sections.push({ label, appointments: groups.get(key)! });
-  }
-
-  return sections;
-}
-
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString("en-AU", {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
+  return d.toLocaleDateString("en-AU", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
   });
 }
 
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diff / 60000);
+  if (mins < 0) {
+    const futureMins = Math.abs(mins);
+    if (futureMins < 60) return `in ${futureMins}m`;
+    const hrs = Math.floor(futureMins / 60);
+    if (hrs < 24) return `in ${hrs}h`;
+    const days = Math.floor(hrs / 24);
+    return `in ${days}d`;
+  }
   if (mins < 1) return "just now";
   if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days === 1) return "yesterday";
-  return `${days} days ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
+
+const ACTION_STATUS_BADGE: Record<string, { label: string; variant: string }> =
+  {
+    scheduled: { label: "Scheduled", variant: "gray" },
+    pending: { label: "Pending", variant: "gray" },
+    firing: { label: "Firing", variant: "amber" },
+    sent: { label: "Sent", variant: "amber" },
+    opened: { label: "Opened", variant: "amber" },
+    completed: { label: "Completed", variant: "teal" },
+    captured: { label: "Captured", variant: "teal" },
+    verified: { label: "Verified", variant: "teal" },
+    transcribed: { label: "Transcribed", variant: "teal" },
+    skipped: { label: "Skipped", variant: "gray" },
+    failed: { label: "Failed", variant: "red" },
+    cancelled: { label: "Cancelled", variant: "gray" },
+  };
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
+export function ReadinessShell() {
+  const appointments = useClinicStore((s) => s.readinessAppointments);
+  const loaded = useClinicStore((s) => s.readinessLoaded);
+  const direction = useClinicStore((s) => s.readinessDirection);
+  const counts = useClinicStore((s) => s.readinessCounts);
+  const setDirection = useClinicStore((s) => s.setReadinessDirection);
+  const rooms = useClinicStore((s) => s.rooms);
+  const appointmentTypes = useClinicStore((s) => s.appointmentTypes);
+  const locationId = useClinicStore((s) => s.locationId);
+  const orgId = useClinicStore((s) => s.orgId);
+  const refreshReadiness = useClinicStore((s) => s.refreshReadiness);
+
+  const [activePanel, setActivePanel] = useState<ActivePanel>(null);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [manuallyCollapsed, setManuallyCollapsed] = useState<Set<string>>(
+    new Set()
+  );
+  const [collapsedSlots, setCollapsedSlots] = useState<Set<ReadinessPriority>>(
+    new Set(["recently_completed"])
+  );
+  const [filters, setFilters] = useState<ReadinessFilters>({
+    roomIds: new Set(),
+    typeIds: new Set(),
+    statuses: new Set(),
+  });
+
+  const now = useMemo(() => new Date(), []);
+
+  // Filter appointments client-side
+  const filtered = useMemo(() => {
+    return appointments.filter((appt) => {
+      if (filters.roomIds.size > 0) {
+        const roomId = rooms.find((r) => r.name === appt.room_name)?.id;
+        if (!roomId || !filters.roomIds.has(roomId)) return false;
+      }
+
+      if (filters.typeIds.size > 0) {
+        const typeId = appointmentTypes.find(
+          (t) => t.name === appt.appointment_type_name
+        )?.id;
+        if (!typeId || !filters.typeIds.has(typeId)) return false;
+      }
+
+      if (filters.statuses.size > 0) {
+        if (!filters.statuses.has(appt.priority as ReadinessPriority))
+          return false;
+      }
+
+      return true;
+    });
+  }, [appointments, filters, rooms, appointmentTypes]);
+
+  // Group by priority slot
+  const slotGroups = useMemo(() => {
+    const groups = new Map<ReadinessPriority, ReadinessAppointment[]>();
+    for (const slot of PRIORITY_SLOTS) {
+      groups.set(slot.key, []);
+    }
+    for (const appt of filtered) {
+      const key = appt.priority as ReadinessPriority;
+      groups.get(key)?.push(appt);
+    }
+    return groups;
+  }, [filtered]);
+
+  const totalItems = filtered.length;
+
+  const hasPreOverdue = useMemo(
+    () =>
+      direction === "pre_appointment"
+        ? appointments.some((a) => a.priority === "overdue")
+        : false,
+    [appointments, direction]
+  );
+  const hasPostOverdue = useMemo(
+    () =>
+      direction === "post_appointment"
+        ? appointments.some((a) => a.priority === "overdue")
+        : false,
+    [appointments, direction]
+  );
+
+  const toggleRow = useCallback(
+    (id: string) => {
+      if (expandedIds.has(id)) {
+        setExpandedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+        setManuallyCollapsed((prev) => new Set(prev).add(id));
+      } else {
+        setExpandedIds((prev) => new Set(prev).add(id));
+        setManuallyCollapsed((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }
+    },
+    [expandedIds]
+  );
+
+  const toggleSlot = useCallback((slot: ReadinessPriority) => {
+    setCollapsedSlots((prev) => {
+      const next = new Set(prev);
+      if (next.has(slot)) next.delete(slot);
+      else next.add(slot);
+      return next;
+    });
+  }, []);
+
+  const handleActionButton = useCallback(
+    (appt: ReadinessAppointment) => {
+      const priority = appt.priority as ReadinessPriority;
+      if (priority === "overdue") {
+        setActivePanel({ type: "detail", appointment: appt });
+      } else if (priority === "form_completed_needs_transcription") {
+        const formAction = appt.actions.find(
+          (a) => a.action_type === "deliver_form" && a.status === "completed"
+        );
+        if (formAction) {
+          setActivePanel({
+            type: "form-handoff",
+            appointment: appt,
+            actionId: formAction.action_id,
+            formName: formAction.form_name ?? "Unknown form",
+          });
+        }
+      }
+      // at_risk "Nudge" would trigger SMS — stubbed for prototype
+    },
+    []
+  );
+
+  const handleSaved = useCallback(() => {
+    setActivePanel(null);
+    if (locationId) refreshReadiness(locationId);
+  }, [locationId, refreshReadiness]);
+
+  // -----------------------------------------------------------------------
+  // Render
+  // -----------------------------------------------------------------------
+
+  if (!loaded) {
+    return (
+      <div className="p-6 max-w-[860px] mx-auto space-y-3">
+        {[1, 2, 3].map((i) => (
+          <div
+            key={i}
+            className="bg-white rounded-xl border border-gray-200 overflow-hidden"
+          >
+            <div className="px-6 py-2.5 border-b border-gray-200">
+              <div className="h-5 w-24 animate-pulse rounded bg-gray-100" />
+            </div>
+            <div className="space-y-0">
+              {[1, 2].map((j) => (
+                <div
+                  key={j}
+                  className="flex items-stretch border-b border-gray-200 last:border-b-0"
+                >
+                  <div className="w-[94px] flex-shrink-0 bg-[#FAF9F7] h-12" />
+                  <div className="flex-1 h-12 px-5 flex items-center">
+                    <div className="h-4 w-32 animate-pulse rounded bg-gray-100" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 max-w-[860px] mx-auto">
+      {/* Header — matches run sheet header card */}
+      <div className="flex items-center bg-white rounded-xl border border-gray-200 px-6 py-2.5 mb-4">
+        <div className="flex-1 min-w-0">
+          <h1 className="text-lg font-semibold text-gray-800">Readiness</h1>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <ReadinessModeToggle
+            direction={direction}
+            counts={counts}
+            hasPreOverdue={hasPreOverdue}
+            hasPostOverdue={hasPostOverdue}
+            onChange={setDirection}
+          />
+          <div className="w-px h-5 bg-gray-200" />
+          <button
+            onClick={() => setActivePanel({ type: "add-patient" })}
+            className="inline-flex items-center gap-2 rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 transition-colors"
+          >
+            + Add patient
+          </button>
+        </div>
+      </div>
+
+      {/* Filter bar */}
+      <div className="mb-4">
+        <ReadinessFilterBar
+          rooms={rooms.map((r) => ({ id: r.id, name: r.name }))}
+          appointmentTypes={appointmentTypes.map((t) => ({
+            id: t.id,
+            name: t.name,
+          }))}
+          filters={filters}
+          onChange={setFilters}
+        />
+      </div>
+
+      {/* Priority slot cards */}
+      {totalItems === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-200 p-12 text-center space-y-4">
+          <p className="text-gray-500">
+            All patients are on track. No outstanding workflow items.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {PRIORITY_SLOTS.map((slot) => {
+            const items = slotGroups.get(slot.key) ?? [];
+            if (items.length === 0) return null;
+
+            const isCollapsed = collapsedSlots.has(slot.key);
+
+            return (
+              <div
+                key={slot.key}
+                className="bg-white rounded-xl border border-gray-200 overflow-hidden"
+              >
+                {/* Slot header — matches room header */}
+                <button
+                  onClick={() => toggleSlot(slot.key)}
+                  className="flex items-center gap-3 px-6 py-2.5 border-b border-gray-200 transition-colors w-full text-left hover:bg-gray-50/50"
+                >
+                  {/* Chevron */}
+                  <svg
+                    className={`h-5 w-5 text-gray-400 transition-transform flex-shrink-0 ${
+                      !isCollapsed ? "rotate-90" : ""
+                    }`}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M9 5l7 7-7 7"
+                    />
+                  </svg>
+
+                  {/* Slot name */}
+                  <span className="text-lg font-semibold text-gray-800 truncate">
+                    {slot.label}
+                  </span>
+
+                  {/* Count badge */}
+                  <Badge variant={slot.badgeVariant as "red" | "amber" | "gray" | "faded"}>
+                    {items.length}
+                  </Badge>
+                </button>
+
+                {/* Rows */}
+                {!isCollapsed && (
+                  <div>
+                    {items.map((appt) => {
+                      const isManuallyExpanded = expandedIds.has(appt.appointment_id);
+                      const isAutoExpanded =
+                        isAttentionPriority(
+                          appt.priority as ReadinessPriority
+                        ) &&
+                        !manuallyCollapsed.has(appt.appointment_id);
+                      const isRowExpanded = isManuallyExpanded || isAutoExpanded;
+
+                      return (
+                        <PatientRow
+                          key={appt.appointment_id}
+                          appointment={appt}
+                          slot={slot}
+                          now={now}
+                          isExpanded={isRowExpanded}
+                          isAutoExpanded={isAutoExpanded && !isManuallyExpanded}
+                          onToggle={() => toggleRow(appt.appointment_id)}
+                          onNameClick={() =>
+                            setActivePanel({
+                              type: "detail",
+                              appointment: appt,
+                            })
+                          }
+                          onAction={() => handleActionButton(appt)}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Panels */}
+      {activePanel?.type === "add-patient" && locationId && orgId && (
+        <AddPatientPanel
+          locationId={locationId}
+          orgId={orgId}
+          onClose={() => setActivePanel(null)}
+          onSaved={handleSaved}
+        />
+      )}
+      {activePanel?.type === "detail" && (
+        <PatientContactCard
+          open
+          patientId={activePanel.appointment.patient_id || null}
+          appointment={activePanel.appointment}
+          onClose={() => setActivePanel(null)}
+          onOpenFormHandoff={(actionId, formName) =>
+            setActivePanel({
+              type: "form-handoff",
+              appointment: activePanel.appointment,
+              actionId,
+              formName,
+            })
+          }
+          onDeleted={handleSaved}
+        />
+      )}
+      {activePanel?.type === "form-handoff" && locationId && (
+        <FormHandoffPanel
+          actionId={activePanel.actionId}
+          formName={activePanel.formName}
+          patientName={`${activePanel.appointment.patient_first_name} ${activePanel.appointment.patient_last_name}`}
+          appointmentId={activePanel.appointment.appointment_id}
+          onClose={() =>
+            setActivePanel({
+              type: "detail",
+              appointment: activePanel.appointment,
+            })
+          }
+          onTranscribed={handleSaved}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Patient Row — matches session-row.tsx structure exactly
+// ---------------------------------------------------------------------------
+
+function PatientRow({
+  appointment,
+  slot,
+  now,
+  isExpanded,
+  isAutoExpanded,
+  onToggle,
+  onNameClick,
+  onAction,
+}: {
+  appointment: ReadinessAppointment;
+  slot: (typeof PRIORITY_SLOTS)[number];
+  now: Date;
+  isExpanded: boolean;
+  isAutoExpanded: boolean;
+  onToggle: () => void;
+  onNameClick: () => void;
+  onAction: () => void;
+}) {
+  const priority = appointment.priority as ReadinessPriority;
+  const actionBtn = getActionButtonConfig(priority);
+  const triggeringActions = isExpanded
+    ? getTriggeringActions(
+        appointment as Parameters<typeof getTriggeringActions>[0],
+        now
+      )
+    : [];
+  const [showAll, setShowAll] = useState(false);
+  // Manual expand → show all actions. Auto-expand → show triggering actions
+  // with a "Show all steps" toggle.
+  const useFiltered = isAutoExpanded && triggeringActions.length > 0 && !showAll;
+  const displayedActions = useFiltered ? triggeringActions : appointment.actions;
+
+  return (
+    <div
+      className={`border-b border-gray-200 last:border-b-0 ${
+        priority === "recently_completed" ? "opacity-40" : ""
+      }`}
+    >
+      {/* Row — matches session-row layout */}
+      <div
+        className={`flex items-stretch border-l-[3px] ${slot.borderColor} transition-colors ${slot.rowTint}`}
+      >
+        {/* Time column — matches run sheet exactly */}
+        <span className="flex items-center justify-center w-[94px] flex-shrink-0 text-[13px] font-medium whitespace-nowrap bg-[#FAF9F7] text-[#5F5E5A]">
+          {appointment.scheduled_at ? formatDateTime(appointment.scheduled_at) : "—"}
+        </span>
+
+        {/* Content area — matches session-row h-12, px-5 */}
+        <div className="flex items-center flex-1 min-w-0 px-5 h-12">
+          {/* Patient name */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onNameClick();
+            }}
+            className="text-[14px] font-semibold text-gray-800 truncate leading-none hover:underline hover:text-teal-600 transition-colors"
+          >
+            {appointment.patient_first_name} {appointment.patient_last_name}
+          </button>
+
+          {/* Separator + appointment type */}
+          {appointment.appointment_type_name && (
+            <>
+              <span className="mx-2 text-gray-300 leading-none flex-shrink-0">
+                &middot;
+              </span>
+              <span className="text-xs text-gray-500 truncate flex-shrink min-w-0 leading-none">
+                {appointment.appointment_type_name}
+              </span>
+            </>
+          )}
+
+          {/* Separator + room */}
+          {appointment.room_name && (
+            <>
+              <span className="mx-2 text-gray-300 leading-none flex-shrink-0">
+                &middot;
+              </span>
+              <span className="text-xs text-gray-500 truncate flex-shrink min-w-0 leading-none">
+                {appointment.room_name}
+              </span>
+            </>
+          )}
+
+          {/* Spacer */}
+          <div className="flex-1" />
+
+          {/* Status badge */}
+          <Badge
+            variant={
+              getPriorityBadgeConfig(priority).variant as
+                | "red"
+                | "amber"
+                | "teal"
+                | "gray"
+                | "faded"
+            }
+            className="flex-shrink-0"
+          >
+            {getPriorityBadgeConfig(priority).label}
+          </Badge>
+
+          {/* Action button — uses Button component matching run sheet */}
+          {actionBtn && (
+            <div className="ml-2 flex-shrink-0">
+              <Button
+                variant={ACTION_BUTTON_VARIANT_MAP[actionBtn.variant] ?? "primary"}
+                size="sm"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAction();
+                }}
+              >
+                {actionBtn.label}
+              </Button>
+            </div>
+          )}
+
+          {/* Expand/collapse chevron */}
+          {appointment.actions.length > 0 && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggle();
+              }}
+              className="ml-2 flex-shrink-0 text-gray-400 hover:text-gray-600 transition-colors p-0.5"
+            >
+              <svg
+                className={`h-4 w-4 transition-transform ${
+                  isExpanded ? "rotate-90" : ""
+                }`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M9 5l7 7-7 7"
+                />
+              </svg>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Expanded workflow timeline */}
+      {isExpanded && displayedActions.length > 0 && (
+        <div className="border-t border-gray-100 bg-gray-50/30 px-5 py-3 ml-[94px]">
+          <div className="relative pl-5 space-y-3">
+            {/* Vertical timeline line */}
+            <div className="absolute left-[3px] top-1 bottom-1 w-px bg-gray-200" />
+
+            {displayedActions.map((action) => {
+              const statusBadge = ACTION_STATUS_BADGE[action.status] ?? {
+                label: action.status,
+                variant: "gray",
+              };
+              const isActionOverdue =
+                action.status !== "completed" &&
+                action.status !== "transcribed" &&
+                action.status !== "captured" &&
+                action.status !== "verified" &&
+                action.status !== "skipped" &&
+                action.status !== "failed" &&
+                action.scheduled_for &&
+                new Date(action.scheduled_for) < now;
+
+              return (
+                <div
+                  key={action.action_id}
+                  className="relative flex items-center gap-3"
+                >
+                  {/* Timeline dot */}
+                  <div
+                    className={`absolute -left-5 top-1/2 -translate-y-1/2 w-[7px] h-[7px] rounded-full border-2 border-white ${
+                      isActionOverdue ? "bg-red-400" : "bg-gray-300"
+                    }`}
+                  />
+
+                  <ActionTypeIcon
+                    actionType={action.action_type as ActionType}
+                    size={16}
+                    className="text-gray-400 flex-shrink-0"
+                  />
+
+                  <span className="text-xs text-gray-700 truncate flex-1 min-w-0">
+                    {action.action_label}
+                  </span>
+
+                  {action.scheduled_for && (
+                    <span className="text-[11px] text-gray-400 flex-shrink-0">
+                      {relativeTime(action.scheduled_for)}
+                    </span>
+                  )}
+
+                  <Badge
+                    variant={
+                      statusBadge.variant as
+                        | "red"
+                        | "amber"
+                        | "teal"
+                        | "gray"
+                        | "faded"
+                    }
+                    className="flex-shrink-0"
+                  >
+                    {statusBadge.label}
+                  </Badge>
+
+                  {action.error_message && (
+                    <span
+                      className="text-[10px] text-red-500 truncate max-w-[120px] flex-shrink-0"
+                      title={action.error_message}
+                    >
+                      {action.error_message}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Show all / show relevant toggle — only for auto-expanded rows */}
+          {isAutoExpanded && triggeringActions.length > 0 && triggeringActions.length < appointment.actions.length && (
+            showAll ? (
+              <button
+                onClick={() => setShowAll(false)}
+                className="w-full py-1 text-[11px] text-gray-500 hover:bg-gray-50 border-t border-gray-200 transition-colors text-center mt-3"
+              >
+                Show only relevant
+              </button>
+            ) : (
+              <button
+                onClick={() => setShowAll(true)}
+                className="w-full py-1 text-[11px] text-gray-500 hover:bg-gray-50 border-t border-gray-200 transition-colors text-center mt-3"
+              >
+                Show all steps ({appointment.actions.length})
+              </button>
+            )
+          )}
+        </div>
+      )}
+    </div>
+  );
 }

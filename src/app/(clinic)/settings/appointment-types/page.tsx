@@ -1,7 +1,5 @@
+import { AppointmentTypesSettingsShell } from "@/components/clinic/appointment-types-settings-shell";
+
 export default function AppointmentTypesPage() {
-  return (
-    <div className="p-6">
-      <h1 className="text-2xl font-semibold text-gray-800">Appointment Types</h1>
-    </div>
-  );
+  return <AppointmentTypesSettingsShell />;
 }

@@ -9,11 +9,13 @@ interface HandlerContext {
   patientId: string;
   patientFirstName: string;
   phoneNumber: string;
-  scheduledAt: string;
+  scheduledAt: string | null;
   clinicName: string;
   clinicianName: string | null;
   formId: string | null;
   config: Record<string, unknown>;
+  /** The action block's parent_action_block_id (for intake_reminder). */
+  parentActionBlockId: string | null;
 }
 
 /**
@@ -25,6 +27,12 @@ export async function executeHandler(
   ctx: HandlerContext
 ): Promise<ActionHandlerResult> {
   switch (actionType) {
+    case "intake_package":
+      return handleIntakePackage(ctx);
+    case "intake_reminder":
+      return handleIntakeReminder(ctx);
+    case "add_to_runsheet":
+      return handleAddToRunsheet(ctx);
     case "deliver_form":
       return handleDeliverForm(ctx);
     case "send_reminder":
@@ -108,11 +116,13 @@ async function handleSendSms(ctx: HandlerContext): Promise<ActionHandlerResult> 
     return { status: "failed", error: "No message template configured" };
   }
 
-  const scheduledTime = new Date(ctx.scheduledAt).toLocaleTimeString("en-AU", {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
+  const scheduledTime = ctx.scheduledAt
+    ? new Date(ctx.scheduledAt).toLocaleTimeString("en-AU", {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      })
+    : "your appointment";
 
   const message = template
     .replace(/\{first_name\}/g, ctx.patientFirstName)
@@ -166,6 +176,197 @@ async function handleCaptureCard(ctx: HandlerContext): Promise<ActionHandlerResu
   );
 
   return { status: "sent" };
+}
+
+// ============================================================================
+// Intake Package Handlers (v2 pre-appointment model)
+// ============================================================================
+
+/** Create an intake package journey and send the patient the journey link. */
+async function handleIntakePackage(ctx: HandlerContext): Promise<ActionHandlerResult> {
+  const supabase = createServiceClient();
+
+  const config = ctx.config as {
+    includes_card_capture?: boolean;
+    includes_consent?: boolean;
+    form_ids?: string[];
+  };
+
+  const journeyToken = crypto.randomUUID();
+
+  const { data: journey, error: journeyError } = await supabase
+    .from("intake_package_journeys")
+    .insert({
+      appointment_id: ctx.appointmentId,
+      patient_id: null, // populated after phone OTP verification
+      journey_token: journeyToken,
+      includes_card_capture: config.includes_card_capture ?? false,
+      includes_consent: config.includes_consent ?? false,
+      form_ids: config.form_ids ?? [],
+    })
+    .select("id")
+    .single();
+
+  if (journeyError || !journey) {
+    return { status: "failed", error: `Failed to create intake journey: ${journeyError?.message}` };
+  }
+
+  const url = `${getBaseUrl()}/intake/${journeyToken}`;
+  const message = `Hi ${ctx.patientFirstName}, please complete your intake before your appointment at ${ctx.clinicName}: ${url}`;
+
+  const sms = getSmsProvider();
+  const result = await sms.sendNotification(ctx.phoneNumber, message);
+
+  if (!result.success) {
+    return { status: "failed", error: result.error ?? "SMS delivery failed" };
+  }
+
+  console.log(
+    `[WORKFLOW] intake_package: Journey ${journey.id} created. SMS to ${ctx.phoneNumber}: ${url}`
+  );
+
+  return {
+    status: "sent",
+    resultData: { journey_id: journey.id, journey_token: journeyToken },
+  };
+}
+
+/**
+ * Re-send the intake package journey link if the patient hasn't completed it.
+ * Has its own handler because it needs to resolve the parent's journey token
+ * and check completion status.
+ */
+async function handleIntakeReminder(ctx: HandlerContext): Promise<ActionHandlerResult> {
+  const supabase = createServiceClient();
+
+  // Check parent intake_package action status
+  if (ctx.parentActionBlockId) {
+    const { data: parentAction } = await supabase
+      .from("appointment_actions")
+      .select("status")
+      .eq("appointment_id", ctx.appointmentId)
+      .eq("action_block_id", ctx.parentActionBlockId)
+      .limit(1)
+      .single();
+
+    if (parentAction?.status === "completed") {
+      console.log(
+        `[WORKFLOW] intake_reminder: Parent intake package already completed for appointment ${ctx.appointmentId}. Skipping.`
+      );
+      return { status: "sent", resultData: { note: "skipped — package already completed" } };
+    }
+  }
+
+  // Fetch the journey to get the token
+  const { data: journey } = await supabase
+    .from("intake_package_journeys")
+    .select("journey_token, status")
+    .eq("appointment_id", ctx.appointmentId)
+    .limit(1)
+    .single();
+
+  if (!journey) {
+    return {
+      status: "failed",
+      error: "No intake package journey found for appointment — intake package may not have fired yet",
+    };
+  }
+
+  if (journey.status === "completed") {
+    return { status: "sent", resultData: { note: "skipped — journey already completed" } };
+  }
+
+  const url = `${getBaseUrl()}/intake/${journey.journey_token}`;
+  const template = (ctx.config.message_body as string) ?? "";
+  const message = template
+    ? template
+        .replace(/\{patient_first_name\}/g, ctx.patientFirstName)
+        .replace(/\{link\}/g, url)
+        .replace(/\{clinic_name\}/g, ctx.clinicName)
+    : `Hi ${ctx.patientFirstName}, just a reminder to complete your intake. Tap here to continue: ${url}`;
+
+  const sms = getSmsProvider();
+  const result = await sms.sendNotification(ctx.phoneNumber, message);
+
+  if (!result.success) {
+    return { status: "failed", error: result.error ?? "SMS delivery failed" };
+  }
+
+  console.log(
+    `[WORKFLOW] intake_reminder: Sent reminder to ${ctx.phoneNumber} for appointment ${ctx.appointmentId}`
+  );
+
+  return { status: "sent" };
+}
+
+/** Create a session on the run sheet and send the patient their join link. */
+async function handleAddToRunsheet(ctx: HandlerContext): Promise<ActionHandlerResult> {
+  const supabase = createServiceClient();
+
+  const { data: appointment } = await supabase
+    .from("appointments")
+    .select("id, room_id, location_id, patient_id, phone_number")
+    .eq("id", ctx.appointmentId)
+    .single();
+
+  if (!appointment) {
+    return { status: "failed", error: "Appointment not found" };
+  }
+
+  if (!appointment.room_id) {
+    return { status: "failed", error: "No room assigned to appointment" };
+  }
+
+  const entryToken = crypto.randomUUID();
+
+  const { data: session, error: sessionError } = await supabase
+    .from("sessions")
+    .insert({
+      appointment_id: appointment.id,
+      room_id: appointment.room_id,
+      location_id: appointment.location_id,
+      status: "queued",
+      entry_token: entryToken,
+    })
+    .select("id")
+    .single();
+
+  if (sessionError || !session) {
+    return { status: "failed", error: `Failed to create session: ${sessionError?.message}` };
+  }
+
+  if (appointment.patient_id) {
+    await supabase.from("session_participants").insert({
+      session_id: session.id,
+      patient_id: appointment.patient_id,
+      role: "patient",
+    });
+  }
+
+  const sessionLink = `${getBaseUrl()}/entry/${entryToken}`;
+
+  const sms = getSmsProvider();
+  const phoneNumber = appointment.phone_number ?? ctx.phoneNumber;
+  const result = await sms.sendNotification(
+    phoneNumber,
+    `Hi ${ctx.patientFirstName}, your appointment is ready. Join here: ${sessionLink}`
+  );
+
+  if (!result.success) {
+    // Session was created but SMS failed — log but don't fail the action
+    console.error(
+      `[WORKFLOW] add_to_runsheet: Session ${session.id} created but SMS failed: ${result.error}`
+    );
+  }
+
+  console.log(
+    `[WORKFLOW] add_to_runsheet: Session ${session.id} created. SMS to ${phoneNumber}: ${sessionLink}`
+  );
+
+  return {
+    status: "sent",
+    resultData: { session_id: session.id, entry_token: entryToken },
+  };
 }
 
 /** Send the contact verification flow link to the patient. */

@@ -60,9 +60,11 @@ export async function GET(request: NextRequest) {
 
       const appointmentTypes = types.map((t) => {
         const tid = linkByType.get(t.id) ?? null;
+        const template = tid ? (templatesById[tid] as { terminal_type?: string } | undefined) : null;
         return {
           ...t,
           pre_workflow_template_id: tid,
+          terminal_type: template?.terminal_type ?? null,
           action_count: tid ? (blocksByTemplate[tid] ?? []).length : 0,
           in_flight_count: tid ? inFlightCounts[tid] ?? 0 : 0,
         };

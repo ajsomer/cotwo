@@ -115,11 +115,45 @@ export interface ActionTypeMeta {
 }
 
 export const ACTION_TYPE_META: ActionTypeMeta[] = [
+  // --- Intake package model (pre-appointment) ---
+  {
+    type: "intake_package",
+    label: "Intake Package",
+    description: "Send the patient a bundled intake journey (contact verification, card capture, consent, forms)",
+    availableInPre: true,
+    availableInPost: false,
+    needsForm: false,
+    hasMessage: false,
+    hasFile: false,
+  },
+  {
+    type: "intake_reminder",
+    label: "Intake Reminder",
+    description: "Re-send the intake package link if the patient hasn't completed it",
+    availableInPre: true,
+    availableInPost: false,
+    needsForm: false,
+    hasMessage: true,
+    hasFile: false,
+  },
+  {
+    type: "add_to_runsheet",
+    label: "Add to Run Sheet",
+    description: "Creates a session on the run sheet and sends the patient their join link",
+    availableInPre: true,
+    availableInPost: false,
+    needsForm: false,
+    hasMessage: false,
+    hasFile: false,
+  },
+  // --- Granular action types (post-appointment only in the editor) ---
+  // These remain in the enum for post-appointment workflows.
+  // availableInPre is false so they don't appear in the pre-appointment editor.
   {
     type: "deliver_form",
     label: "Send form",
     description: "Send a form to the patient via SMS",
-    availableInPre: true,
+    availableInPre: false,
     availableInPost: true,
     needsForm: true,
     hasMessage: false,
@@ -129,7 +163,7 @@ export const ACTION_TYPE_META: ActionTypeMeta[] = [
     type: "send_reminder",
     label: "Send reminder SMS",
     description: "Send a custom SMS reminder to the patient",
-    availableInPre: true,
+    availableInPre: false,
     availableInPost: false,
     needsForm: false,
     hasMessage: true,
@@ -139,7 +173,7 @@ export const ACTION_TYPE_META: ActionTypeMeta[] = [
     type: "capture_card",
     label: "Capture card on file",
     description: "Send the card capture flow to the patient",
-    availableInPre: true,
+    availableInPre: false,
     availableInPost: false,
     needsForm: false,
     hasMessage: false,
@@ -149,7 +183,7 @@ export const ACTION_TYPE_META: ActionTypeMeta[] = [
     type: "verify_contact",
     label: "Verify contact details",
     description: "Send the contact verification flow to the patient",
-    availableInPre: true,
+    availableInPre: false,
     availableInPost: false,
     needsForm: false,
     hasMessage: false,
