@@ -4,33 +4,55 @@ import { useState, useMemo } from "react";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import { useOrg } from "@/hooks/useOrg";
 import type { AppointmentTypeRow } from "@/stores/clinic-store";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { AppointmentTypeEditor } from "./appointment-type-editor";
 
-const MODALITY_BADGE: Record<string, { label: string; variant: "teal" | "gray" | "blue" }> = {
-  telehealth: { label: "Telehealth", variant: "teal" },
-  in_person: { label: "In-person", variant: "blue" },
-  both: { label: "Both", variant: "gray" },
-};
+/* ── Colours ── */
+const IN_FLIGHT_AMBER = "#BA7517";
+const IN_FLIGHT_ROW_BG = "#FFFDF8";
+const IDLE_GREY = "#B4B2A9";
 
-function getIntakePackageSummary(type: AppointmentTypeRow): {
-  line1: string;
-  line2: string;
-  configured: boolean;
-} {
-  if (!type.pre_workflow_template_id || type.action_count === 0) {
-    return {
-      line1: "Not configured",
-      line2: "Set up intake package →",
-      configured: false,
-    };
+/* ── Modality pills ── */
+function ModalityPill({ modality }: { modality: string }) {
+  const isInPerson = modality === "in_person";
+  return (
+    <span
+      className="inline-flex items-center font-medium"
+      style={{
+        fontSize: 11,
+        padding: "3px 10px",
+        borderRadius: 10,
+        backgroundColor: isInPerson ? "#FAEEDA" : "#E1F5EE",
+        color: isInPerson ? "#854F0B" : "#085041",
+      }}
+    >
+      {isInPerson ? "In-person" : "Telehealth"}
+    </span>
+  );
+}
+
+/* ── Runtime state cell ── */
+function RuntimeStateCell({ type }: { type: AppointmentTypeRow }) {
+  const hasInFlight = type.pre_workflow_template_id && type.in_flight_count > 0;
+
+  if (hasInFlight) {
+    return (
+      <span
+        className="text-xs font-medium cursor-pointer"
+        style={{
+          color: IN_FLIGHT_AMBER,
+          textDecorationLine: "underline",
+          textDecorationStyle: "dotted",
+          textUnderlineOffset: 3,
+        }}
+      >
+        {type.in_flight_count} in flight ↗
+      </span>
+    );
   }
-  return {
-    line1: `${type.action_count} action${type.action_count === 1 ? "" : "s"}`,
-    line2: type.in_flight_count > 0 ? `${type.in_flight_count} in flight` : "No active runs",
-    configured: true,
-  };
+
+  return (
+    <span className="text-xs" style={{ color: IDLE_GREY }}>—</span>
+  );
 }
 
 export function AppointmentTypesSettingsShell() {
@@ -39,40 +61,33 @@ export function AppointmentTypesSettingsShell() {
   const workflowsLoaded = useClinicStore((s) => s.workflowsLoaded);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingType, setEditingType] = useState<AppointmentTypeRow | null>(null);
-  const [search, setSearch] = useState("");
-  const [sourceFilter, setSourceFilter] = useState<"all" | "coviu" | "pms">("all");
-  const [statusFilter, setStatusFilter] = useState<"all" | "configured" | "not_configured">("all");
+  const [editorTerminalType, setEditorTerminalType] = useState<"run_sheet" | "collection_only">("run_sheet");
 
-  const filteredTypes = useMemo(() => {
-    let result = appointmentTypes;
+  const runSheetTypes = useMemo(
+    () => appointmentTypes.filter((t) => t.terminal_type !== "collection_only"),
+    [appointmentTypes]
+  );
 
-    if (search) {
-      const q = search.toLowerCase();
-      result = result.filter((t) => t.name.toLowerCase().includes(q));
-    }
-    if (sourceFilter !== "all") {
-      result = result.filter((t) => t.source === sourceFilter);
-    }
-    if (statusFilter === "configured") {
-      result = result.filter((t) => t.pre_workflow_template_id && t.action_count > 0);
-    } else if (statusFilter === "not_configured") {
-      result = result.filter((t) => !t.pre_workflow_template_id || t.action_count === 0);
-    }
-
-    return result;
-  }, [appointmentTypes, search, sourceFilter, statusFilter]);
-
-  const unconfiguredCount = appointmentTypes.filter(
-    (t) => !t.pre_workflow_template_id || t.action_count === 0
-  ).length;
+  const collectionTypes = useMemo(
+    () => appointmentTypes.filter((t) => t.terminal_type === "collection_only"),
+    [appointmentTypes]
+  );
 
   const handleRowClick = (type: AppointmentTypeRow) => {
     setEditingType(type);
+    setEditorTerminalType(type.terminal_type === "collection_only" ? "collection_only" : "run_sheet");
     setEditorOpen(true);
   };
 
   const handleNewType = () => {
     setEditingType(null);
+    setEditorTerminalType("run_sheet");
+    setEditorOpen(true);
+  };
+
+  const handleNewCollection = () => {
+    setEditingType(null);
+    setEditorTerminalType("collection_only");
     setEditorOpen(true);
   };
 
@@ -84,13 +99,12 @@ export function AppointmentTypesSettingsShell() {
   const handleSaved = () => {
     setEditorOpen(false);
     setEditingType(null);
-    // Refresh the store
     if (org) getClinicStore().refreshWorkflows(org.id);
   };
 
   if (!workflowsLoaded) {
     return (
-      <div className="p-6 space-y-4">
+      <div className="p-5 space-y-4">
         <div className="h-8 w-48 bg-gray-100 rounded animate-pulse" />
         <div className="h-4 w-80 bg-gray-100 rounded animate-pulse" />
         <div className="space-y-2 mt-6">
@@ -103,104 +117,59 @@ export function AppointmentTypesSettingsShell() {
   }
 
   return (
-    <div className="p-6">
-      {/* Header */}
-      <div className="flex items-start justify-between mb-1">
+    <div className="p-5 space-y-4">
+      {/* ── Appointment types section ── */}
+
+      {/* Label + explainer + button */}
+      <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-800">Appointment types</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Configure what your clinic offers and what patients need to complete beforehand.
+          <span className="text-sm font-medium text-gray-800">Appointment types</span>
+          <p className="text-[13px] italic mt-1" style={{ color: "#8A8985" }}>
+            Pre-appointment workflows are triggered when an appointment of a given type is created. Each appointment type has one intake package attached to it.
           </p>
         </div>
-        <Button onClick={handleNewType}>+ New appointment type</Button>
+        <button
+          onClick={handleNewType}
+          className="flex-shrink-0 inline-flex items-center justify-center rounded-lg bg-teal-500 px-3.5 py-2 text-sm font-medium text-white hover:bg-teal-600 active:bg-teal-700 transition-colors"
+        >
+          + New appointment type
+        </button>
       </div>
 
-      {/* Unconfigured banner */}
-      {unconfiguredCount > 0 && statusFilter !== "not_configured" && (
-        <div className="mt-4 flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5">
-          <span className="text-sm text-amber-800">
-            ⚠ {unconfiguredCount} appointment type{unconfiguredCount === 1 ? "" : "s"} need{unconfiguredCount === 1 ? "s" : ""} intake packages configured
-          </span>
-          <button
-            onClick={() => setStatusFilter("not_configured")}
-            className="text-sm font-medium text-amber-700 hover:text-amber-900 underline"
-          >
-            Show unconfigured
-          </button>
-        </div>
-      )}
-
-      {/* Filters */}
-      <div className="flex items-center gap-3 mt-4 mb-4">
-        <input
-          type="text"
-          placeholder="Search appointment types"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="max-w-[280px] rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none"
-        />
-        <select
-          value={sourceFilter}
-          onChange={(e) => setSourceFilter(e.target.value as "all" | "coviu" | "pms")}
-          className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600"
-        >
-          <option value="all">All sources</option>
-          <option value="coviu">Manually created</option>
-          <option value="pms">PMS synced</option>
-        </select>
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as "all" | "configured" | "not_configured")}
-          className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600"
-        >
-          <option value="all">All statuses</option>
-          <option value="configured">Configured</option>
-          <option value="not_configured">Not configured</option>
-        </select>
-        {statusFilter !== "all" && (
-          <button
-            onClick={() => setStatusFilter("all")}
-            className="text-xs text-gray-500 hover:text-gray-700"
-          >
-            Clear filters
-          </button>
-        )}
-      </div>
-
-      {/* Table */}
-      {filteredTypes.length === 0 ? (
+      {/* Appointment types table (run_sheet only) */}
+      {runSheetTypes.length === 0 ? (
         <div className="text-center py-12 text-sm text-gray-500">
-          {appointmentTypes.length === 0
-            ? "No appointment types yet. Create one to get started."
-            : "No appointment types match your filters."}
+          No appointment types yet. Create one to get started.
         </div>
       ) : (
-        <div className="border border-gray-200 rounded-xl overflow-hidden">
-          {/* Table header */}
-          <div className="grid grid-cols-[2fr_90px_100px_1.5fr_100px] bg-gray-50 border-b border-gray-200 px-4 py-2">
-            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Name</span>
-            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Duration</span>
-            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Modality</span>
-            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Intake package</span>
-            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide text-right">On completion</span>
+        <div className="rounded-xl overflow-hidden border border-gray-200 bg-white">
+          {/* Column headers */}
+          <div className="grid grid-cols-5 gap-3 px-5 py-2 border-b border-gray-200">
+            <span className="text-[11px] tracking-wide text-gray-500">Appointment type</span>
+            <span className="text-[11px] tracking-wide text-gray-500">Actions</span>
+            <span className="text-[11px] tracking-wide text-gray-500">Duration</span>
+            <span className="text-[11px] tracking-wide text-gray-500">Modality</span>
+            <span className="text-[11px] tracking-wide text-gray-500">Status</span>
           </div>
 
           {/* Rows */}
-          {filteredTypes.map((type) => {
-            const pkg = getIntakePackageSummary(type);
-            const modalityBadge = MODALITY_BADGE[type.modality] ?? { label: type.modality, variant: "gray" as const };
-            const isCollectionOnly = type.terminal_type === "collection_only";
+          {runSheetTypes.map((type, i) => {
+            const hasInFlight = type.pre_workflow_template_id && type.in_flight_count > 0;
+            const actionLabel = type.action_count > 0
+              ? `${type.action_count} action${type.action_count === 1 ? "" : "s"}`
+              : "Not configured";
 
             return (
               <button
                 key={type.id}
                 onClick={() => handleRowClick(type)}
-                className={`grid grid-cols-[2fr_90px_100px_1.5fr_100px] w-full px-4 py-3 text-left border-b border-gray-100 last:border-b-0 hover:bg-gray-50/50 transition-colors ${
-                  editorOpen && editingType?.id === type.id ? "bg-gray-50" : ""
+                className={`grid grid-cols-5 gap-3 w-full px-5 py-2.5 text-left transition-colors hover:bg-gray-50/50 ${
+                  i < runSheetTypes.length - 1 ? "border-b border-gray-100" : ""
                 }`}
+                style={{ backgroundColor: hasInFlight ? IN_FLIGHT_ROW_BG : undefined }}
               >
                 {/* Name */}
-                <div className="min-w-0">
+                <div className="min-w-0 self-center">
                   <div className="flex items-center gap-1.5">
                     <span className="text-sm font-medium text-gray-800 truncate">{type.name}</span>
                     {type.source === "pms" && (
@@ -209,59 +178,94 @@ export function AppointmentTypesSettingsShell() {
                       </svg>
                     )}
                   </div>
-                  <span className="text-xs text-gray-500">
-                    {type.source === "pms" ? "From PMS" : "Manually created"}
-                  </span>
                 </div>
+
+                {/* Actions */}
+                <span className="text-xs self-center" style={{ color: IDLE_GREY }}>{actionLabel}</span>
 
                 {/* Duration */}
-                <span className="text-sm text-gray-600 self-center">
-                  {isCollectionOnly ? "—" : `${type.duration_minutes} min`}
-                </span>
+                <span className="text-sm text-gray-600 self-center">{type.duration_minutes} min</span>
 
                 {/* Modality */}
-                <div className="self-center">
-                  {isCollectionOnly ? (
-                    <span className="text-sm text-gray-400">—</span>
-                  ) : (
-                    <Badge variant={modalityBadge.variant}>{modalityBadge.label}</Badge>
-                  )}
-                </div>
+                <div className="self-center"><ModalityPill modality={type.modality} /></div>
 
-                {/* Intake package */}
-                <div className="min-w-0 self-center">
-                  <div className="flex items-center gap-1.5">
-                    <span className={`h-2 w-2 rounded-full flex-shrink-0 ${pkg.configured ? "bg-teal-500" : "bg-gray-300"}`} />
-                    <span className={`text-xs truncate ${pkg.configured ? "text-gray-700" : "text-gray-500"}`}>
-                      {pkg.line1}
-                    </span>
-                  </div>
-                  <span className={`text-xs ml-3.5 ${pkg.configured ? "text-gray-500" : "text-amber-600"}`}>
-                    {pkg.line2}
-                  </span>
-                </div>
-
-                {/* On completion */}
-                <div className="self-center text-right">
-                  <Badge variant={isCollectionOnly ? "amber" : "gray"}>
-                    {isCollectionOnly ? "Collection" : "Run sheet"}
-                  </Badge>
-                </div>
+                {/* Status */}
+                <div className="self-center"><RuntimeStateCell type={type} /></div>
               </button>
             );
           })}
         </div>
       )}
 
-      {/* Footer */}
-      <p className="text-xs text-gray-400 text-center mt-3">
-        {filteredTypes.length} appointment type{filteredTypes.length === 1 ? "" : "s"}
-      </p>
+      {/* ── Standalone collections section ── */}
+
+      {/* Label + explainer + button */}
+      <div className="flex items-center justify-between gap-4 pt-2">
+        <div>
+          <span className="text-sm font-medium text-gray-800">Standalone collections</span>
+          <p className="text-[13px] italic mt-1" style={{ color: IDLE_GREY }}>
+            Send forms to patients outside of an appointment. Terminates when all forms are returned.
+          </p>
+        </div>
+        <button
+          onClick={handleNewCollection}
+          className="flex-shrink-0 inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 transition-colors"
+        >
+          + New collection
+        </button>
+      </div>
+
+      {/* Collections table */}
+      {collectionTypes.length === 0 ? (
+        <div className="text-center py-8 text-sm text-gray-500">
+          No standalone collections yet.
+        </div>
+      ) : (
+        <div className="rounded-xl overflow-hidden border border-gray-200 bg-white">
+          {/* Column headers */}
+          <div className="grid grid-cols-3 gap-3 px-5 py-2 border-b border-gray-200">
+            <span className="text-[11px] tracking-wide text-gray-500">Collection</span>
+            <span className="text-[11px] tracking-wide text-gray-500">Actions</span>
+            <span className="text-[11px] tracking-wide text-gray-500">Status</span>
+          </div>
+
+          {/* Rows */}
+          {collectionTypes.map((type, i) => {
+            const hasInFlight = type.pre_workflow_template_id && type.in_flight_count > 0;
+            const actionLabel = type.action_count > 0
+              ? `${type.action_count} action${type.action_count === 1 ? "" : "s"}`
+              : "Not configured";
+
+            return (
+              <button
+                key={type.id}
+                onClick={() => handleRowClick(type)}
+                className={`grid grid-cols-3 gap-3 w-full px-5 py-2.5 text-left transition-colors hover:bg-gray-50/50 ${
+                  i < collectionTypes.length - 1 ? "border-b border-gray-100" : ""
+                }`}
+                style={{ backgroundColor: hasInFlight ? IN_FLIGHT_ROW_BG : undefined }}
+              >
+                {/* Name */}
+                <div className="min-w-0 self-center">
+                  <span className="text-sm font-medium text-gray-800 truncate block">{type.name}</span>
+                </div>
+
+                {/* Actions */}
+                <span className="text-xs self-center" style={{ color: IDLE_GREY }}>{actionLabel}</span>
+
+                {/* Status */}
+                <div className="self-center"><RuntimeStateCell type={type} /></div>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Editor slide-out */}
       {editorOpen && (
         <AppointmentTypeEditor
           appointmentType={editingType}
+          forceTerminalType={editorTerminalType}
           onClose={handleEditorClose}
           onSaved={handleSaved}
         />

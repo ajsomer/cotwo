@@ -7,9 +7,10 @@ import type {
   DbWorkflowActionBlock,
   WorkflowDirection,
 } from "@/lib/workflows/types";
-import { WorkflowSidebar, type SidebarItem } from "./workflow-sidebar";
-import { WorkflowMiddlePane } from "./workflow-middle-pane";
-import { MidFlightWarningModal } from "./mid-flight-warning-modal";
+// Post-appointment components — retained for upcoming post-appointment spec
+// import { WorkflowSidebar, type SidebarItem } from "./workflow-sidebar";
+// import { WorkflowMiddlePane } from "./workflow-middle-pane";
+// import { MidFlightWarningModal } from "./mid-flight-warning-modal";
 import { AppointmentTypesSettingsShell } from "./appointment-types-settings-shell";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import type { AppointmentTypeRow, OutcomePathwayRow } from "@/stores/clinic-store";
@@ -330,7 +331,7 @@ export function WorkflowsShell() {
   // Derived render data
   // ---------------------------------------------------------------------------
 
-  const sidebarItems: SidebarItem[] = isPre
+  const sidebarItems = isPre
     ? appointmentTypes.map((t) => ({
         id: t.id,
         name: t.name,
@@ -380,7 +381,7 @@ export function WorkflowsShell() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+      <div className="border-b border-gray-200 px-6 pt-4">
         <div>
           <h1 className="text-2xl font-semibold text-gray-800">Workflows</h1>
           <p className="text-sm text-gray-500">
@@ -388,23 +389,24 @@ export function WorkflowsShell() {
           </p>
         </div>
 
-        <div className="flex rounded-lg border border-gray-200 bg-gray-50 p-0.5">
+        {/* Tab bar */}
+        <div className="flex gap-6 mt-4">
           <button
             onClick={() => handleDirectionChange("pre_appointment")}
-            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+            className={`pb-2.5 text-sm font-medium transition-colors border-b-2 ${
               isPre
-                ? "bg-white text-gray-800 shadow-sm"
-                : "text-gray-500 hover:text-gray-700"
+                ? "border-teal-500 text-teal-600"
+                : "border-transparent text-gray-500 hover:text-gray-700"
             }`}
           >
             Pre-appointment
           </button>
           <button
             onClick={() => handleDirectionChange("post_appointment")}
-            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+            className={`pb-2.5 text-sm font-medium transition-colors border-b-2 ${
               !isPre
-                ? "bg-white text-gray-800 shadow-sm"
-                : "text-gray-500 hover:text-gray-700"
+                ? "border-teal-500 text-teal-600"
+                : "border-transparent text-gray-500 hover:text-gray-700"
             }`}
           >
             Post-appointment
@@ -419,57 +421,11 @@ export function WorkflowsShell() {
         </div>
       )}
 
-      {/* Post-appointment: existing granular action block editor */}
+      {/* Post-appointment: placeholder for future spec */}
       {!isPre && (
-        <>
-          {error && (
-            <div className="border-b border-red-200 bg-red-50 px-6 py-3 text-sm text-red-700">
-              {error}
-              <button onClick={() => setError(null)} className="ml-2 underline">
-                Dismiss
-              </button>
-            </div>
-          )}
-
-          <div className="flex flex-1 overflow-hidden">
-            <WorkflowSidebar
-              direction={direction}
-              items={sidebarItems}
-              selectedId={selectedId}
-              onSelect={handleSelect}
-              onCreate={handleCreatePathway}
-              loading={loading}
-            />
-
-            <WorkflowMiddlePane
-              direction={direction}
-              preMetadata={preMetadata}
-              postMetadata={postMetadata}
-              template={template}
-              blocks={workingBlocks}
-              forms={forms}
-              inFlightCount={selectedType?.in_flight_count ?? 0}
-              isDirty={isDirty}
-              isSaving={isSaving}
-              onMetadataChange={(updates) =>
-                setMetadataEdits({ ...metadataEdits, ...updates })
-              }
-              onBlocksChange={setWorkingBlocks}
-              onCreateWorkflow={handleCreateWorkflow}
-              onSave={handleSave}
-              onCancel={handleCancel}
-              loading={false}
-            />
-          </div>
-
-          <MidFlightWarningModal
-            open={showWarning}
-            inFlightCount={inFlightCount}
-            changeSummary={computeChangeSummary()}
-            onConfirm={executeSave}
-            onCancel={() => setShowWarning(false)}
-          />
-        </>
+        <div className="flex flex-1 items-center justify-center">
+          <p className="text-sm text-gray-400">Post-appointment workflows coming soon.</p>
+        </div>
       )}
     </div>
   );

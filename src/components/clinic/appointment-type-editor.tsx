@@ -9,6 +9,7 @@ import type { AppointmentTypeRow } from "@/stores/clinic-store";
 
 interface AppointmentTypeEditorProps {
   appointmentType: AppointmentTypeRow | null; // null = new
+  forceTerminalType?: "run_sheet" | "collection_only";
   onClose: () => void;
   onSaved: () => void;
 }
@@ -24,6 +25,7 @@ const DEFAULT_REMINDER_MESSAGE =
 
 export function AppointmentTypeEditor({
   appointmentType,
+  forceTerminalType,
   onClose,
   onSaved,
 }: AppointmentTypeEditorProps) {
@@ -51,7 +53,6 @@ export function AppointmentTypeEditor({
   const allExpanded = isNew || (!appointmentType?.pre_workflow_template_id);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     details: allExpanded,
-    onCompletion: allExpanded,
     intakePackage: allExpanded,
     reminders: allExpanded,
     urgency: allExpanded,
@@ -65,9 +66,9 @@ export function AppointmentTypeEditor({
     appointmentType?.default_fee_cents ? (appointmentType.default_fee_cents / 100).toFixed(2) : ""
   );
 
-  // Section 2: On completion
-  const [terminalType, setTerminalType] = useState<"run_sheet" | "collection_only">(
-    appointmentType?.terminal_type ?? "run_sheet"
+  // Terminal type: determined by creation context or existing data, no longer user-editable
+  const [terminalType] = useState<"run_sheet" | "collection_only">(
+    forceTerminalType ?? appointmentType?.terminal_type ?? "run_sheet"
   );
 
   // Section 3: Intake package — initialize from existing config
@@ -122,8 +123,6 @@ export function AppointmentTypeEditor({
     }
     return `${durationMinutes || "—"} min ${modality} · ${feeDisplay}`;
   })();
-
-  const onCompletionSummary = terminalType === "run_sheet" ? "Run sheet appointment" : "Collection only";
 
   const intakePackageSummary = (() => {
     const items: string[] = [];
@@ -256,7 +255,9 @@ export function AppointmentTypeEditor({
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-base font-semibold text-gray-800">
-                {isNew ? "Create new appointment type" : appointmentType.name}
+                {isNew
+                  ? (isCollectionOnly ? "Create new collection" : "Create new appointment type")
+                  : appointmentType.name}
               </h2>
               {isPmsSynced && (
                 <div className="flex items-center gap-1 mt-0.5">
@@ -348,44 +349,7 @@ export function AppointmentTypeEditor({
             </div>
           </CollapsibleSection>
 
-          {/* Section 2: On completion */}
-          <CollapsibleSection
-            title="On completion"
-            summary={onCompletionSummary}
-            expanded={expandedSections.onCompletion}
-            onToggle={() => toggleSection("onCompletion")}
-          >
-            <p className="text-xs text-gray-500 mb-3 mt-1">What happens when the intake package is complete?</p>
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => setTerminalType("run_sheet")}
-                className={`p-4 rounded-lg border-2 text-left transition-colors ${
-                  terminalType === "run_sheet" ? "border-teal-500 bg-teal-50/30" : "border-gray-200 hover:border-gray-300"
-                }`}
-              >
-                <div className="text-sm font-medium text-gray-800">Run sheet appointment</div>
-                <p className="text-xs text-gray-500 mt-1">Ends in a telehealth or in-person session. Patient is added to the run sheet on the day.</p>
-              </button>
-              <button
-                type="button"
-                onClick={() => setTerminalType("collection_only")}
-                className={`p-4 rounded-lg border-2 text-left transition-colors ${
-                  terminalType === "collection_only" ? "border-teal-500 bg-teal-50/30" : "border-gray-200 hover:border-gray-300"
-                }`}
-              >
-                <div className="text-sm font-medium text-gray-800">Collection only</div>
-                <p className="text-xs text-gray-500 mt-1">Collects information and terminates. No session, no run sheet row.</p>
-              </button>
-            </div>
-            <p className="text-xs text-gray-500 mt-3">
-              {terminalType === "run_sheet"
-                ? "Patients will be automatically added to the run sheet on their appointment day."
-                : "This workflow completes when the patient finishes the intake package."}
-            </p>
-          </CollapsibleSection>
-
-          {/* Section 3: Intake package */}
+          {/* Section 2: Intake package */}
           <CollapsibleSection
             title="Intake package"
             summary={intakePackageSummary}
@@ -686,7 +650,7 @@ export function AppointmentTypeEditor({
               disabled={saving}
               className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 disabled:opacity-50"
             >
-              {saving ? "Saving..." : isNew ? "Create appointment type" : "Save changes"}
+              {saving ? "Saving..." : isNew ? (isCollectionOnly ? "Create collection" : "Create appointment type") : "Save changes"}
             </button>
           </div>
         </div>

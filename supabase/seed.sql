@@ -54,10 +54,12 @@ INSERT INTO clinician_room_assignments (staff_assignment_id, room_id) VALUES
 
 -- Appointment types
 INSERT INTO appointment_types (id, org_id, name, modality, duration_minutes, default_fee_cents) VALUES
-  ('00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000000001', 'Initial Consultation', 'telehealth', 45, 15000),
-  ('00000000-0000-0000-0000-000000003002', '00000000-0000-0000-0000-000000000001', 'Follow-up', 'telehealth', 20, 8500),
-  ('00000000-0000-0000-0000-000000003003', '00000000-0000-0000-0000-000000000001', 'Physio Assessment', 'in_person', 60, 12000),
-  ('00000000-0000-0000-0000-000000003004', '00000000-0000-0000-0000-000000000001', 'Mental Health Review', 'telehealth', 50, 22000);
+  ('00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000000001', 'Initial consultation', 'telehealth', 45, 15000),
+  ('00000000-0000-0000-0000-000000003002', '00000000-0000-0000-0000-000000000001', 'Follow-up consultation', 'telehealth', 20, 8500),
+  ('00000000-0000-0000-0000-000000003003', '00000000-0000-0000-0000-000000000001', 'Brief check-in', 'in_person', 30, 6000),
+  ('00000000-0000-0000-0000-000000003004', '00000000-0000-0000-0000-000000000001', 'Review appointment', 'telehealth', 50, 22000),
+  ('00000000-0000-0000-0000-000000003005', '00000000-0000-0000-0000-000000000001', 'Telehealth consultation', 'telehealth', 40, 12000),
+  ('00000000-0000-0000-0000-000000003006', '00000000-0000-0000-0000-000000000001', 'Collect referral', 'telehealth', 0, 0);
 
 -- Patients (6 patients)
 INSERT INTO patients (id, org_id, first_name, last_name, date_of_birth) VALUES
