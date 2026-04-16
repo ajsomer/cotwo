@@ -202,7 +202,7 @@ export interface StatusBadgeConfig {
 export type ActionConfig = {
   label: string;
   variant: 'red' | 'amber' | 'teal' | 'blue';
-  action: 'call' | 'nudge' | 'admit' | 'process';
+  action: 'call' | 'nudge' | 'admit' | 'process' | 'rejoin';
 } | null;
 
 // ============================================================================

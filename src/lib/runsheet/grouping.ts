@@ -10,12 +10,12 @@ import { isAttentionState } from './derived-state';
 
 /** Priority order for sorting sessions within a room and rooms against each other. */
 export const PRIORITY_ORDER: Record<DerivedDisplayState, number> = {
-  late: 0,
-  upcoming: 1,
+  in_session: 0,
+  running_over: 1,
   waiting: 2,
   checked_in: 3,
-  in_session: 4,
-  running_over: 5,
+  late: 4,
+  upcoming: 5,
   complete: 6,
   queued: 7,
   done: 8,

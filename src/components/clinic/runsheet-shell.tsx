@@ -24,6 +24,10 @@ const AddSessionPanelDynamic = dynamic(
   () => import("./add-session-panel").then((mod) => mod.AddSessionPanel),
   { ssr: false }
 );
+const VideoCallPanelDynamic = dynamic(
+  () => import("./video-call-panel").then((mod) => mod.VideoCallPanel),
+  { ssr: false }
+);
 
 export function RunsheetShell() {
   // Read from Zustand store (kept fresh by Realtime subscriptions in layout)
@@ -130,11 +134,34 @@ export function RunsheetShell() {
   const [processingSessionId, setProcessingSessionId] = useState<string | null>(null);
   const [bulkProcessQueue, setBulkProcessQueue] = useState<string[]>([]);
 
+  // Video call panel state
+  const [activeCallSessionId, setActiveCallSessionId] = useState<string | null>(null);
+  const activeCallSession = useMemo(
+    () => activeCallSessionId ? enriched.find((s) => s.session_id === activeCallSessionId) ?? null : null,
+    [activeCallSessionId, enriched]
+  );
+
+  // Auto-close the panel if the session leaves in_session (ended elsewhere,
+  // e.g. the clinician hung up in another tab, or a realtime update).
+  useEffect(() => {
+    if (!activeCallSessionId) return;
+    if (!activeCallSession) return; // session gone (rare)
+    const state = activeCallSession.derived_state;
+    if (state !== "in_session" && state !== "running_over") {
+      setActiveCallSessionId(null);
+    }
+  }, [activeCallSessionId, activeCallSession]);
+
   // Action dispatch
   const handleAction = useCallback(
     async (sessionId: string, action: string) => {
       if (action === "process") {
         setProcessingSessionId(sessionId);
+        return;
+      }
+
+      if (action === "rejoin") {
+        setActiveCallSessionId(sessionId);
         return;
       }
 
@@ -150,9 +177,13 @@ export function RunsheetShell() {
         case "nudge":
           await nudgePatient(sessionId);
           break;
-        case "admit":
-          await admitPatient(sessionId);
+        case "admit": {
+          const result = await admitPatient(sessionId);
+          if (result.success) {
+            setActiveCallSessionId(sessionId);
+          }
           break;
+        }
       }
     },
     []
@@ -279,6 +310,17 @@ export function RunsheetShell() {
           setContactPatientId(null);
         }}
       />
+      {activeCallSession && (
+        <VideoCallPanelDynamic
+          sessionId={activeCallSession.session_id}
+          patientName={
+            [activeCallSession.patient_first_name, activeCallSession.patient_last_name]
+              .filter(Boolean)
+              .join(" ") || "Patient"
+          }
+          onClose={() => setActiveCallSessionId(null)}
+        />
+      )}
     </div>
     </PatientSlideOverProvider>
   );

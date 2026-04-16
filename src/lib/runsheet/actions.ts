@@ -92,7 +92,7 @@ export async function admitPatient(sessionId: string) {
     .update({
       status: "in_session",
       session_started_at: new Date().toISOString(),
-      video_call_id: `room-${sessionId}-${Date.now()}`, // Stub LiveKit room ID
+      video_call_id: `session-${sessionId}`, // Deterministic LiveKit room name
     })
     .eq("id", sessionId)
     .eq("status", "waiting");

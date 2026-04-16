@@ -18,6 +18,12 @@ interface SessionRowProps {
 export function SessionRow({ session, onAction, onClick, onPatientClick }: SessionRowProps) {
   const borderColor = getRowBorderColor(session.derived_state);
   const isDone = session.derived_state === "done";
+  const isActive =
+    session.derived_state === "in_session" ||
+    session.derived_state === "running_over" ||
+    session.derived_state === "waiting" ||
+    session.derived_state === "checked_in";
+  const activeBg = isActive ? "bg-teal-50/40" : "";
   const patientName = formatPatientName(
     session.patient_first_name,
     session.patient_last_name,
@@ -27,7 +33,7 @@ export function SessionRow({ session, onAction, onClick, onPatientClick }: Sessi
 
   return (
     <div
-      className={`flex items-stretch border-b border-gray-200 last:border-b-0 border-l-[3px] ${borderColor} transition-colors ${isDone ? "opacity-40" : ""} ${onClick ? "cursor-pointer hover:bg-gray-50/50" : ""}`}
+      className={`flex items-stretch border-b border-gray-200 last:border-b-0 border-l-[3px] ${borderColor} ${activeBg} transition-colors ${isDone ? "opacity-40" : ""} ${onClick ? "cursor-pointer hover:bg-gray-50/50" : ""}`}
       onClick={() => onClick?.(session.session_id)}
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}

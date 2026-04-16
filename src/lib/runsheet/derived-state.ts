@@ -99,7 +99,7 @@ export function getRowBorderColor(state: DerivedDisplayState): string {
       return 'border-l-amber-500';
     case 'in_session':
     case 'running_over':
-      return 'border-l-teal-500/60';
+      return 'border-l-teal-500';
     case 'complete':
       return 'border-l-blue-500/60';
     case 'done':
@@ -154,6 +154,9 @@ export function getActionConfig(
       return { label: 'Process', variant: 'blue', action: 'process' };
     case 'complete':
       return { label: 'Process', variant: 'blue', action: 'process' };
+    case 'in_session':
+    case 'running_over':
+      return { label: 'Rejoin', variant: 'teal', action: 'rejoin' };
     default:
       return null;
   }

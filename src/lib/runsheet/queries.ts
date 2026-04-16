@@ -114,7 +114,10 @@ export async function fetchRunsheetSessions(
 
       appointment_type_id: appointmentType?.id as string | null ?? null,
       type_name: appointmentType?.name as string | null ?? null,
-      modality: appointmentType?.modality as RunsheetSession['modality'] ?? null,
+      // On-demand sessions (joined via room link, no appointment) are always
+      // telehealth by definition — room links are telehealth only.
+      modality: (appointmentType?.modality as RunsheetSession['modality'])
+        ?? (appointment ? null : 'telehealth'),
       duration_minutes: appointmentType?.duration_minutes as number | null ?? null,
       default_fee_cents: appointmentType?.default_fee_cents as number | null ?? null,
 

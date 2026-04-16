@@ -61,13 +61,17 @@ export function RoomContainer({
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuCoords, setMenuCoords] = useState({ x: 0, y: 0 });
   const menuRef = useRef<HTMLDivElement>(null);
+  const portalRef = useRef<HTMLDivElement>(null);
   const kebabRef = useRef<HTMLButtonElement>(null);
 
   // Close menu on outside click
   useEffect(() => {
     if (!menuOpen) return;
     function handleClick(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      const insideTrigger = menuRef.current?.contains(target);
+      const insidePortal = portalRef.current?.contains(target);
+      if (!insideTrigger && !insidePortal) {
         setMenuOpen(false);
       }
     }
@@ -93,12 +97,16 @@ export function RoomContainer({
   const handleCopyLink = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      const url = `${window.location.origin}/entry/${group.link_token}`;
+      const slug = group.room_name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+      const url = `${window.location.origin}/entry/${group.link_token}?room=${slug}`;
       navigator.clipboard.writeText(url);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     },
-    [group.link_token]
+    [group.link_token, group.room_name]
   );
 
   const handleSendLink = useCallback(
@@ -223,6 +231,7 @@ export function RoomContainer({
           {menuOpen &&
             createPortal(
               <div
+                ref={portalRef}
                 className="fixed z-[9999] w-44 bg-white rounded-lg border border-gray-200 shadow-lg py-1"
                 style={{ top: menuCoords.y + 4, left: menuCoords.x - 176 }}
               >

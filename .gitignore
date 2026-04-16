@@ -38,6 +38,9 @@ yarn-error.log*
 # supabase
 supabase/.temp/
 
+# local test assets (PDFs for files library etc)
+files/
+
 # vercel
 .vercel
 

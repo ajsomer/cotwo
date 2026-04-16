@@ -3,10 +3,12 @@
 import { useState, useEffect } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 import { PersistentHeader } from './persistent-header';
+import { PatientVideoCall } from './patient-video-call';
 
 interface WaitingRoomProps {
   sessionId: string;
   locationId: string;
+  entryToken: string;
   clinicName: string;
   logoUrl: string | null;
   roomName: string;
@@ -19,6 +21,7 @@ type SessionStatus = 'waiting' | 'in_session' | 'complete' | 'done';
 export function WaitingRoom({
   sessionId,
   locationId,
+  entryToken,
   clinicName,
   logoUrl,
   roomName,
@@ -57,12 +60,8 @@ export function WaitingRoom({
         (payload) => {
           const newStatus = payload.new.status as SessionStatus;
           setStatus(newStatus);
-
-          if (newStatus === 'in_session') {
-            // Clinician admitted the patient — trigger video call
-            // In production, this would launch the LiveKit video interface
-            console.log('[WAITING] Clinician admitted — launching video call');
-          }
+          // When status flips to in_session, <PatientVideoCall> mounts and
+          // auto-connects — no explicit Join Call step.
         }
       )
       .subscribe(async (status) => {
@@ -80,33 +79,7 @@ export function WaitingRoom({
   }, [sessionId, locationId]);
 
   if (status === 'in_session') {
-    return (
-      <div className="flex flex-col items-center">
-        <PersistentHeader
-          clinicName={clinicName}
-          logoUrl={logoUrl}
-          roomName={roomName}
-        />
-        <div className="w-full space-y-6 text-center">
-          <div className="flex h-16 w-16 mx-auto items-center justify-center rounded-full bg-teal-50">
-            <svg className="h-8 w-8 text-teal-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-            </svg>
-          </div>
-          <h1 className="text-xl font-semibold text-gray-800">
-            Your appointment is starting
-          </h1>
-          <p className="text-sm text-gray-500">
-            {clinicianName ? `${clinicianName} is ready for you.` : 'Your clinician is ready for you.'}
-          </p>
-          <div className="rounded-xl border border-teal-200 bg-teal-50 px-4 py-6">
-            <p className="text-sm font-medium text-teal-700">
-              Video call would launch here (LiveKit integration)
-            </p>
-          </div>
-        </div>
-      </div>
-    );
+    return <PatientVideoCall entryToken={entryToken} clinicianName={clinicianName} />;
   }
 
   if (status === 'complete' || status === 'done') {
