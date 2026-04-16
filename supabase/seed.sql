@@ -264,3 +264,48 @@ INSERT INTO workflow_action_blocks (id, template_id, action_type, offset_minutes
 INSERT INTO workflow_action_blocks (id, template_id, action_type, offset_minutes, offset_direction, sort_order, config) VALUES
   ('00000000-0000-0000-0000-000000009007', '00000000-0000-0000-0000-000000008004', 'send_sms', 20160, 'after', 0,
    '{"message": "Hi {first_name}, it''s been a couple of weeks since your visit to {clinic_name}. Would you like to book your next appointment? Reply YES and we''ll get that sorted.", "default_enabled": true}');
+
+-- ============================================================================
+-- Files library — seed PDFs for the demo org
+-- NOTE: These records assume the actual PDF files have been uploaded to the
+-- clinic-files Supabase Storage bucket at the paths below. The seed script
+-- creates the DB rows only. Upload the files via the dashboard or CLI:
+--   supabase storage cp files/*.pdf storage://clinic-files/00000000-0000-0000-0000-000000000001/
+-- ============================================================================
+
+INSERT INTO files (id, org_id, name, description, storage_path, file_size_bytes, mime_type, uploaded_by, created_at) VALUES
+  ('00000000-0000-0000-0000-00000000f001',
+   '00000000-0000-0000-0000-000000000001',
+   'Depression Fact Sheet',
+   'Headspace fact sheet on depression for young people',
+   '00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-00000000f001.pdf',
+   524288, 'application/pdf',
+   '00000000-0000-0000-0000-000000001001',
+   now() - interval '10 days'),
+
+  ('00000000-0000-0000-0000-00000000f002',
+   '00000000-0000-0000-0000-000000000001',
+   'ADHD Fact Sheet for Educators',
+   'AADPA clinical guideline fact sheet on ADHD for educators',
+   '00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-00000000f002.pdf',
+   786432, 'application/pdf',
+   '00000000-0000-0000-0000-000000001001',
+   now() - interval '7 days'),
+
+  ('00000000-0000-0000-0000-00000000f003',
+   '00000000-0000-0000-0000-000000000001',
+   'Causes of Bipolar Disorder',
+   'Information on the causes and risk factors of bipolar disorder',
+   '00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-00000000f003.pdf',
+   409600, 'application/pdf',
+   '00000000-0000-0000-0000-000000001001',
+   now() - interval '3 days'),
+
+  ('00000000-0000-0000-0000-00000000f004',
+   '00000000-0000-0000-0000-000000000001',
+   'Signs and Symptoms of Anxiety',
+   'Fact sheet covering signs and symptoms of anxiety disorders',
+   '00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-00000000f004.pdf',
+   358400, 'application/pdf',
+   '00000000-0000-0000-0000-000000001001',
+   now() - interval '1 day');

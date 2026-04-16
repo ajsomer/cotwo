@@ -259,6 +259,7 @@ export function ClinicDataProvider({ children }: ClinicDataProviderProps) {
         orgDataLoadedRef.current = true;
         fetches.push(
           store.refreshForms(orgId),
+          store.refreshFiles(orgId),
           store.refreshWorkflows(orgId),
         );
       }

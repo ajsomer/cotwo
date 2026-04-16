@@ -55,12 +55,12 @@ export async function GET(
       .single();
 
     if (data) {
-      const appt = data.appointments as Record<string, unknown> | null;
+      const appt = data.appointments as unknown as Record<string, unknown> | null;
       currentSession = {
         status: data.status,
         scheduled_at: appt?.scheduled_at ?? null,
-        type_name: (appt?.appointment_types as Record<string, unknown> | null)?.name ?? null,
-        room_name: (appt?.rooms as Record<string, unknown> | null)?.name ?? null,
+        type_name: (appt?.appointment_types as unknown as Record<string, unknown> | null)?.name ?? null,
+        room_name: (appt?.rooms as unknown as Record<string, unknown> | null)?.name ?? null,
       };
     }
   }
@@ -114,9 +114,9 @@ export async function GET(
 
   const visitHistory = (historyData ?? [])
     .map((row) => {
-      const session = row.sessions as Record<string, unknown> | null;
+      const session = row.sessions as unknown as Record<string, unknown> | null;
       if (!session || session.status !== 'done') return null;
-      const appt = session.appointments as Record<string, unknown> | null;
+      const appt = session.appointments as unknown as Record<string, unknown> | null;
       return {
         date: (appt?.scheduled_at as string) ?? (session.session_created_at as string),
         type_name: (appt?.appointment_types as Record<string, unknown> | null)?.name ?? null,

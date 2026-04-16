@@ -2,7 +2,6 @@
 
 import { createClient as createServerClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
-import { seedDefaultWorkflows } from "@/lib/workflows/seed-defaults";
 
 /**
  * Seeds the database with demo data for the run sheet.
@@ -101,14 +100,6 @@ export async function seedDemoData() {
     await supabase.from("payment_methods").delete().neq("id", "00000000-0000-0000-0000-000000000000");
     await supabase.from("patient_phone_numbers").delete().neq("id", "00000000-0000-0000-0000-000000000000");
     await supabase.from("patients").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    // Clean workflow data (order matters: actions → runs → blocks → links → pathways → templates)
-    await supabase.from("appointment_actions").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    await supabase.from("appointment_workflow_runs").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    await supabase.from("workflow_action_blocks").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    await supabase.from("type_workflow_links").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    await supabase.from("outcome_pathways").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    await supabase.from("workflow_templates").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-
     // Upsert appointment types for this org (spec: 5 default types)
     await supabase.from("appointment_types").upsert([
       { id: "00000000-0000-0000-0000-000000003001", org_id: ORG_ID, name: "Initial Consultation", modality: "telehealth", duration_minutes: 60, default_fee_cents: 22000, source: "coviu" },
@@ -144,9 +135,6 @@ export async function seedDemoData() {
       { id: "00000000-0000-0000-0000-00000000c002", patient_id: "00000000-0000-0000-0000-000000004002", stripe_payment_method_id: "pm_test_002", card_last_four: "5555", card_brand: "Mastercard", card_expiry: "08/26", is_default: true },
       { id: "00000000-0000-0000-0000-00000000c003", patient_id: "00000000-0000-0000-0000-000000004004", stripe_payment_method_id: "pm_test_004", card_last_four: "1234", card_brand: "Visa", card_expiry: "03/28", is_default: true },
     ]);
-
-    // Seed default workflow templates (idempotent — skips existing)
-    await seedDefaultWorkflows(ORG_ID);
 
     // ========================================================================
     // Read existing rooms at the user's location and generate time-aware sessions

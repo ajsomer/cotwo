@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-import { createClient } from "@/lib/supabase/client";
 import { selectOutcomePathway, skipOutcomePathway } from "@/lib/runsheet/actions";
 import { useClinicStore } from "@/stores/clinic-store";
 import {
@@ -15,6 +14,7 @@ import {
   MessageSquare,
   FileText,
   ClipboardCheck,
+  FileUp,
   ChevronDown,
   ChevronUp,
   ArrowLeft,
@@ -65,6 +65,8 @@ function ActionTypeIcon({ type }: { type: string }) {
       return <MessageSquare className="h-4 w-4 text-teal-600" />;
     case "deliver_form":
       return <FileText className="h-4 w-4 text-blue-500" />;
+    case "send_file":
+      return <FileUp className="h-4 w-4 text-violet-500" />;
     case "task":
       return <ClipboardCheck className="h-4 w-4 text-amber-600" />;
     default:
@@ -80,13 +82,17 @@ function actionTypeLabel(type: string): string {
 function blockSummary(
   block: ActionBlock | CustomisedBlock,
   config: Record<string, unknown>,
-  formName?: string
+  formName?: string,
+  fileName?: string
 ): string {
   if (block.action_type === "task") {
     return (config.task_title as string) ?? "Task";
   }
   if (block.action_type === "deliver_form") {
     return formName ?? "Send form";
+  }
+  if (block.action_type === "send_file") {
+    return fileName ?? "Send file";
   }
   if (block.action_type === "send_sms") {
     const msg = (config.message as string) ?? "";
@@ -112,7 +118,6 @@ export function ProcessFlowOutcome({
   onNext,
 }: ProcessFlowOutcomeProps) {
   const [subStep, setSubStep] = useState<"select" | "customise">("select");
-  const [pathways, setPathways] = useState<PathwayWithBlocks[]>([]);
   const [selectedPathway, setSelectedPathway] =
     useState<PathwayWithBlocks | null>(null);
   const [customisedBlocks, setCustomisedBlocks] = useState<CustomisedBlock[]>(
@@ -123,45 +128,37 @@ export function ProcessFlowOutcome({
   const [skipping, setSkipping] = useState(false);
 
   const forms = useClinicStore((s) => s.forms);
+  const files = useClinicStore((s) => s.files);
   const formNameMap = new Map(forms.map((f) => [f.id, f.name]));
+  const fileNameMap = new Map(files.map((f) => [f.id, f.name]));
+  const locationId = useClinicStore((s) => s.locationId);
+  const refreshReadiness = useClinicStore((s) => s.refreshReadiness);
+  const refreshSessions = useClinicStore((s) => s.refreshSessions);
 
   const patientName = [session.patient_first_name, session.patient_last_name]
     .filter(Boolean)
     .join(" ");
 
-  // Fetch pathways with blocks
-  useEffect(() => {
-    async function fetchPathways() {
-      const supabase = createClient();
-      const { data } = await supabase
-        .from("outcome_pathways")
-        .select("id, name, description, workflow_template_id")
-        .is("archived_at", null)
-        .order("name");
-
-      const items: PathwayWithBlocks[] = [];
-      for (const p of data ?? []) {
-        let blocks: ActionBlock[] = [];
-        if (p.workflow_template_id) {
-          const { data: blockData } = await supabase
-            .from("workflow_action_blocks")
-            .select(
-              "id, action_type, offset_minutes, offset_direction, form_id, config, sort_order"
-            )
-            .eq("template_id", p.workflow_template_id)
-            .order("sort_order");
-          blocks = (blockData ?? []) as ActionBlock[];
-        }
-        items.push({
-          ...p,
-          action_count: blocks.length,
-          blocks,
-        });
-      }
-      setPathways(items);
-    }
-    fetchPathways();
-  }, []);
+  // Derive pathways from the Zustand store (already hydrated on mount)
+  const storePathways = useClinicStore((s) => s.outcomePathways);
+  const pathways: PathwayWithBlocks[] = storePathways
+    .filter((p) => !p.archived_at)
+    .map((p) => ({
+      id: p.id,
+      name: p.name,
+      description: p.description,
+      workflow_template_id: p.workflow_template_id,
+      action_count: p.blocks.length,
+      blocks: p.blocks.map((b) => ({
+        id: b.id,
+        action_type: b.action_type as ActionType,
+        offset_minutes: b.offset_minutes,
+        offset_direction: b.offset_direction,
+        form_id: b.form_id,
+        config: (b.config as Record<string, unknown>) ?? {},
+        sort_order: b.sort_order,
+      })),
+    }));
 
   // Initialise customised blocks when a pathway is selected
   const selectPathway = useCallback((pathway: PathwayWithBlocks) => {
@@ -200,6 +197,12 @@ export function ProcessFlowOutcome({
       enabledActions
     );
 
+    // Refresh readiness + sessions so the post-appointment tab and run sheet update immediately
+    if (locationId) {
+      refreshReadiness(locationId);
+      refreshSessions(locationId);
+    }
+
     setLoading(false);
     onNext();
   }
@@ -208,6 +211,11 @@ export function ProcessFlowOutcome({
   async function handleSkip() {
     setSkipping(true);
     await skipOutcomePathway(session.session_id);
+
+    if (locationId) {
+      refreshSessions(locationId);
+    }
+
     setSkipping(false);
     onNext();
   }
@@ -334,6 +342,8 @@ export function ProcessFlowOutcome({
           const formName = block.customFormId
             ? formNameMap.get(block.customFormId)
             : undefined;
+          const fileId = (block.customConfig.file_id as string) || (block.config.file_id as string);
+          const fileName = fileId ? fileNameMap.get(fileId) : undefined;
 
           return (
             <div key={block.id} className="flex gap-3">
@@ -377,7 +387,7 @@ export function ProcessFlowOutcome({
                       </span>
                     </div>
                     <p className="text-sm text-gray-800 truncate">
-                      {blockSummary(block, block.customConfig, formName)}
+                      {blockSummary(block, block.customConfig, formName, fileName)}
                     </p>
                   </div>
 
@@ -542,6 +552,56 @@ export function ProcessFlowOutcome({
                             rows={2}
                             className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500 resize-none"
                           />
+                        </div>
+                      </>
+                    )}
+
+                    {/* Send file fields */}
+                    {block.action_type === "send_file" && (
+                      <>
+                        <div>
+                          <label className="text-xs font-medium text-gray-500 block mb-1">
+                            File
+                          </label>
+                          <select
+                            value={
+                              (block.customConfig.file_id as string) ?? ""
+                            }
+                            onChange={(e) =>
+                              updateBlockConfig(block.id, {
+                                file_id: e.target.value || "",
+                              })
+                            }
+                            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                          >
+                            <option value="">Select a file...</option>
+                            {files.map((f) => (
+                              <option key={f.id} value={f.id}>
+                                {f.name} ({Math.round(f.file_size_bytes / 1024)} KB)
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-gray-500 block mb-1">
+                            SMS message
+                          </label>
+                          <textarea
+                            value={
+                              (block.customConfig.message as string) ?? ""
+                            }
+                            onChange={(e) =>
+                              updateBlockConfig(block.id, {
+                                message: e.target.value,
+                              })
+                            }
+                            rows={3}
+                            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500 resize-none"
+                          />
+                          <p className="text-xs text-gray-400 mt-1 break-words">
+                            Variables: {"{first_name}"}, {"{clinic_name}"},{" "}
+                            {"{clinician_name}"}, {"{file_link}"}
+                          </p>
                         </div>
                       </>
                     )}

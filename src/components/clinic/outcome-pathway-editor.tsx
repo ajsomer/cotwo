@@ -16,6 +16,7 @@ import {
   MessageSquare,
   FileText,
   ClipboardCheck,
+  FileUp,
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
@@ -49,6 +50,8 @@ function ActionTypeIcon({ type }: { type: string }) {
       return <MessageSquare className="h-4 w-4 text-teal-600" />;
     case "deliver_form":
       return <FileText className="h-4 w-4 text-blue-500" />;
+    case "send_file":
+      return <FileUp className="h-4 w-4 text-violet-500" />;
     case "task":
       return <ClipboardCheck className="h-4 w-4 text-amber-600" />;
     default:
@@ -85,8 +88,10 @@ export function OutcomePathwayEditor({
   const [loaded, setLoaded] = useState(!pathwayId); // new pathway = already loaded
 
   const forms = useClinicStore((s) => s.forms);
+  const files = useClinicStore((s) => s.files);
   const orgId = useClinicStore((s) => s.orgId);
   const formNameMap = new Map(forms.map((f) => [f.id, f.name]));
+  const fileNameMap = new Map(files.map((f) => [f.id, f.name]));
 
   // Load existing pathway data
   useEffect(() => {
@@ -139,6 +144,11 @@ export function OutcomePathwayEditor({
     }
     if (actionType === "send_sms") {
       defaultConfig.message = "";
+    }
+    if (actionType === "send_file") {
+      defaultConfig.file_id = "";
+      defaultConfig.message =
+        "Hi {first_name}, your clinician has shared a document with you. Tap here to view it: {file_link}";
     }
 
     const newId = tempId();
@@ -512,6 +522,57 @@ export function OutcomePathwayEditor({
                             </div>
                           </>
                         )}
+
+                        {/* Send file fields */}
+                        {block.action_type === "send_file" && (
+                          <>
+                            <div>
+                              <label className="text-xs font-medium text-gray-500 block mb-1">
+                                File
+                              </label>
+                              <select
+                                value={
+                                  (block.config.file_id as string) ?? ""
+                                }
+                                onChange={(e) =>
+                                  updateBlockConfig(block.id, {
+                                    file_id: e.target.value || "",
+                                  })
+                                }
+                                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                              >
+                                <option value="">Select a file...</option>
+                                {files.map((f) => (
+                                  <option key={f.id} value={f.id}>
+                                    {f.name} ({Math.round(f.file_size_bytes / 1024)} KB)
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-xs font-medium text-gray-500 block mb-1">
+                                SMS message
+                              </label>
+                              <textarea
+                                value={
+                                  (block.config.message as string) ?? ""
+                                }
+                                onChange={(e) =>
+                                  updateBlockConfig(block.id, {
+                                    message: e.target.value,
+                                  })
+                                }
+                                rows={3}
+                                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500 resize-none"
+                                placeholder="Hi {first_name}, your clinician has shared a document with you."
+                              />
+                              <p className="text-xs text-gray-400 mt-1">
+                                Variables: {"{first_name}"}, {"{clinic_name}"},{" "}
+                                {"{clinician_name}"}, {"{file_link}"}
+                              </p>
+                            </div>
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
@@ -543,6 +604,13 @@ export function OutcomePathwayEditor({
                     >
                       <FileText className="h-3 w-3 text-blue-500" />
                       Send form
+                    </button>
+                    <button
+                      onClick={() => addBlock("send_file")}
+                      className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-gray-200 hover:border-violet-400 transition-colors"
+                    >
+                      <FileUp className="h-3 w-3 text-violet-500" />
+                      Send file
                     </button>
                     <button
                       onClick={() => addBlock("task")}

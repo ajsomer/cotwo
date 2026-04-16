@@ -46,10 +46,12 @@ export async function executeHandler(
       return handleCaptureCard(ctx);
     case "verify_contact":
       return handleVerifyContact(ctx);
+    case "send_file":
+      return handleSendFile(ctx);
     case "task":
       return handleTask(ctx);
     default:
-      // Action types that don't execute in v1 (send_file, send_rebooking_nudge, etc.)
+      // Action types that don't execute in v1 (send_rebooking_nudge, etc.)
       console.log(
         `[WORKFLOW] Action type '${actionType}' not yet implemented. Skipping action ${ctx.actionId}.`
       );
@@ -415,6 +417,77 @@ async function handleVerifyContact(ctx: HandlerContext): Promise<ActionHandlerRe
   );
 
   return { status: "sent" };
+}
+
+/** Send a file to the patient via SMS. Creates a file_delivery and sends the link. */
+async function handleSendFile(ctx: HandlerContext): Promise<ActionHandlerResult> {
+  const fileId = ctx.config.file_id as string | undefined;
+  if (!fileId) {
+    return { status: "failed", error: "No file_id configured on this action" };
+  }
+
+  const supabase = createServiceClient();
+
+  // Get file details
+  const { data: file } = await supabase
+    .from("files")
+    .select("id, name, storage_path")
+    .eq("id", fileId)
+    .single();
+
+  if (!file) {
+    return { status: "failed", error: `File ${fileId} not found` };
+  }
+
+  // Create file_delivery with unique token
+  const token = crypto.randomUUID();
+  const { data: delivery, error: deliveryError } = await supabase
+    .from("file_deliveries")
+    .insert({
+      file_id: file.id,
+      patient_id: ctx.patientId,
+      session_id: ctx.sessionId,
+      token,
+      sent_at: new Date().toISOString(),
+    })
+    .select("id")
+    .single();
+
+  if (deliveryError || !delivery) {
+    return {
+      status: "failed",
+      error: deliveryError?.message ?? "Failed to create file delivery",
+    };
+  }
+
+  // Build the patient-facing URL
+  const viewUrl = `${getBaseUrl()}/files/view/${token}`;
+
+  // Interpolate the SMS message template
+  const template = (ctx.config.message as string) ?? "";
+  const message = template
+    ? template
+        .replace(/\{first_name\}/g, ctx.patientFirstName)
+        .replace(/\{clinic_name\}/g, ctx.clinicName)
+        .replace(/\{clinician_name\}/g, ctx.clinicianName ?? "your clinician")
+        .replace(/\{file_link\}/g, viewUrl)
+    : `Hi ${ctx.patientFirstName}, your clinician has shared a document with you. View it here: ${viewUrl}`;
+
+  const sms = getSmsProvider();
+  const result = await sms.sendNotification(ctx.phoneNumber, message);
+
+  if (!result.success) {
+    return { status: "failed", error: result.error ?? "SMS delivery failed" };
+  }
+
+  console.log(
+    `[WORKFLOW] send_file: sent file '${file.name}' to ${ctx.phoneNumber} (delivery ${delivery.id})`
+  );
+
+  return {
+    status: "sent",
+    resultData: { file_delivery_id: delivery.id, file_name: file.name },
+  };
 }
 
 /**

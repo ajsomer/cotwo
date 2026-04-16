@@ -13,6 +13,7 @@ interface WorkflowEditorProps {
   direction: WorkflowDirection;
   blocks: DbWorkflowActionBlock[];
   forms: { id: string; name: string }[];
+  files?: { id: string; name: string; file_size_bytes: number }[];
   onChange: (blocks: DbWorkflowActionBlock[]) => void;
 }
 
@@ -33,6 +34,7 @@ export function WorkflowEditor({
   direction,
   blocks,
   forms,
+  files,
   onChange,
 }: WorkflowEditorProps) {
   const [expandedBlockId, setExpandedBlockId] = useState<string | null>(null);
@@ -124,6 +126,7 @@ export function WorkflowEditor({
             block={block}
             direction={direction}
             forms={forms}
+            files={files}
             formNames={formNames}
             isExpanded={expandedBlockId === block.id}
             onExpand={() =>

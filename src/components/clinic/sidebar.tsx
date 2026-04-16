@@ -75,7 +75,7 @@ const NAV_ITEMS: NavItemDef[] = [
   },
   {
     href: "/forms",
-    label: "Forms",
+    label: "Forms & Files",
     icon: icons.forms,
     roles: ["clinic_owner", "practice_manager"],
     tiers: ["complete"],

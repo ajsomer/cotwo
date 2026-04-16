@@ -31,6 +31,7 @@ interface WorkflowMiddlePaneProps {
   template: DbWorkflowTemplate | null;
   blocks: DbWorkflowActionBlock[];
   forms: { id: string; name: string }[];
+  files?: { id: string; name: string; file_size_bytes: number }[];
   inFlightCount: number;
   isDirty: boolean;
   isSaving: boolean;
@@ -49,6 +50,7 @@ export function WorkflowMiddlePane({
   template,
   blocks,
   forms,
+  files,
   inFlightCount,
   isDirty,
   isSaving,
@@ -236,6 +238,7 @@ export function WorkflowMiddlePane({
             direction={direction}
             blocks={blocks}
             forms={forms}
+            files={files}
             onChange={onBlocksChange}
           />
         ) : (

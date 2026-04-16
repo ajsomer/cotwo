@@ -43,6 +43,17 @@ export interface FormRow {
   assignment_counts: { total: number; completed: number };
 }
 
+export interface FileRow {
+  id: string;
+  name: string;
+  description: string | null;
+  storage_path: string;
+  file_size_bytes: number;
+  mime_type: string;
+  uploaded_by: string | null;
+  created_at: string;
+}
+
 export interface WorkflowAction {
   action_id: string;
   action_type: string;
@@ -169,6 +180,7 @@ export interface ClinicStore {
   appointmentTypes: AppointmentTypeRow[];
   clinicianRoomIds: string[];
   forms: FormRow[];
+  files: FileRow[];
   preWorkflowTemplates: Record<string, DbWorkflowTemplate>;
   preWorkflowBlocks: Record<string, DbWorkflowActionBlock[]>;
   postWorkflowTemplates: Record<string, DbWorkflowTemplate>;
@@ -197,6 +209,7 @@ export interface ClinicStore {
   readinessLoadedPre: boolean;
   readinessLoadedPost: boolean;
   formsLoaded: boolean;
+  filesLoaded: boolean;
   workflowsLoaded: boolean;
   paymentConfigLoaded: boolean;
 
@@ -217,6 +230,7 @@ export interface ClinicStore {
   refreshRooms: (locationId: string) => Promise<void>;
   refreshReadiness: (locationId: string) => Promise<void>;
   refreshForms: (orgId: string) => Promise<void>;
+  refreshFiles: (orgId: string) => Promise<void>;
   refreshWorkflows: (orgId: string) => Promise<void>;
   refreshPaymentConfig: (locationId: string) => Promise<void>;
   refreshClinicianRoomIds: (locationId: string) => Promise<void>;
@@ -236,6 +250,7 @@ export interface ClinicStore {
   setReadinessDirection: (direction: ReadinessDirection) => void;
   setReadinessCounts: (counts: ReadinessCounts) => void;
   setForms: (forms: FormRow[]) => void;
+  setFiles: (files: FileRow[]) => void;
   setAppointmentTypes: (types: AppointmentTypeRow[]) => void;
   setOutcomePathways: (pathways: OutcomePathwayRow[]) => void;
   setPreWorkflowTemplates: (templates: Record<string, DbWorkflowTemplate>) => void;
@@ -274,6 +289,7 @@ export const useClinicStore = create<ClinicStore>()(
       appointmentTypes: [],
       clinicianRoomIds: [],
       forms: [],
+      files: [],
       preWorkflowTemplates: {},
       preWorkflowBlocks: {},
       postWorkflowTemplates: {},
@@ -294,6 +310,7 @@ export const useClinicStore = create<ClinicStore>()(
       readinessLoadedPre: false,
       readinessLoadedPost: false,
       formsLoaded: false,
+      filesLoaded: false,
       workflowsLoaded: false,
       paymentConfigLoaded: false,
 
@@ -418,6 +435,17 @@ export const useClinicStore = create<ClinicStore>()(
           set({ forms: data.forms ?? [], formsLoaded: true }, false, "refreshForms");
         } catch (e) {
           console.error("Failed to refresh forms:", e);
+        }
+      },
+
+      refreshFiles: async (orgId) => {
+        try {
+          const data = await fetchJson<{ files: FileRow[] }>(
+            `/api/files?org_id=${orgId}`
+          );
+          set({ files: data.files ?? [], filesLoaded: true }, false, "refreshFiles");
+        } catch (e) {
+          console.error("Failed to refresh files:", e);
         }
       },
 
@@ -569,6 +597,7 @@ export const useClinicStore = create<ClinicStore>()(
       setReadinessCounts: (counts) =>
         set({ readinessCounts: counts }, false, "setReadinessCounts"),
       setForms: (forms) => set({ forms, formsLoaded: true }, false, "setForms"),
+      setFiles: (files) => set({ files, filesLoaded: true }, false, "setFiles"),
       setAppointmentTypes: (types) =>
         set({ appointmentTypes: types }, false, "setAppointmentTypes"),
       setOutcomePathways: (pathways) =>

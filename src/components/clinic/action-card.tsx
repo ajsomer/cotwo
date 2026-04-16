@@ -22,6 +22,7 @@ interface ActionCardProps {
   block: DbWorkflowActionBlock;
   direction: WorkflowDirection;
   forms: { id: string; name: string }[];
+  files?: { id: string; name: string; file_size_bytes: number }[];
   formNames: Record<string, string>;
   isExpanded: boolean;
   onExpand: () => void;
@@ -33,6 +34,7 @@ export function ActionCard({
   block,
   direction,
   forms,
+  files,
   formNames,
   isExpanded,
   onExpand,
@@ -209,15 +211,26 @@ export function ActionCard({
           </div>
         )}
 
-        {/* File picker stub (send_file) */}
+        {/* File picker (send_file) */}
         {meta?.hasFile && (
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-500">
               File
             </label>
-            <div className="rounded-lg border border-dashed border-gray-200 px-3 py-3 text-center text-xs text-gray-400">
-              File upload coming in a future release
-            </div>
+            <select
+              value={(editConfig.file_id as string) ?? ""}
+              onChange={(e) =>
+                setEditConfig({ ...editConfig, file_id: e.target.value || "" })
+              }
+              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500"
+            >
+              <option value="">Select a file...</option>
+              {(files ?? []).map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name} ({Math.round(f.file_size_bytes / 1024)} KB)
+                </option>
+              ))}
+            </select>
           </div>
         )}
 
