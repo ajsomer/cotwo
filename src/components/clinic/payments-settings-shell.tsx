@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "@/hooks/useLocation";
 import { useRole } from "@/hooks/useRole";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,14 @@ export function PaymentsSettingsShell() {
   const data = useClinicStore((s) => s.paymentConfig);
   const rooms = useClinicStore((s) => s.paymentRooms);
   const loading = !useClinicStore((s) => s.paymentConfigLoaded);
+
+  // Fetch-if-empty
+  useEffect(() => {
+    if (!selectedLocation) return;
+    if (!getClinicStore().paymentConfigLoaded) {
+      void getClinicStore().refreshPaymentConfig(selectedLocation.id);
+    }
+  }, [selectedLocation]);
   const [saving, setSaving] = useState(false);
 
   const isAdmin =

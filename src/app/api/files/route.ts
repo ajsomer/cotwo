@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { fetchFiles } from "@/lib/clinic/fetchers/forms";
 
 // GET /api/files?org_id=xxx — list active files for an org
 export async function GET(request: NextRequest) {
@@ -10,20 +11,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const supabase = createServiceClient();
-
-    const { data: files, error } = await supabase
-      .from("files")
-      .select("id, name, description, storage_path, file_size_bytes, mime_type, uploaded_by, created_at")
-      .eq("org_id", orgId)
-      .is("archived_at", null)
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
-    return NextResponse.json({ files: files ?? [] });
+    const files = await fetchFiles(orgId);
+    return NextResponse.json({ files });
   } catch (err) {
     console.error("[files] GET error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

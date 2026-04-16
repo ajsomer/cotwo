@@ -10,7 +10,6 @@ export default async function ClinicLayout({
 }) {
   const supabase = await createClient();
 
-  // Get current user
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -19,7 +18,6 @@ export default async function ClinicLayout({
     redirect("/login");
   }
 
-  // Fetch user's full name
   const { data: userRecord } = await supabase
     .from("users")
     .select("full_name")
@@ -93,11 +91,15 @@ export default async function ClinicLayout({
   });
 
   if (assignments.length === 0) {
-    // Middleware should have caught this — setup is incomplete
     redirect("/setup/clinic");
   }
 
   return (
-    <ClinicProviders assignments={assignments}>{children}</ClinicProviders>
+    <ClinicProviders
+      assignments={assignments}
+      initialLocationId={assignments[0].location.id}
+    >
+      {children}
+    </ClinicProviders>
   );
 }

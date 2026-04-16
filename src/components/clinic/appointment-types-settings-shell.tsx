@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import { useOrg } from "@/hooks/useOrg";
 import type { AppointmentTypeRow } from "@/stores/clinic-store";
@@ -59,6 +59,14 @@ export function AppointmentTypesSettingsShell() {
   const { org } = useOrg();
   const appointmentTypes = useClinicStore((s) => s.appointmentTypes);
   const workflowsLoaded = useClinicStore((s) => s.workflowsLoaded);
+
+  // Fetch-if-empty
+  useEffect(() => {
+    if (!org) return;
+    if (!getClinicStore().workflowsLoaded) {
+      void getClinicStore().refreshWorkflows(org.id);
+    }
+  }, [org]);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingType, setEditingType] = useState<AppointmentTypeRow | null>(null);
   const [editorTerminalType, setEditorTerminalType] = useState<"run_sheet" | "collection_only">("run_sheet");

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { fetchPaymentConfig } from "@/lib/clinic/fetchers/payments";
 
 // GET /api/settings/payments?location_id=xxx
 // Returns routing mode, location Stripe account, and clinician Stripe statuses
@@ -14,44 +15,11 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const supabase = createServiceClient();
-
-    // Get location + org (for stripe_routing)
-    const { data: location, error: locError } = await supabase
-      .from("locations")
-      .select("id, name, stripe_account_id, org_id, organisations!inner (id, stripe_routing)")
-      .eq("id", locationId)
-      .single();
-
-    if (locError || !location) {
-      return NextResponse.json(
-        { error: "Location not found" },
-        { status: 404 }
-      );
+    const config = await fetchPaymentConfig(locationId);
+    if (!config) {
+      return NextResponse.json({ error: "Location not found" }, { status: 404 });
     }
-
-    const org = (location as any).organisations;
-
-    // Get clinicians + clinic_owners at this location with their Stripe status
-    const { data: staffData } = await supabase
-      .from("staff_assignments")
-      .select("id, user_id, role, stripe_account_id, users ( full_name )")
-      .eq("location_id", locationId)
-      .in("role", ["clinician", "clinic_owner"]);
-
-    const clinicians = (staffData ?? []).map((sa: any) => ({
-      staff_assignment_id: sa.id,
-      user_id: sa.user_id,
-      role: sa.role,
-      full_name: sa.users?.full_name ?? "Unknown",
-      stripe_account_id: sa.stripe_account_id,
-    }));
-
-    return NextResponse.json({
-      routing_mode: org.stripe_routing,
-      location_stripe_account_id: location.stripe_account_id,
-      clinicians,
-    });
+    return NextResponse.json(config);
   } catch (err) {
     console.error("GET /api/settings/payments error:", err);
     return NextResponse.json(

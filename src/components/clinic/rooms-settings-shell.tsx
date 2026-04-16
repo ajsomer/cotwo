@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "@/hooks/useLocation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +25,14 @@ export function RoomsSettingsShell() {
   const { selectedLocation } = useLocation();
   const rooms = useClinicStore((s) => s.roomsWithClinicians);
   const loading = !useClinicStore((s) => s.roomsLoaded);
+
+  // Fetch-if-empty
+  useEffect(() => {
+    if (!selectedLocation) return;
+    if (!getClinicStore().roomsLoaded) {
+      void getClinicStore().refreshRooms(selectedLocation.id);
+    }
+  }, [selectedLocation]);
   const [panelOpen, setPanelOpen] = useState(false);
   const [editingRoom, setEditingRoom] = useState<RoomWithClinicians | null>(
     null

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { broadcastSessionChange } from '@/lib/realtime/broadcast';
 
 /**
  * POST /api/patient/arrive
@@ -42,6 +43,10 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    await broadcastSessionChange(body.location_id, 'session_created', {
+      session_id: sessionId,
+    });
+
     return NextResponse.json({
       session_id: sessionId,
       entry_token: newSession.entry_token,
@@ -57,7 +62,7 @@ export async function POST(request: NextRequest) {
   const modality = body.modality || 'telehealth';
   const newStatus = modality === 'in_person' ? 'checked_in' : 'waiting';
 
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from('sessions')
     .update({
       status: newStatus,
@@ -66,11 +71,19 @@ export async function POST(request: NextRequest) {
       prep_completed: true,
       device_tested: body.device_tested || false,
     })
-    .eq('id', sessionId);
+    .eq('id', sessionId)
+    .select('location_id')
+    .single();
 
   if (error) {
     console.error('[ARRIVE] Failed to update session:', error);
     return NextResponse.json({ error: 'Failed to update session' }, { status: 500 });
+  }
+
+  if (updated?.location_id) {
+    await broadcastSessionChange(updated.location_id, 'arrived', {
+      session_id: sessionId,
+    });
   }
 
   return NextResponse.json({

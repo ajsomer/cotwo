@@ -30,7 +30,8 @@ const VideoCallPanelDynamic = dynamic(
 );
 
 export function RunsheetShell() {
-  // Read from Zustand store (kept fresh by Realtime subscriptions in layout)
+  // Read from Zustand store. If a slice isn't loaded yet, the effect below
+  // fetches it once per tab via the store's refresh* action.
   const sessions = useClinicStore((s) => s.sessions);
   const rooms = useClinicStore((s) => s.rooms);
   const clinicianRoomIds = useClinicStore((s) => s.clinicianRoomIds);
@@ -46,6 +47,17 @@ export function RunsheetShell() {
   // Refetch helper — delegates to store
   const refetch = useCallback(async () => {
     if (locationId) await getClinicStore().refreshSessions(locationId);
+  }, [locationId]);
+
+  // Fetch-if-empty: populate slices on first visit (once per tab lifetime).
+  useEffect(() => {
+    if (!locationId) return;
+    const store = getClinicStore();
+    if (!store.sessionsLoaded) void store.refreshSessions(locationId);
+    if (!store.roomsLoaded) void store.refreshRooms(locationId);
+    if (store.clinicianRoomIds.length === 0) {
+      void store.refreshClinicianRoomIds(locationId);
+    }
   }, [locationId]);
 
   // Tick `now` every 30s for derived state recalculation

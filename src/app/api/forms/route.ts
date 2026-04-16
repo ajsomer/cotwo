@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { fetchForms } from "@/lib/clinic/fetchers/forms";
 
 // GET /api/forms?org_id=xxx
 export async function GET(request: NextRequest) {
@@ -10,44 +11,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const supabase = createServiceClient();
-
-    const { data: forms, error } = await supabase
-      .from("forms")
-      .select("id, name, description, status, schema, created_at, updated_at")
-      .eq("org_id", orgId)
-      .order("updated_at", { ascending: false });
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
-    // Get assignment counts per form
-    const formIds = (forms ?? []).map((f) => f.id);
-    let assignmentCounts: Record<string, { total: number; completed: number }> = {};
-
-    if (formIds.length > 0) {
-      const { data: assignments } = await supabase
-        .from("form_assignments")
-        .select("form_id, status")
-        .in("form_id", formIds);
-
-      if (assignments) {
-        assignmentCounts = assignments.reduce((acc, a) => {
-          if (!acc[a.form_id]) acc[a.form_id] = { total: 0, completed: 0 };
-          acc[a.form_id].total++;
-          if (a.status === "completed") acc[a.form_id].completed++;
-          return acc;
-        }, {} as Record<string, { total: number; completed: number }>);
-      }
-    }
-
-    const formsWithCounts = (forms ?? []).map((f) => ({
-      ...f,
-      assignment_counts: assignmentCounts[f.id] ?? { total: 0, completed: 0 },
-    }));
-
-    return NextResponse.json({ forms: formsWithCounts });
+    const forms = await fetchForms(orgId);
+    return NextResponse.json({ forms });
   } catch (err) {
     console.error("[Forms] GET error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useOrg } from "@/hooks/useOrg";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,14 @@ export function FormsShell() {
   const router = useRouter();
   const forms = useClinicStore((s) => s.forms);
   const loading = !useClinicStore((s) => s.formsLoaded);
+
+  // Fetch-if-empty
+  useEffect(() => {
+    if (!org) return;
+    if (!getClinicStore().formsLoaded) {
+      void getClinicStore().refreshForms(org.id);
+    }
+  }, [org]);
   const [sendingForm, setSendingForm] = useState<FormRow | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("forms");
 

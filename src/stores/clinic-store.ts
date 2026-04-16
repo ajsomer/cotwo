@@ -157,7 +157,9 @@ export interface ClinicInitialData {
   rooms: Room[];
   clinicianRoomIds: string[];
   readinessAppointments: ReadinessAppointment[];
+  readinessAppointmentsPost: ReadinessAppointment[];
   forms: FormRow[];
+  files: FileRow[];
   appointmentTypes: AppointmentTypeRow[];
   outcomePathways: OutcomePathwayRow[];
   preWorkflowTemplates: Record<string, DbWorkflowTemplate>;
@@ -324,7 +326,13 @@ export const useClinicStore = create<ClinicStore>()(
             rooms: data.rooms,
             clinicianRoomIds: data.clinicianRoomIds,
             readinessAppointmentsPre: data.readinessAppointments,
+            readinessAppointmentsPost: data.readinessAppointmentsPost,
+            readinessCounts: {
+              pre: data.readinessAppointments.length,
+              post: data.readinessAppointmentsPost.length,
+            },
             forms: data.forms,
+            files: data.files,
             appointmentTypes: data.appointmentTypes,
             outcomePathways: data.outcomePathways,
             preWorkflowTemplates: data.preWorkflowTemplates,
@@ -337,7 +345,9 @@ export const useClinicStore = create<ClinicStore>()(
             roomsLoaded: true,
             sessionsLoaded: true,
             readinessLoadedPre: true,
+            readinessLoadedPost: true,
             formsLoaded: true,
+            filesLoaded: true,
             workflowsLoaded: true,
             paymentConfigLoaded: true,
           },

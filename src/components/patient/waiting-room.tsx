@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createBrowserClient } from '@supabase/ssr';
+import { getSocket } from '@/lib/socket-client';
 import { PersistentHeader } from './persistent-header';
 import { PatientVideoCall } from './patient-video-call';
 
@@ -40,43 +40,41 @@ export function WaitingRoom({
     return () => clearInterval(interval);
   }, []);
 
-  // Subscribe to session status changes via Supabase Realtime
+  // Claim presence via Socket.IO so clinic clients see this session as
+  // connected. Re-emit on every socket connect (including reconnects).
   useEffect(() => {
-    const supabase = createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
-
-    const channel = supabase
-      .channel(`presence:location:${locationId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'sessions',
-          filter: `id=eq.${sessionId}`,
-        },
-        (payload) => {
-          const newStatus = payload.new.status as SessionStatus;
-          setStatus(newStatus);
-          // When status flips to in_session, <PatientVideoCall> mounts and
-          // auto-connects — no explicit Join Call step.
-        }
-      )
-      .subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          await channel.track({
-            session_id: sessionId,
-            connected_at: new Date().toISOString(),
-          });
-        }
-      });
-
+    const socket = getSocket();
+    const track = () => {
+      socket.emit('presence:track', { locationId, sessionId });
+    };
+    if (socket.connected) track();
+    socket.on('connect', track);
     return () => {
-      supabase.removeChannel(channel);
+      socket.off('connect', track);
     };
   }, [sessionId, locationId]);
+
+  // Subscribe to session status changes via Socket.IO. When the clinician
+  // flips the session into `in_session`, PatientVideoCall auto-mounts;
+  // when they complete, we switch to the "appointment complete" view.
+  useEffect(() => {
+    const socket = getSocket();
+    const joinRoom = () => {
+      socket.emit('join:session', sessionId);
+    };
+    if (socket.connected) joinRoom();
+    socket.on('connect', joinRoom);
+
+    const onStatusChanged = (payload: { status: SessionStatus }) => {
+      if (payload?.status) setStatus(payload.status);
+    };
+    socket.on('status_changed', onStatusChanged);
+
+    return () => {
+      socket.off('connect', joinRoom);
+      socket.off('status_changed', onStatusChanged);
+    };
+  }, [sessionId]);
 
   if (status === 'in_session') {
     return <PatientVideoCall entryToken={entryToken} clinicianName={clinicianName} />;

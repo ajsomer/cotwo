@@ -14,11 +14,22 @@ import type {
 import { AppointmentTypesSettingsShell } from "./appointment-types-settings-shell";
 import { OutcomePathwaysPanel } from "./outcome-pathways-panel";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
-import type { AppointmentTypeRow, OutcomePathwayRow } from "@/stores/clinic-store";
+import type {
+  AppointmentTypeRow,
+  OutcomePathwayRow,
+} from "@/stores/clinic-store";
 
 export function WorkflowsShell() {
   const { org } = useOrg();
   const orgId = org?.id ?? "";
+
+  // Fetch-if-empty
+  useEffect(() => {
+    if (!orgId) return;
+    const store = getClinicStore();
+    if (!store.workflowsLoaded) void store.refreshWorkflows(orgId);
+    if (!store.formsLoaded) void store.refreshForms(orgId);
+  }, [orgId]);
 
   const [direction, setDirection] = useState<WorkflowDirection>("pre_appointment");
   const [selectedId, setSelectedId] = useState<string | null>(null);

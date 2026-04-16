@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { useClinicStore } from "@/stores/clinic-store";
 import type { ReadinessAppointment, ReadinessDirection } from "@/stores/clinic-store";
 import type { ReadinessPriority } from "@/lib/readiness/derived-state";
@@ -187,6 +187,19 @@ export function ReadinessShell() {
   const locationId = useClinicStore((s) => s.locationId);
   const orgId = useClinicStore((s) => s.orgId);
   const refreshReadiness = useClinicStore((s) => s.refreshReadiness);
+
+  // Fetch-if-empty
+  useEffect(() => {
+    if (!locationId) return;
+    const store = useClinicStore.getState();
+    if (!store.readinessLoadedPre || !store.readinessLoadedPost) {
+      void store.refreshReadiness(locationId);
+    }
+    if (!store.roomsLoaded) void store.refreshRooms(locationId);
+    if (orgId && !store.workflowsLoaded) {
+      void store.refreshWorkflows(orgId);
+    }
+  }, [locationId, orgId]);
 
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());

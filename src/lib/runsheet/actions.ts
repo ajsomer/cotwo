@@ -2,6 +2,10 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { getSmsProvider } from "@/lib/sms";
+import {
+  broadcastSessionChange,
+  broadcastSessionStatus,
+} from "@/lib/realtime/broadcast";
 
 /** Call a late patient — logs to console for prototype. */
 export async function callPatient(sessionId: string) {
@@ -87,7 +91,7 @@ export async function admitPatient(sessionId: string) {
   const supabase = await createClient();
 
   // Transition: waiting -> in_session
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("sessions")
     .update({
       status: "in_session",
@@ -95,7 +99,9 @@ export async function admitPatient(sessionId: string) {
       video_call_id: `session-${sessionId}`, // Deterministic LiveKit room name
     })
     .eq("id", sessionId)
-    .eq("status", "waiting");
+    .eq("status", "waiting")
+    .select("location_id")
+    .single();
 
   if (error) {
     console.error("[ADMIT] Failed:", error);
@@ -103,6 +109,14 @@ export async function admitPatient(sessionId: string) {
   }
 
   console.log(`[ADMIT] Session ${sessionId} admitted, video session started`);
+
+  await broadcastSessionStatus(sessionId, "in_session");
+  if (updated?.location_id) {
+    await broadcastSessionChange(updated.location_id, "status_changed", {
+      session_id: sessionId,
+    });
+  }
+
   return { success: true };
 }
 
@@ -110,18 +124,27 @@ export async function admitPatient(sessionId: string) {
 export async function markSessionComplete(sessionId: string) {
   const supabase = await createClient();
 
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("sessions")
     .update({
       status: "complete",
       session_ended_at: new Date().toISOString(),
     })
     .eq("id", sessionId)
-    .eq("status", "in_session");
+    .eq("status", "in_session")
+    .select("location_id")
+    .single();
 
   if (error) {
     console.error("[COMPLETE] Failed:", error);
     return { success: false, error: error.message };
+  }
+
+  await broadcastSessionStatus(sessionId, "complete");
+  if (updated?.location_id) {
+    await broadcastSessionChange(updated.location_id, "status_changed", {
+      session_id: sessionId,
+    });
   }
 
   return { success: true };
@@ -131,14 +154,23 @@ export async function markSessionComplete(sessionId: string) {
 export async function markSessionDone(sessionId: string) {
   const supabase = await createClient();
 
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("sessions")
     .update({ status: "done" })
-    .eq("id", sessionId);
+    .eq("id", sessionId)
+    .select("location_id")
+    .single();
 
   if (error) {
     console.error("[DONE] Failed:", error);
     return { success: false, error: error.message };
+  }
+
+  await broadcastSessionStatus(sessionId, "done");
+  if (updated?.location_id) {
+    await broadcastSessionChange(updated.location_id, "status_changed", {
+      session_id: sessionId,
+    });
   }
 
   return { success: true };
@@ -237,6 +269,18 @@ export async function selectOutcomePathway(
   console.log(
     `[OUTCOME] Session ${sessionId} confirmed pathway ${pathwayId}: ${result?.action_count ?? 0} actions scheduled`
   );
+
+  await broadcastSessionStatus(sessionId, "done");
+  const { data: session } = await supabase
+    .from("sessions")
+    .select("location_id")
+    .eq("id", sessionId)
+    .single();
+  if (session?.location_id) {
+    await broadcastSessionChange(session.location_id, "status_changed", {
+      session_id: sessionId,
+    });
+  }
 
   return { success: true, workflow_run_id: result?.workflow_run_id };
 }

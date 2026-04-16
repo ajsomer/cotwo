@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import { createServiceClient } from '@/lib/supabase/service';
 import type { RunsheetSession, Room } from '@/lib/supabase/types';
 
@@ -5,10 +6,10 @@ import type { RunsheetSession, Room } from '@/lib/supabase/types';
  * Fetch today's sessions for a location with all required joins.
  * Returns flat rows ready for enrichment and grouping.
  */
-export async function fetchRunsheetSessions(
+export const fetchRunsheetSessions = cache(async (
   locationId: string,
   date?: Date
-): Promise<RunsheetSession[]> {
+): Promise<RunsheetSession[]> => {
   const supabase = createServiceClient();
   const targetDate = date ?? new Date();
 
@@ -138,10 +139,10 @@ export async function fetchRunsheetSessions(
       card_brand: defaultCard?.card_brand as string | null ?? null,
     };
   });
-}
+});
 
 /** Fetch all rooms at a location, ordered by sort_order. */
-export async function fetchLocationRooms(locationId: string): Promise<Room[]> {
+export const fetchLocationRooms = cache(async (locationId: string): Promise<Room[]> => {
   const supabase = createServiceClient();
 
   const { data, error } = await supabase
@@ -156,13 +157,13 @@ export async function fetchLocationRooms(locationId: string): Promise<Room[]> {
   }
 
   return (data ?? []) as Room[];
-}
+});
 
 /** Fetch room IDs a clinician is assigned to at a location. */
-export async function fetchClinicianRoomIds(
+export const fetchClinicianRoomIds = cache(async (
   userId: string,
   locationId: string
-): Promise<string[]> {
+): Promise<string[]> => {
   const supabase = createServiceClient();
 
   const { data, error } = await supabase
@@ -183,10 +184,10 @@ export async function fetchClinicianRoomIds(
   }
 
   return (data ?? []).map((row: Record<string, unknown>) => row.room_id as string);
-}
+});
 
 /** Fetch staff assignments for a user (to determine role and locations). */
-export async function fetchUserStaffAssignments(userId: string) {
+export const fetchUserStaffAssignments = cache(async (userId: string) => {
   const supabase = createServiceClient();
 
   const { data, error } = await supabase
@@ -222,4 +223,4 @@ export async function fetchUserStaffAssignments(userId: string) {
   }
 
   return data ?? [];
-}
+});
