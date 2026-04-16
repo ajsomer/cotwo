@@ -59,17 +59,54 @@ function isTerminal(action: WorkflowAction): boolean {
 }
 
 /**
+ * For post-appointment display: treat a scheduled SMS/form action whose
+ * scheduled_for is in the past as effectively "done". The engine hasn't
+ * fired it (no real SMS provider), but for demo purposes we don't want
+ * it stuck in "Scheduled" forever. Task actions are excluded — they
+ * require explicit receptionist resolution.
+ */
+function isEffectivelyDone(action: WorkflowAction, now: Date): boolean {
+  if (!action.session_id) return false; // pre-appointment — use normal logic
+  if (isTerminal(action)) return true;
+  if (action.action_type === 'task') return false; // tasks need manual resolution
+  if (action.status === 'scheduled' && action.scheduled_for) {
+    return new Date(action.scheduled_for).getTime() <= now.getTime();
+  }
+  return false;
+}
+
+/**
  * An action is overdue when:
+ *
+ * Pre-appointment:
  * - It is non-terminal
  * - Its scheduled_for is in the past
  * - AND either (a) the appointment is within 24 hours, or (b) the action was
  *   scheduled more than 48 hours ago. Whichever triggers first.
+ *
+ * Post-appointment:
+ * - Task: status = 'fired' and scheduled_for is past (receptionist hasn't resolved)
+ * - SMS/Form: status = 'failed' (delivery failed)
  */
 export function isOverdue(
   action: WorkflowAction,
   appointment: ReadinessAppointment,
   now: Date
 ): boolean {
+  // Post-appointment: simpler overdue logic
+  // Only tasks that have fired but not been resolved are overdue.
+  // SMS/form actions past their scheduled time are treated as "done" for demo
+  // purposes (no real SMS provider yet — they never actually fire).
+  if (action.session_id) {
+    if (action.status === 'failed') return true;
+    if (action.action_type === 'task' && action.status === 'fired') {
+      const scheduledFor = new Date(action.scheduled_for).getTime();
+      return scheduledFor < now.getTime();
+    }
+    return false;
+  }
+
+  // Pre-appointment: existing logic
   if (isTerminal(action)) return false;
   if (!action.scheduled_for) return false;
 
@@ -91,17 +128,32 @@ export function isOverdue(
 }
 
 /**
- * An action is at risk when:
- * - It is non-terminal
- * - Its scheduled_for is in the past
- * - The appointment is within 7 days
- * - But the overdue conditions are NOT met
+ * An action is at risk / due soon when:
+ *
+ * Pre-appointment:
+ * - Non-terminal, scheduled_for in the past, appointment within 7 days,
+ *   but the overdue conditions are NOT met.
+ *
+ * Post-appointment:
+ * - Scheduled_for is within the next 24 hours and status is scheduled or fired
+ *   (task about to become actionable, or recently fired and not yet resolved).
  */
 export function isAtRisk(
   action: WorkflowAction,
   appointment: ReadinessAppointment,
   now: Date
 ): boolean {
+  // Post-appointment: "at risk" only when fired but not yet resolved.
+  // A scheduled action in the future is just "scheduled" — not at risk.
+  // The task becomes at risk once the engine fires it (status = 'fired')
+  // and the receptionist hasn't resolved it yet.
+  if (action.session_id) {
+    if (isTerminal(action)) return false;
+    if (action.status === 'fired') return true;
+    return false;
+  }
+
+  // Pre-appointment: existing logic
   if (isTerminal(action)) return false;
   if (!action.scheduled_for) return false;
 
@@ -147,8 +199,10 @@ export function getReadinessPriority(
 ): ReadinessPriority {
   const { actions } = appointment;
 
-  // Check if all actions are terminal
-  const allTerminal = actions.length > 0 && actions.every(isTerminal);
+  // Check if all actions are terminal (or effectively done for post-appointment demo)
+  const allTerminal = actions.length > 0 && actions.every(
+    (a) => isTerminal(a) || isEffectivelyDone(a, now)
+  );
 
   if (allTerminal) {
     // Recently completed if the most recent action's updated_at is within 7 days

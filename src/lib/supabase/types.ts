@@ -19,12 +19,18 @@ export type Database = {
           action_block_id: string
           appointment_id: string
           completed_at: string | null
+          config: Json | null
           created_at: string
           error_message: string | null
           fired_at: string | null
+          form_id: string | null
           id: string
+          resolution_note: string | null
+          resolved_at: string | null
+          resolved_by: string | null
           result: Json | null
           scheduled_for: string
+          session_id: string | null
           status: Database["public"]["Enums"]["action_status"]
           updated_at: string
           workflow_run_id: string | null
@@ -33,12 +39,18 @@ export type Database = {
           action_block_id: string
           appointment_id: string
           completed_at?: string | null
+          config?: Json | null
           created_at?: string
           error_message?: string | null
           fired_at?: string | null
+          form_id?: string | null
           id?: string
+          resolution_note?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
           result?: Json | null
           scheduled_for: string
+          session_id?: string | null
           status?: Database["public"]["Enums"]["action_status"]
           updated_at?: string
           workflow_run_id?: string | null
@@ -47,12 +59,18 @@ export type Database = {
           action_block_id?: string
           appointment_id?: string
           completed_at?: string | null
+          config?: Json | null
           created_at?: string
           error_message?: string | null
           fired_at?: string | null
+          form_id?: string | null
           id?: string
+          resolution_note?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
           result?: Json | null
           scheduled_for?: string
+          session_id?: string | null
           status?: Database["public"]["Enums"]["action_status"]
           updated_at?: string
           workflow_run_id?: string | null
@@ -665,6 +683,7 @@ export type Database = {
       }
       outcome_pathways: {
         Row: {
+          archived_at: string | null
           created_at: string
           description: string | null
           id: string
@@ -674,6 +693,7 @@ export type Database = {
           workflow_template_id: string | null
         }
         Insert: {
+          archived_at?: string | null
           created_at?: string
           description?: string | null
           id?: string
@@ -683,6 +703,7 @@ export type Database = {
           workflow_template_id?: string | null
         }
         Update: {
+          archived_at?: string | null
           created_at?: string
           description?: string | null
           id?: string
@@ -1017,6 +1038,7 @@ export type Database = {
           location_id: string
           notification_sent: boolean
           notification_sent_at: string | null
+          outcome_pathway_id: string | null
           patient_arrived: boolean
           patient_arrived_at: string | null
           prep_completed: boolean
@@ -1039,6 +1061,7 @@ export type Database = {
           location_id: string
           notification_sent?: boolean
           notification_sent_at?: string | null
+          outcome_pathway_id?: string | null
           patient_arrived?: boolean
           patient_arrived_at?: string | null
           prep_completed?: boolean
@@ -1061,6 +1084,7 @@ export type Database = {
           location_id?: string
           notification_sent?: boolean
           notification_sent_at?: string | null
+          outcome_pathway_id?: string | null
           patient_arrived?: boolean
           patient_arrived_at?: string | null
           prep_completed?: boolean
@@ -1391,6 +1415,7 @@ export type Database = {
         | "intake_package"
         | "intake_reminder"
         | "add_to_runsheet"
+        | "task"
       appointment_modality: "telehealth" | "in_person"
       appointment_status:
         | "scheduled"
@@ -1582,6 +1607,7 @@ export const Constants = {
         "intake_package",
         "intake_reminder",
         "add_to_runsheet",
+        "task",
       ],
       appointment_modality: ["telehealth", "in_person"],
       appointment_status: [

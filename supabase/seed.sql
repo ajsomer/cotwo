@@ -211,8 +211,56 @@ INSERT INTO sessions (id, appointment_id, room_id, location_id, status, notifica
 INSERT INTO session_participants (session_id, patient_id) VALUES
   ('00000000-0000-0000-0000-000000006012', '00000000-0000-0000-0000-000000004004');
 
+-- ============================================================================
+-- Post-appointment workflow templates
+-- ============================================================================
+-- Each outcome pathway gets a post_appointment workflow template with action blocks.
+-- Action block timing: offset_minutes = days × 1440, offset_direction = 'after'.
+-- SMS blocks use config.message (same key as pre-appointment) for single handler code path.
+
+INSERT INTO workflow_templates (id, org_id, name, description, direction, status) VALUES
+  ('00000000-0000-0000-0000-000000008001', '00000000-0000-0000-0000-000000000001', 'Continue treatment - Post-appointment', 'Chase-up call and check-in SMS', 'post_appointment', 'published'),
+  ('00000000-0000-0000-0000-000000008002', '00000000-0000-0000-0000-000000000001', 'Discharge with resources - Post-appointment', 'Discharge summary and satisfaction survey', 'post_appointment', 'published'),
+  ('00000000-0000-0000-0000-000000008003', '00000000-0000-0000-0000-000000000001', 'Refer to specialist - Post-appointment', 'Referral send and chase tasks', 'post_appointment', 'published'),
+  ('00000000-0000-0000-0000-000000008004', '00000000-0000-0000-0000-000000000001', 'Rebooking nudge - Post-appointment', 'Rebooking SMS at 2 weeks', 'post_appointment', 'published');
+
+-- ============================================================================
 -- Outcome pathways (for Complete tier Process flow)
-INSERT INTO outcome_pathways (id, org_id, name, description) VALUES
-  ('00000000-0000-0000-0000-000000007001', '00000000-0000-0000-0000-000000000001', 'Standard Follow-up', 'Send follow-up resources and rebooking link in 7 days'),
-  ('00000000-0000-0000-0000-000000007002', '00000000-0000-0000-0000-000000000001', 'PROMs Collection', 'Send outcome measures at 2 weeks and 6 weeks post-appointment'),
-  ('00000000-0000-0000-0000-000000007003', '00000000-0000-0000-0000-000000000001', 'Discharge', 'No follow-up required. Send discharge summary.');
+-- ============================================================================
+-- Each pathway links to its post-appointment workflow template.
+
+INSERT INTO outcome_pathways (id, org_id, name, description, workflow_template_id) VALUES
+  ('00000000-0000-0000-0000-000000007001', '00000000-0000-0000-0000-000000000001', 'Continue treatment', 'Chase-up call in 2 days, check-in SMS at 1 week', '00000000-0000-0000-0000-000000008001'),
+  ('00000000-0000-0000-0000-000000007002', '00000000-0000-0000-0000-000000000001', 'Discharge with resources', 'Discharge summary same day, satisfaction survey at 2 weeks', '00000000-0000-0000-0000-000000008002'),
+  ('00000000-0000-0000-0000-000000007003', '00000000-0000-0000-0000-000000000001', 'Refer to specialist', 'Send referral same day, chase status at 5 days', '00000000-0000-0000-0000-000000008003'),
+  ('00000000-0000-0000-0000-000000007004', '00000000-0000-0000-0000-000000000001', 'Rebooking nudge', 'Rebooking SMS at 2 weeks', '00000000-0000-0000-0000-000000008004');
+
+-- ============================================================================
+-- Post-appointment action blocks
+-- ============================================================================
+
+-- Continue treatment: task day 2 + send_sms day 7
+INSERT INTO workflow_action_blocks (id, template_id, action_type, offset_minutes, offset_direction, sort_order, config) VALUES
+  ('00000000-0000-0000-0000-000000009001', '00000000-0000-0000-0000-000000008001', 'task', 2880, 'after', 0,
+   '{"task_title": "Chase-up call", "task_description": "Call patient to check progress and confirm next steps.", "default_enabled": true}'),
+  ('00000000-0000-0000-0000-000000009002', '00000000-0000-0000-0000-000000008001', 'send_sms', 10080, 'after', 1,
+   '{"message": "Hi {first_name}, this is a check-in from {clinic_name}. How are you feeling after your appointment? Reply if you need anything.", "default_enabled": true}');
+
+-- Discharge with resources: send_sms day 0 + deliver_form day 14
+INSERT INTO workflow_action_blocks (id, template_id, action_type, offset_minutes, offset_direction, sort_order, form_id, config) VALUES
+  ('00000000-0000-0000-0000-000000009003', '00000000-0000-0000-0000-000000008002', 'send_sms', 0, 'after', 0, NULL,
+   '{"message": "Hi {first_name}, thank you for visiting {clinic_name} today. We hope your appointment went well. Please don''t hesitate to get in touch if you need anything.", "default_enabled": true}'),
+  ('00000000-0000-0000-0000-000000009004', '00000000-0000-0000-0000-000000008002', 'deliver_form', 20160, 'after', 1, '00000000-0000-0000-0000-f00000000006',
+   '{"reminder_sms": "Your clinician has sent you a short survey to complete. Tap here to fill it in.", "default_enabled": true}');
+
+-- Refer to specialist: task day 0 + task day 5
+INSERT INTO workflow_action_blocks (id, template_id, action_type, offset_minutes, offset_direction, sort_order, config) VALUES
+  ('00000000-0000-0000-0000-000000009005', '00000000-0000-0000-0000-000000008003', 'task', 0, 'after', 0,
+   '{"task_title": "Send referral", "task_description": "Email referral letter to specialist.", "default_enabled": true}'),
+  ('00000000-0000-0000-0000-000000009006', '00000000-0000-0000-0000-000000008003', 'task', 7200, 'after', 1,
+   '{"task_title": "Chase referral status", "task_description": "Follow up with specialist office to confirm referral received.", "default_enabled": true}');
+
+-- Rebooking nudge: send_sms day 14
+INSERT INTO workflow_action_blocks (id, template_id, action_type, offset_minutes, offset_direction, sort_order, config) VALUES
+  ('00000000-0000-0000-0000-000000009007', '00000000-0000-0000-0000-000000008004', 'send_sms', 20160, 'after', 0,
+   '{"message": "Hi {first_name}, it''s been a couple of weeks since your visit to {clinic_name}. Would you like to book your next appointment? Reply YES and we''ll get that sorted.", "default_enabled": true}');

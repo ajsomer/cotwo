@@ -626,10 +626,25 @@ export function AppointmentTypeEditor({
         <div className="border-t border-gray-200 px-5 py-3 flex items-center justify-between">
           <button
             type="button"
-            onClick={() => {
-              if (confirm(isNew ? "Discard this appointment type?" : "Delete this appointment type? This cannot be undone.")) {
-                // TODO: implement delete via API
+            onClick={async () => {
+              if (isNew) {
                 onClose();
+                return;
+              }
+              if (!confirm("Delete this appointment type? This cannot be undone.")) return;
+              try {
+                const res = await fetch(`/api/appointment-types?id=${appointmentType.id}`, {
+                  method: "DELETE",
+                });
+                if (!res.ok) {
+                  const data = await res.json();
+                  alert(data.error ?? "Failed to delete appointment type");
+                  return;
+                }
+                onSaved();
+              } catch (e) {
+                console.error("Failed to delete:", e);
+                alert("Failed to delete appointment type");
               }
             }}
             className="text-sm text-red-500 hover:text-red-700"

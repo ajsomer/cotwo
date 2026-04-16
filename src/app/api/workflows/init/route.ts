@@ -107,6 +107,7 @@ export async function GET(request: NextRequest) {
         template: p.workflow_template_id ? templates[p.workflow_template_id] ?? null : null,
         blocks: p.workflow_template_id ? blocksByTemplate[p.workflow_template_id] ?? [] : [],
         action_count: p.workflow_template_id ? (blocksByTemplate[p.workflow_template_id] ?? []).length : 0,
+        in_flight_count: 0,
       }));
 
       // Build maps matching pre-appointment response shape

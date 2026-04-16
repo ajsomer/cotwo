@@ -69,7 +69,7 @@ export const PRECONDITION_OPTIONS: {
 // ---------------------------------------------------------------------------
 
 export type ActionHandlerSuccess = {
-  status: "sent" | "opened" | "captured" | "verified";
+  status: "sent" | "opened" | "captured" | "verified" | "fired";
   resultData?: Record<string, unknown>;
 };
 
@@ -219,6 +219,16 @@ export const ACTION_TYPE_META: ActionTypeMeta[] = [
     hasMessage: true,
     hasFile: false,
   },
+  {
+    type: "task",
+    label: "Task",
+    description: "A staff-facing task that appears on the readiness dashboard for the receptionist to resolve",
+    availableInPre: false,
+    availableInPost: true,
+    needsForm: false,
+    hasMessage: false,
+    hasFile: false,
+  },
 ];
 
 export function getActionTypeMeta(type: ActionType): ActionTypeMeta | undefined {
@@ -296,6 +306,29 @@ export function toOffsetMinutes(
 }
 
 // ---------------------------------------------------------------------------
+// Post-appointment config JSONB shapes
+// ---------------------------------------------------------------------------
+
+/** Config shape for post-appointment send_sms action blocks */
+export interface PostSmsConfig {
+  message: string;
+  default_enabled: boolean;
+}
+
+/** Config shape for post-appointment deliver_form action blocks */
+export interface PostFormConfig {
+  reminder_sms?: string;
+  default_enabled: boolean;
+}
+
+/** Config shape for post-appointment task action blocks */
+export interface PostTaskConfig {
+  task_title: string;
+  task_description?: string;
+  default_enabled: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Action card display helpers
 // ---------------------------------------------------------------------------
 
@@ -311,7 +344,38 @@ export function getActionDisplayName(
     return `${label}: ${formName}`;
   }
 
+  if (block.action_type === "task") {
+    const config = block.config as Record<string, unknown> | null;
+    const taskTitle = config?.task_title as string | undefined;
+    if (taskTitle) return `${label}: ${taskTitle}`;
+  }
+
   return label;
+}
+
+/**
+ * Generate a display label for a post-appointment action from its config snapshot.
+ * Used on the readiness dashboard where we read from appointment_actions.config
+ * (not workflow_action_blocks.config) per the config snapshot discipline.
+ */
+export function getPostActionLabel(
+  actionType: string,
+  config: Record<string, unknown> | null,
+  formName?: string
+): string {
+  if (actionType === "task") {
+    return (config?.task_title as string) ?? "Task";
+  }
+  if (actionType === "deliver_form") {
+    return formName ?? "Send form";
+  }
+  if (actionType === "send_sms") {
+    const message = (config?.message as string) ?? "";
+    if (message.length > 40) return message.slice(0, 40) + "…";
+    return message || "SMS";
+  }
+  const meta = getActionTypeMeta(actionType as ActionType);
+  return meta?.label ?? actionType;
 }
 
 /** Generate precondition subtitle for display */

@@ -36,7 +36,7 @@ export async function executeScheduledActions(): Promise<ScanResult> {
     .update({ status: "firing" })
     .eq("status", "scheduled")
     .lte("scheduled_for", new Date().toISOString())
-    .select("id, appointment_id, action_block_id, workflow_run_id, scheduled_for");
+    .select("id, appointment_id, action_block_id, workflow_run_id, scheduled_for, session_id, config, form_id");
 
   if (claimError) {
     console.error("[WORKFLOW ENGINE] Claim failed:", claimError.message);
@@ -130,6 +130,21 @@ export async function executeScheduledActions(): Promise<ScanResult> {
     }
   }
 
+  // Fetch session data for post-appointment actions
+  const sessionIds = [...new Set(
+    actions.map((a) => a.session_id).filter(Boolean)
+  )] as string[];
+  const sessionMap = new Map<string, { session_ended_at: string | null }>();
+  if (sessionIds.length > 0) {
+    const { data: sessions } = await supabase
+      .from("sessions")
+      .select("id, session_ended_at")
+      .in("id", sessionIds);
+    for (const s of sessions ?? []) {
+      sessionMap.set(s.id, { session_ended_at: s.session_ended_at });
+    }
+  }
+
   // Step 2: Process each claimed action
   for (const action of actions) {
     const block = blockMap.get(action.action_block_id);
@@ -169,7 +184,10 @@ export async function executeScheduledActions(): Promise<ScanResult> {
     }
 
     const patient = patientMap.get(patientId);
-    if (!patient?.phone_number) {
+    const isTaskAction = block.action_type === "task";
+
+    // Task actions don't need a phone number (staff-facing, no SMS sent)
+    if (!isTaskAction && !patient?.phone_number) {
       console.log(
         `[WORKFLOW ENGINE] No phone number for patient ${patientId} on action ${action.id}. Marking failed.`
       );
@@ -209,22 +227,34 @@ export async function executeScheduledActions(): Promise<ScanResult> {
     }
 
     // 2b: Execute handler
+    // For post-appointment actions, read config from the action's snapshot
+    // (config snapshot discipline). For pre-appointment, read from the block.
+    const actionConfig = action.session_id
+      ? ((action as Record<string, unknown>).config as Record<string, unknown>) ?? (block.config as Record<string, unknown>) ?? {}
+      : (block.config as Record<string, unknown>) ?? {};
+
+    const sessionData = action.session_id
+      ? sessionMap.get(action.session_id)
+      : null;
+
     const handlerResult = await executeHandler(
       block.action_type as ActionType,
       {
         actionId: action.id,
         appointmentId: action.appointment_id,
         patientId,
-        patientFirstName: patient.first_name,
-        phoneNumber: patient.phone_number,
+        patientFirstName: patient?.first_name ?? "",
+        phoneNumber: patient?.phone_number ?? "",
         scheduledAt: appt.scheduled_at ?? null,
         clinicName: orgNameMap.get(appt.org_id) ?? "the clinic",
         clinicianName: appt.clinician_id
           ? clinicianNameMap.get(appt.clinician_id) ?? null
           : null,
-        formId: block.form_id,
-        config: (block.config as Record<string, unknown>) ?? {},
+        formId: (action as Record<string, unknown>).form_id as string | null ?? block.form_id,
+        config: actionConfig,
         parentActionBlockId: block.parent_action_block_id ?? null,
+        sessionId: action.session_id ?? null,
+        sessionEndedAt: sessionData?.session_ended_at ?? null,
       }
     );
 
@@ -254,6 +284,32 @@ export async function executeScheduledActions(): Promise<ScanResult> {
         })
         .eq("id", action.id);
       result.fired++;
+    }
+  }
+
+  // Step 3: Check workflow run completion
+  // Collect unique workflow run IDs from processed actions
+  const runIds = [...new Set(
+    actions.map((a) => a.workflow_run_id).filter(Boolean)
+  )] as string[];
+
+  for (const runId of runIds) {
+    const terminalStatuses = ["completed", "failed", "cancelled", "skipped", "dropped"];
+    const { data: remaining } = await supabase
+      .from("appointment_actions")
+      .select("id")
+      .eq("workflow_run_id", runId)
+      .not("status", "in", `(${terminalStatuses.join(",")})`);
+
+    if (remaining && remaining.length === 0) {
+      await supabase
+        .from("appointment_workflow_runs")
+        .update({
+          status: "complete",
+          completed_at: new Date().toISOString(),
+        })
+        .eq("id", runId);
+      console.log(`[WORKFLOW ENGINE] Run ${runId} complete — all actions terminal`);
     }
   }
 

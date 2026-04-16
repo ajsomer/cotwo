@@ -5,6 +5,7 @@ import {
   sortByPriority,
   type ReadinessPriority,
 } from "@/lib/readiness/derived-state";
+import { getPostActionLabel } from "@/lib/workflows/types";
 
 // Terminal statuses — actions in these states are "done"
 const TERMINAL_STATUSES = ["completed", "captured", "verified", "skipped", "failed", "transcribed"];
@@ -83,7 +84,7 @@ export async function GET(request: NextRequest) {
     const runIds = locationApptIds.flatMap((id) => runsByAppointment.get(id) ?? []);
     const { data: actions } = await supabase
       .from("appointment_actions")
-      .select("id, appointment_id, action_block_id, workflow_run_id, status, scheduled_for, fired_at, error_message, updated_at")
+      .select("id, appointment_id, action_block_id, workflow_run_id, status, scheduled_for, fired_at, error_message, updated_at, session_id, config, form_id, resolved_at, resolved_by, resolution_note")
       .in("workflow_run_id", runIds);
 
     // Fetch action block details
@@ -103,7 +104,13 @@ export async function GET(request: NextRequest) {
     const typeIds = [...new Set(appointmentsData.map((a) => a.appointment_type_id).filter(Boolean))];
     const templateIds = [...new Set([...templateIdsByAppointment.values()])];
 
-    const [patientsRes, cliniciansRes, phonesRes, formsRes, roomsRes, typesRes, templatesRes, journeysRes] = await Promise.all([
+    // Post-appointment: fetch sessions with pathways for pathway_name
+    const sessionIds = [...new Set((actions ?? []).map((a) => a.session_id).filter(Boolean))];
+    const actionFormIds = [...new Set((actions ?? []).map((a) => a.form_id).filter(Boolean))];
+    // Merge form IDs from blocks and actions for the form name lookup
+    const allFormIds = [...new Set([...formIds, ...actionFormIds])];
+
+    const [patientsRes, cliniciansRes, phonesRes, formsRes, roomsRes, typesRes, templatesRes, journeysRes, sessionsRes] = await Promise.all([
       patientIds.length > 0
         ? supabase.from("patients").select("id, first_name, last_name").in("id", patientIds)
         : Promise.resolve({ data: [] }),
@@ -113,8 +120,8 @@ export async function GET(request: NextRequest) {
       patientIds.length > 0
         ? supabase.from("patient_phone_numbers").select("patient_id, phone_number").in("patient_id", patientIds).eq("is_primary", true)
         : Promise.resolve({ data: [] }),
-      formIds.length > 0
-        ? supabase.from("forms").select("id, name").in("id", formIds)
+      allFormIds.length > 0
+        ? supabase.from("forms").select("id, name").in("id", allFormIds)
         : Promise.resolve({ data: [] }),
       roomIds.length > 0
         ? supabase.from("rooms").select("id, name").in("id", roomIds)
@@ -130,6 +137,10 @@ export async function GET(request: NextRequest) {
       locationApptIds.length > 0
         ? supabase.from("intake_package_journeys").select("appointment_id, status, form_ids, forms_completed, includes_card_capture, card_captured_at, includes_consent, consent_completed_at, created_at, completed_at").in("appointment_id", locationApptIds)
         : Promise.resolve({ data: [] }),
+      // Sessions with pathway info (post-appointment)
+      sessionIds.length > 0
+        ? supabase.from("sessions").select("id, session_ended_at, outcome_pathway_id").in("id", sessionIds)
+        : Promise.resolve({ data: [] }),
     ]);
 
     const patientMap = new Map((patientsRes.data ?? []).map((p) => [p.id, p]));
@@ -140,6 +151,22 @@ export async function GET(request: NextRequest) {
     const typeMap = new Map((typesRes.data ?? []).map((t) => [t.id, t.name]));
     const templateMap = new Map((templatesRes.data ?? []).map((t) => [t.id, t]));
     const journeyMap = new Map((journeysRes.data ?? []).map((j) => [j.appointment_id, j]));
+    const sessionMap = new Map((sessionsRes.data ?? []).map((s) => [s.id, s]));
+
+    // Fetch pathway names for post-appointment
+    const pathwayIds = [...new Set(
+      (sessionsRes.data ?? []).map((s) => s.outcome_pathway_id).filter(Boolean)
+    )];
+    const pathwayNameMap = new Map<string, string>();
+    if (pathwayIds.length > 0) {
+      const { data: pathways } = await supabase
+        .from("outcome_pathways")
+        .select("id, name")
+        .in("id", pathwayIds);
+      for (const p of pathways ?? []) {
+        pathwayNameMap.set(p.id, p.name);
+      }
+    }
 
     // Group actions by appointment
     type GroupedAppointment = {
@@ -158,9 +185,12 @@ export async function GET(request: NextRequest) {
       outstanding_actions: number;
       priority: ReadinessPriority;
       // Intake package progress
-      package_status: string | null; // 'in_progress' | 'completed' | null (no journey yet)
+      package_status: string | null;
       package_total_items: number;
       package_completed_items: number;
+      // Post-appointment fields
+      pathway_name: string | null;
+      session_ended_at: string | null;
       actions: {
         action_id: string;
         action_type: string;
@@ -173,6 +203,13 @@ export async function GET(request: NextRequest) {
         offset_minutes: number;
         offset_direction: string;
         updated_at: string | null;
+        // Post-appointment resolution fields
+        session_id: string | null;
+        config: Record<string, unknown> | null;
+        resolved_at: string | null;
+        resolved_by: string | null;
+        resolution_note: string | null;
+        pathway_name: string | null;
       }[];
       outstanding_forms: {
         assignment_id: string;
@@ -220,6 +257,8 @@ export async function GET(request: NextRequest) {
           package_status: journey?.status ?? null,
           package_total_items: totalItems,
           package_completed_items: completedItems,
+          pathway_name: null, // set per-action below for post-appointment
+          session_ended_at: null,
           actions: [],
           outstanding_forms: [],
         });
@@ -236,18 +275,58 @@ export async function GET(request: NextRequest) {
         group.outstanding_actions++;
       }
 
+      // For post-appointment actions, use config snapshot from the action row.
+      // For pre-appointment, use config from the block.
+      const isPostAppointment = !!action.session_id;
+      const actionConfig = isPostAppointment
+        ? (action.config as Record<string, unknown>) ?? null
+        : null;
+      const actionFormId = isPostAppointment
+        ? (action.form_id as string | null)
+        : block?.form_id ?? null;
+      const formName = actionFormId ? formMap.get(actionFormId) ?? null : null;
+
+      // Resolve pathway name for post-appointment actions
+      let actionPathwayName: string | null = null;
+      if (isPostAppointment && action.session_id) {
+        const sess = sessionMap.get(action.session_id);
+        if (sess) {
+          if (sess.outcome_pathway_id) {
+            actionPathwayName = pathwayNameMap.get(sess.outcome_pathway_id) ?? null;
+          }
+          // Set session-level fields on the group
+          if (!group.pathway_name && actionPathwayName) {
+            group.pathway_name = actionPathwayName;
+          }
+          if (!group.session_ended_at && sess.session_ended_at) {
+            group.session_ended_at = sess.session_ended_at;
+          }
+        }
+      }
+
+      // Action label: use config snapshot for post, block for pre
+      const actionLabel = isPostAppointment
+        ? getPostActionLabel(block?.action_type ?? "unknown", actionConfig, formName)
+        : getActionLabel(block?.action_type ?? "unknown", formName ?? undefined);
+
       group.actions.push({
         action_id: action.id,
         action_type: block?.action_type ?? "unknown",
-        action_label: getActionLabel(block?.action_type ?? "unknown", formMap.get(block?.form_id ?? "")),
+        action_label: actionLabel,
         status: action.status,
         scheduled_for: action.scheduled_for,
         fired_at: action.fired_at,
         error_message: action.error_message,
-        form_name: block?.form_id ? formMap.get(block.form_id) ?? null : null,
+        form_name: formName,
         offset_minutes: block?.offset_minutes ?? 0,
         offset_direction: block?.offset_direction ?? "before",
         updated_at: action.updated_at ?? null,
+        session_id: action.session_id ?? null,
+        config: actionConfig,
+        resolved_at: action.resolved_at ?? null,
+        resolved_by: action.resolved_by ?? null,
+        resolution_note: action.resolution_note ?? null,
+        pathway_name: actionPathwayName,
       });
     }
 
@@ -349,6 +428,8 @@ function getActionLabel(actionType: string, formName?: string): string {
       return "Intake reminder";
     case "add_to_runsheet":
       return "Add to run sheet";
+    case "task":
+      return "Task";
     default:
       return actionType;
   }

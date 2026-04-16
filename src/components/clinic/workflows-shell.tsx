@@ -12,6 +12,7 @@ import type {
 // import { WorkflowMiddlePane } from "./workflow-middle-pane";
 // import { MidFlightWarningModal } from "./mid-flight-warning-modal";
 import { AppointmentTypesSettingsShell } from "./appointment-types-settings-shell";
+import { OutcomePathwaysPanel } from "./outcome-pathways-panel";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import type { AppointmentTypeRow, OutcomePathwayRow } from "@/stores/clinic-store";
 
@@ -421,10 +422,10 @@ export function WorkflowsShell() {
         </div>
       )}
 
-      {/* Post-appointment: placeholder for future spec */}
+      {/* Post-appointment: outcome pathways configuration */}
       {!isPre && (
-        <div className="flex flex-1 items-center justify-center">
-          <p className="text-sm text-gray-400">Post-appointment workflows coming soon.</p>
+        <div className="flex-1 overflow-y-auto">
+          <OutcomePathwaysPanel />
         </div>
       )}
     </div>

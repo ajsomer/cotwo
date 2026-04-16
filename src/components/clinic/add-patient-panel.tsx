@@ -54,7 +54,7 @@ export function AddPatientPanel({
     if (!mobile.trim()) return "Mobile number is required";
     if (mobile.replace(/\D/g, "").length < 10)
       return "Mobile number must be at least 10 digits";
-    if (!appointmentTypeId) return "Appointment type is required";
+    if (!appointmentTypeId) return "Workflow type is required";
 
     // Run sheet types require room, date, and time
     if (needsScheduling) {
@@ -216,10 +216,10 @@ export function AddPatientPanel({
             </div>
           </div>
 
-          {/* Appointment type */}
+          {/* Workflow type */}
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">
-              Appointment type *
+              Workflow type *
             </label>
             <select
               value={appointmentTypeId}

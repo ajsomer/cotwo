@@ -3,7 +3,7 @@ import { getSmsProvider } from "@/lib/sms";
 import { getBaseUrl } from "@/lib/utils/url";
 import type { ActionHandlerResult, ActionType } from "./types";
 
-interface HandlerContext {
+export interface HandlerContext {
   actionId: string;
   appointmentId: string;
   patientId: string;
@@ -16,6 +16,10 @@ interface HandlerContext {
   config: Record<string, unknown>;
   /** The action block's parent_action_block_id (for intake_reminder). */
   parentActionBlockId: string | null;
+  /** Session ID for post-appointment actions. NULL for pre-appointment. */
+  sessionId: string | null;
+  /** Session ended timestamp for post-appointment merge field resolution. */
+  sessionEndedAt: string | null;
 }
 
 /**
@@ -42,6 +46,8 @@ export async function executeHandler(
       return handleCaptureCard(ctx);
     case "verify_contact":
       return handleVerifyContact(ctx);
+    case "task":
+      return handleTask(ctx);
     default:
       // Action types that don't execute in v1 (send_file, send_rebooking_nudge, etc.)
       console.log(
@@ -124,9 +130,20 @@ async function handleSendSms(ctx: HandlerContext): Promise<ActionHandlerResult> 
       })
     : "your appointment";
 
+  // Session date for post-appointment merge field {session_date}
+  const sessionDate = ctx.sessionEndedAt
+    ? new Date(ctx.sessionEndedAt).toLocaleDateString("en-AU", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      })
+    : "your recent appointment";
+
   const message = template
     .replace(/\{first_name\}/g, ctx.patientFirstName)
+    .replace(/\{patient_name\}/g, ctx.patientFirstName)
     .replace(/\{appointment_time\}/g, scheduledTime)
+    .replace(/\{session_date\}/g, sessionDate)
     .replace(/\{clinic_name\}/g, ctx.clinicName)
     .replace(/\{clinician_name\}/g, ctx.clinicianName ?? "your clinician");
 
@@ -398,4 +415,18 @@ async function handleVerifyContact(ctx: HandlerContext): Promise<ActionHandlerRe
   );
 
   return { status: "sent" };
+}
+
+/**
+ * Handle a staff-facing task action. No external side effect — the scanner
+ * transitions the status from scheduled to fired, which surfaces the task on
+ * the post-appointment readiness dashboard. The receptionist resolves it
+ * manually via the Resolve button.
+ */
+async function handleTask(ctx: HandlerContext): Promise<ActionHandlerResult> {
+  const taskTitle = (ctx.config.task_title as string) ?? "Task";
+  console.log(
+    `[WORKFLOW] task: fired "${taskTitle}" for action ${ctx.actionId}`
+  );
+  return { status: "fired" };
 }

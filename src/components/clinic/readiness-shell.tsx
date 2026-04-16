@@ -19,6 +19,7 @@ import {
   ReadinessFilterBar,
   type ReadinessFilters,
 } from "@/components/clinic/readiness-filter-bar";
+import { resolveTask, cancelAction } from "@/lib/runsheet/actions";
 import dynamic from "next/dynamic";
 
 const AddPatientPanel = dynamic(
@@ -172,9 +173,13 @@ const ACTION_STATUS_BADGE: Record<string, { label: string; variant: string }> =
 // ---------------------------------------------------------------------------
 
 export function ReadinessShell() {
-  const appointments = useClinicStore((s) => s.readinessAppointments);
-  const loaded = useClinicStore((s) => s.readinessLoaded);
   const direction = useClinicStore((s) => s.readinessDirection);
+  const appointmentsPre = useClinicStore((s) => s.readinessAppointmentsPre);
+  const appointmentsPost = useClinicStore((s) => s.readinessAppointmentsPost);
+  const appointments = direction === 'pre_appointment' ? appointmentsPre : appointmentsPost;
+  const loadedPre = useClinicStore((s) => s.readinessLoadedPre);
+  const loadedPost = useClinicStore((s) => s.readinessLoadedPost);
+  const loaded = direction === 'pre_appointment' ? loadedPre : loadedPost;
   const counts = useClinicStore((s) => s.readinessCounts);
   const setDirection = useClinicStore((s) => s.setReadinessDirection);
   const rooms = useClinicStore((s) => s.rooms);
@@ -283,9 +288,30 @@ export function ReadinessShell() {
     });
   }, []);
 
+  const [taskResolving, setTaskResolving] = useState<{
+    actionId: string;
+    taskTitle: string;
+  } | null>(null);
+  const [taskNote, setTaskNote] = useState("");
+
   const handleActionButton = useCallback(
     (appt: ReadinessAppointment) => {
       const priority = appt.priority as ReadinessPriority;
+
+      // Post-appointment: check for task actions needing resolution
+      const isPost = appt.actions.some((a) => a.session_id);
+      if (isPost && priority === "overdue") {
+        const taskAction = appt.actions.find(
+          (a) => a.action_type === "task" && a.status === "fired"
+        );
+        if (taskAction) {
+          const title = (taskAction.config as Record<string, unknown>)?.task_title as string ?? "Task";
+          setTaskResolving({ actionId: taskAction.action_id, taskTitle: title });
+          setTaskNote("");
+          return;
+        }
+      }
+
       if (priority === "overdue") {
         setActivePanel({ type: "detail", appointment: appt });
       } else if (priority === "form_completed_needs_transcription") {
@@ -305,6 +331,16 @@ export function ReadinessShell() {
     },
     []
   );
+
+  const handleTaskResolve = useCallback(async () => {
+    if (!taskResolving) return;
+    // Get user ID from Supabase auth — for prototype, use a placeholder
+    const userId = "00000000-0000-0000-0000-000000000000"; // TODO: get from auth context
+    await resolveTask(taskResolving.actionId, userId, taskNote || undefined);
+    setTaskResolving(null);
+    setTaskNote("");
+    if (locationId) refreshReadiness(locationId);
+  }, [taskResolving, taskNote, locationId, refreshReadiness]);
 
   const handleSaved = useCallback(() => {
     setActivePanel(null);
@@ -516,6 +552,46 @@ export function ReadinessShell() {
           onTranscribed={handleSaved}
         />
       )}
+
+      {/* Task resolution dialog */}
+      {taskResolving && (
+        <>
+          <div
+            className="fixed inset-0 bg-black/20 z-50"
+            onClick={() => setTaskResolving(null)}
+          />
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="bg-white rounded-xl shadow-xl border border-gray-200 w-[400px] p-5">
+              <h3 className="text-sm font-semibold text-gray-800 mb-1">
+                Resolve: {taskResolving.taskTitle}
+              </h3>
+              <p className="text-xs text-gray-500 mb-3">
+                What did you do? (optional)
+              </p>
+              <textarea
+                value={taskNote}
+                onChange={(e) => setTaskNote(e.target.value)}
+                rows={3}
+                placeholder="Add a note..."
+                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500 resize-none mb-3"
+                autoFocus
+              />
+              <div className="flex gap-2 justify-end">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setTaskResolving(null)}
+                >
+                  Cancel
+                </Button>
+                <Button size="sm" onClick={handleTaskResolve}>
+                  Confirm
+                </Button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -563,9 +639,10 @@ function PatientRow({
         priority === "recently_completed" ? "opacity-40" : ""
       }`}
     >
-      {/* Row — matches session-row layout */}
+      {/* Row — matches session-row layout, clickable to expand */}
       <div
-        className={`flex items-stretch border-l-[3px] ${slot.borderColor} transition-colors ${slot.rowTint}`}
+        className={`flex items-stretch border-l-[3px] ${slot.borderColor} transition-colors ${slot.rowTint} cursor-pointer`}
+        onClick={() => onToggle()}
       >
         {/* Time column — matches run sheet exactly */}
         <span className="flex items-center justify-center w-[94px] flex-shrink-0 text-[13px] font-medium whitespace-nowrap bg-[#FAF9F7] text-[#5F5E5A]">
@@ -680,11 +757,22 @@ function PatientRow({
             <div className="absolute left-[3px] top-1 bottom-1 w-px bg-gray-200" />
 
             {displayedActions.map((action) => {
-              const statusBadge = ACTION_STATUS_BADGE[action.status] ?? {
-                label: action.status,
-                variant: "gray",
-              };
+              // Post-appointment SMS/form past scheduled_for: show as "Done" for demo
+              const isPostDemoComplete =
+                action.session_id &&
+                action.action_type !== "task" &&
+                action.status === "scheduled" &&
+                action.scheduled_for &&
+                new Date(action.scheduled_for) <= now;
+
+              const statusBadge = isPostDemoComplete
+                ? { label: "Done", variant: "teal" }
+                : ACTION_STATUS_BADGE[action.status] ?? {
+                    label: action.status,
+                    variant: "gray",
+                  };
               const isActionOverdue =
+                !isPostDemoComplete &&
                 action.status !== "completed" &&
                 action.status !== "transcribed" &&
                 action.status !== "captured" &&
@@ -713,6 +801,9 @@ function PatientRow({
                   />
 
                   <span className="text-xs text-gray-700 truncate flex-1 min-w-0">
+                    {action.pathway_name && (
+                      <span className="text-gray-400">{action.pathway_name} → </span>
+                    )}
                     {action.action_label}
                   </span>
 

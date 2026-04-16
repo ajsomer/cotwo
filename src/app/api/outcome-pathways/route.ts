@@ -13,11 +13,19 @@ export async function GET(request: NextRequest) {
   try {
     const supabase = createServiceClient();
 
-    const { data: pathways, error } = await supabase
+    const includeArchived = request.nextUrl.searchParams.get("include_archived") === "true";
+
+    let query = supabase
       .from("outcome_pathways")
       .select("*")
       .eq("org_id", orgId)
       .order("name");
+
+    if (!includeArchived) {
+      query = query.is("archived_at", null);
+    }
+
+    const { data: pathways, error } = await query;
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
@@ -170,6 +178,7 @@ export async function PATCH(request: NextRequest) {
     const updates: Record<string, unknown> = {};
     if (name !== undefined) updates.name = name;
     if (description !== undefined) updates.description = description;
+    if (body.archived_at !== undefined) updates.archived_at = body.archived_at;
 
     if (Object.keys(updates).length === 0) {
       return NextResponse.json(
@@ -200,8 +209,8 @@ export async function PATCH(request: NextRequest) {
 }
 
 // DELETE /api/outcome-pathways?id=xxx
-// Deletes an outcome pathway. The linked workflow_template is NOT deleted
-// (workflow_template_id FK is ON DELETE SET NULL).
+// Soft-deletes an outcome pathway by setting archived_at.
+// Existing in-flight workflow runs continue; pathway is hidden from Process picker.
 export async function DELETE(request: NextRequest) {
   const id = request.nextUrl.searchParams.get("id");
   if (!id) {
@@ -213,7 +222,7 @@ export async function DELETE(request: NextRequest) {
 
     const { error } = await supabase
       .from("outcome_pathways")
-      .delete()
+      .update({ archived_at: new Date().toISOString() })
       .eq("id", id);
 
     if (error) {

@@ -26,9 +26,11 @@ export interface OutcomePathwayRow {
   name: string;
   description: string | null;
   workflow_template_id: string | null;
+  archived_at: string | null;
   template: DbWorkflowTemplate | null;
   blocks: DbWorkflowActionBlock[];
   action_count: number;
+  in_flight_count: number;
 }
 
 export interface FormRow {
@@ -53,6 +55,13 @@ export interface WorkflowAction {
   offset_minutes: number;
   offset_direction: string;
   updated_at?: string | null;
+  // Post-appointment fields
+  session_id?: string | null;
+  config?: Record<string, unknown> | null;
+  resolved_at?: string | null;
+  resolved_by?: string | null;
+  resolution_note?: string | null;
+  pathway_name?: string | null;
 }
 
 export interface OutstandingForm {
@@ -86,6 +95,9 @@ export interface ReadinessAppointment {
   outstanding_actions: number;
   actions: WorkflowAction[];
   outstanding_forms: OutstandingForm[];
+  // Post-appointment fields
+  pathway_name?: string | null;
+  session_ended_at?: string | null;
 }
 
 export interface RoomClinician {
@@ -167,7 +179,8 @@ export interface ClinicStore {
 
   // Tier 2: Volatile
   sessions: RunsheetSession[];
-  readinessAppointments: ReadinessAppointment[];
+  readinessAppointmentsPre: ReadinessAppointment[];
+  readinessAppointmentsPost: ReadinessAppointment[];
   readinessDirection: ReadinessDirection;
   readinessCounts: ReadinessCounts;
 
@@ -181,7 +194,8 @@ export interface ClinicStore {
   // Loaded flags (per-slice — pages check these for first-load skeletons)
   roomsLoaded: boolean;
   sessionsLoaded: boolean;
-  readinessLoaded: boolean;
+  readinessLoadedPre: boolean;
+  readinessLoadedPost: boolean;
   formsLoaded: boolean;
   workflowsLoaded: boolean;
   paymentConfigLoaded: boolean;
@@ -268,7 +282,8 @@ export const useClinicStore = create<ClinicStore>()(
       paymentConfig: null,
       paymentRooms: [],
       sessions: [],
-      readinessAppointments: [],
+      readinessAppointmentsPre: [],
+      readinessAppointmentsPost: [],
       readinessDirection: 'pre_appointment' as ReadinessDirection,
       readinessCounts: { pre: 0, post: 0 },
       connectedSessions: new Set(),
@@ -276,7 +291,8 @@ export const useClinicStore = create<ClinicStore>()(
       orgId: null,
       roomsLoaded: false,
       sessionsLoaded: false,
-      readinessLoaded: false,
+      readinessLoadedPre: false,
+      readinessLoadedPost: false,
       formsLoaded: false,
       workflowsLoaded: false,
       paymentConfigLoaded: false,
@@ -290,7 +306,7 @@ export const useClinicStore = create<ClinicStore>()(
             sessions: data.sessions,
             rooms: data.rooms,
             clinicianRoomIds: data.clinicianRoomIds,
-            readinessAppointments: data.readinessAppointments,
+            readinessAppointmentsPre: data.readinessAppointments,
             forms: data.forms,
             appointmentTypes: data.appointmentTypes,
             outcomePathways: data.outcomePathways,
@@ -303,7 +319,7 @@ export const useClinicStore = create<ClinicStore>()(
             roomsWithClinicians: data.roomsWithClinicians,
             roomsLoaded: true,
             sessionsLoaded: true,
-            readinessLoaded: true,
+            readinessLoadedPre: true,
             formsLoaded: true,
             workflowsLoaded: true,
             paymentConfigLoaded: true,
@@ -365,18 +381,26 @@ export const useClinicStore = create<ClinicStore>()(
 
       refreshReadiness: async (locationId) => {
         try {
-          const direction = get().readinessDirection;
-          const data = await fetchJson<{
-            appointments: ReadinessAppointment[];
-            counts?: ReadinessCounts;
-          }>(
-            `/api/readiness?location_id=${locationId}&direction=${direction}`
-          );
+          const [preData, postData] = await Promise.all([
+            fetchJson<{
+              appointments: ReadinessAppointment[];
+              counts?: ReadinessCounts;
+            }>(`/api/readiness?location_id=${locationId}&direction=pre_appointment`),
+            fetchJson<{
+              appointments: ReadinessAppointment[];
+              counts?: ReadinessCounts;
+            }>(`/api/readiness?location_id=${locationId}&direction=post_appointment`),
+          ]);
           set(
             {
-              readinessAppointments: data.appointments ?? [],
-              readinessCounts: data.counts ?? { pre: 0, post: 0 },
-              readinessLoaded: true,
+              readinessAppointmentsPre: preData.appointments ?? [],
+              readinessAppointmentsPost: postData.appointments ?? [],
+              readinessCounts: {
+                pre: preData.counts?.pre ?? preData.appointments?.length ?? 0,
+                post: postData.counts?.post ?? postData.appointments?.length ?? 0,
+              },
+              readinessLoadedPre: true,
+              readinessLoadedPost: true,
             },
             false,
             "refreshReadiness"
@@ -408,6 +432,7 @@ export const useClinicStore = create<ClinicStore>()(
               blocks: Record<string, DbWorkflowActionBlock[]>;
             }>(`/api/workflows/init?org_id=${orgId}&direction=pre_appointment`),
             fetchJson<{
+              outcome_pathways: OutcomePathwayRow[];
               templates: Record<string, DbWorkflowTemplate>;
               blocks: Record<string, DbWorkflowActionBlock[]>;
             }>(`/api/workflows/init?org_id=${orgId}&direction=post_appointment`),
@@ -415,7 +440,7 @@ export const useClinicStore = create<ClinicStore>()(
           set(
             {
               appointmentTypes: preData.appointment_types,
-              outcomePathways: preData.outcome_pathways,
+              outcomePathways: postData.outcome_pathways ?? [],
               preWorkflowTemplates: preData.templates,
               preWorkflowBlocks: preData.blocks,
               postWorkflowTemplates: postData.templates,
@@ -529,17 +554,17 @@ export const useClinicStore = create<ClinicStore>()(
         set({ roomsWithClinicians: rooms }, false, "setRoomsWithClinicians"),
       setSessions: (sessions) =>
         set({ sessions, sessionsLoaded: true }, false, "setSessions"),
-      setReadinessAppointments: (appointments) =>
-        set(
-          { readinessAppointments: appointments, readinessLoaded: true },
-          false,
-          "setReadinessAppointments"
-        ),
+      setReadinessAppointments: (appointments) => {
+        const direction = get().readinessDirection;
+        if (direction === 'pre_appointment') {
+          set({ readinessAppointmentsPre: appointments, readinessLoadedPre: true }, false, "setReadinessAppointments");
+        } else {
+          set({ readinessAppointmentsPost: appointments, readinessLoadedPost: true }, false, "setReadinessAppointments");
+        }
+      },
       setReadinessDirection: (direction) => {
+        // Instant switch — data is already cached in the per-direction slots
         set({ readinessDirection: direction }, false, "setReadinessDirection");
-        // Immediately refresh with new direction
-        const locId = get().locationId;
-        if (locId) get().refreshReadiness(locId);
       },
       setReadinessCounts: (counts) =>
         set({ readinessCounts: counts }, false, "setReadinessCounts"),
@@ -572,7 +597,8 @@ export const useClinicStore = create<ClinicStore>()(
             rooms: [],
             roomsWithClinicians: [],
             sessions: [],
-            readinessAppointments: [],
+            readinessAppointmentsPre: [],
+            readinessAppointmentsPost: [],
             readinessDirection: 'pre_appointment' as ReadinessDirection,
             readinessCounts: { pre: 0, post: 0 },
             clinicianRoomIds: [],
@@ -581,7 +607,8 @@ export const useClinicStore = create<ClinicStore>()(
             connectedSessions: new Set(),
             roomsLoaded: false,
             sessionsLoaded: false,
-            readinessLoaded: false,
+            readinessLoadedPre: false,
+            readinessLoadedPost: false,
             paymentConfigLoaded: false,
           },
           false,

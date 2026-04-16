@@ -86,7 +86,7 @@ export function SlideOver({
         )}
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto">{children}</div>
+        <div className="flex-1 overflow-y-auto flex flex-col min-h-0">{children}</div>
       </div>
     </>
   );

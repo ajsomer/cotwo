@@ -202,14 +202,169 @@ export async function chargePayment(
   return { success: true };
 }
 
-/** Select an outcome pathway for a session. Complete tier only. */
+/**
+ * Confirm an outcome pathway for a session. Complete tier only.
+ * Thin wrapper around the confirm_outcome_pathway RPC, which atomically:
+ *   - Sets sessions.session_ended_at, outcome_pathway_id, status = 'done'
+ *   - Creates appointment_workflow_runs row
+ *   - Creates appointment_actions rows with config snapshots
+ */
 export async function selectOutcomePathway(
   sessionId: string,
-  pathwayId: string
-) {
+  pathwayId: string,
+  actions: Array<{
+    action_block_id: string;
+    action_type: string;
+    offset_minutes: number;
+    config: Record<string, unknown>;
+    form_id: string | null;
+  }>
+): Promise<{ success: boolean; error?: string; workflow_run_id?: string }> {
+  const supabase = await createClient();
+
+  const { data, error } = await supabase.rpc("confirm_outcome_pathway", {
+    p_session_id: sessionId,
+    p_pathway_id: pathwayId,
+    p_actions: actions,
+  });
+
+  if (error) {
+    console.error("[OUTCOME] Failed to confirm pathway:", error.message);
+    return { success: false, error: error.message };
+  }
+
+  const result = data as { workflow_run_id: string; action_count: number } | null;
   console.log(
-    `[OUTCOME] Session ${sessionId} assigned pathway ${pathwayId}`
+    `[OUTCOME] Session ${sessionId} confirmed pathway ${pathwayId}: ${result?.action_count ?? 0} actions scheduled`
   );
-  // In production, this would trigger the post-appointment workflow engine
+
+  return { success: true, workflow_run_id: result?.workflow_run_id };
+}
+
+/**
+ * Skip outcome pathway — mark session as done with no post-appointment actions.
+ * Used when receptionist clicks "No outcome pathway required" at Process.
+ */
+export async function skipOutcomePathway(
+  sessionId: string
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = await createClient();
+
+  const { error } = await supabase
+    .from("sessions")
+    .update({
+      status: "done",
+      session_ended_at: new Date().toISOString(),
+    })
+    .eq("id", sessionId);
+
+  if (error) {
+    console.error("[OUTCOME] Failed to skip pathway:", error.message);
+    return { success: false, error: error.message };
+  }
+
+  console.log(`[OUTCOME] Session ${sessionId} marked done with no pathway`);
+  return { success: true };
+}
+
+/**
+ * Resolve a task action on the readiness dashboard.
+ * Sets the action to completed with optional resolution note.
+ */
+export async function resolveTask(
+  actionId: string,
+  userId: string,
+  note?: string
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = await createClient();
+  const now = new Date().toISOString();
+
+  const { error } = await supabase
+    .from("appointment_actions")
+    .update({
+      status: "completed",
+      completed_at: now,
+      resolved_at: now,
+      resolved_by: userId,
+      resolution_note: note ?? null,
+    })
+    .eq("id", actionId);
+
+  if (error) {
+    console.error("[TASK] Failed to resolve task:", error.message);
+    return { success: false, error: error.message };
+  }
+
+  // Check workflow run completion
+  const { data: action } = await supabase
+    .from("appointment_actions")
+    .select("workflow_run_id")
+    .eq("id", actionId)
+    .single();
+
+  if (action?.workflow_run_id) {
+    const terminalStatuses = ["completed", "failed", "cancelled", "skipped", "dropped"];
+    const { data: remaining } = await supabase
+      .from("appointment_actions")
+      .select("id")
+      .eq("workflow_run_id", action.workflow_run_id)
+      .not("status", "in", `(${terminalStatuses.join(",")})`);
+
+    if (remaining && remaining.length === 0) {
+      await supabase
+        .from("appointment_workflow_runs")
+        .update({ status: "complete", completed_at: now })
+        .eq("id", action.workflow_run_id);
+    }
+  }
+
+  console.log(`[TASK] Resolved action ${actionId}`);
+  return { success: true };
+}
+
+/**
+ * Cancel a scheduled or fired action before completion.
+ * Used when a patient reschedules or the pathway is no longer relevant.
+ */
+export async function cancelAction(
+  actionId: string
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = await createClient();
+
+  const { error } = await supabase
+    .from("appointment_actions")
+    .update({ status: "cancelled" })
+    .eq("id", actionId)
+    .in("status", ["scheduled", "fired"]);
+
+  if (error) {
+    console.error("[ACTION] Failed to cancel action:", error.message);
+    return { success: false, error: error.message };
+  }
+
+  // Check workflow run completion
+  const { data: action } = await supabase
+    .from("appointment_actions")
+    .select("workflow_run_id")
+    .eq("id", actionId)
+    .single();
+
+  if (action?.workflow_run_id) {
+    const terminalStatuses = ["completed", "failed", "cancelled", "skipped", "dropped"];
+    const { data: remaining } = await supabase
+      .from("appointment_actions")
+      .select("id")
+      .eq("workflow_run_id", action.workflow_run_id)
+      .not("status", "in", `(${terminalStatuses.join(",")})`);
+
+    if (remaining && remaining.length === 0) {
+      await supabase
+        .from("appointment_workflow_runs")
+        .update({ status: "complete", completed_at: new Date().toISOString() })
+        .eq("id", action.workflow_run_id);
+    }
+  }
+
+  console.log(`[ACTION] Cancelled action ${actionId}`);
   return { success: true };
 }
