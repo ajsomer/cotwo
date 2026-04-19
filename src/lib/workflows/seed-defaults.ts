@@ -61,17 +61,15 @@ export async function seedDefaultWorkflows(orgId: string): Promise<void> {
         name: tpl.name,
         direction: "pre_appointment",
         status: "published",
+        terminal_type: "run_sheet",
       })
       .select("id")
       .single();
 
     if (!template) continue;
 
-    // Create action blocks based on template name
-    const blocks = getPreActionBlocks(tpl.name, template.id, intakeFormId);
-    if (blocks.length > 0) {
-      await supabase.from("workflow_action_blocks").insert(blocks);
-    }
+    // Create action blocks based on template name.
+    await seedPreActionBlocks(supabase, tpl.name, template.id, intakeFormId);
 
     // Link to matching appointment types
     for (const typeName of tpl.typeNames) {
@@ -168,35 +166,224 @@ export async function seedDefaultWorkflows(orgId: string): Promise<void> {
   console.log(`[WORKFLOW SEED] Default workflows seeded for org ${orgId}`);
 }
 
-function getPreActionBlocks(
+type SupabaseClient = ReturnType<typeof createServiceClient>;
+
+/**
+ * Seed pre-appointment action blocks using the intake-package model.
+ *
+ * For each template we emit:
+ *   - One `intake_package` block (when the template captures forms/card/consent)
+ *   - One `intake_reminder` per legacy form-completion nudge, parented to the
+ *     intake_package block
+ *   - `send_reminder` blocks for ordinary appointment reminders (no precondition)
+ *   - One `add_to_runsheet` block per template (since all pre-templates are
+ *     run_sheet terminal_type at seed time)
+ *
+ * The intake_package block is inserted first so its id can be referenced by
+ * the intake_reminder children via `parent_action_block_id`.
+ */
+async function seedPreActionBlocks(
+  supabase: SupabaseClient,
   templateName: string,
   templateId: string,
   intakeFormId: string | null
-) {
+): Promise<void> {
+  // Per-template spec: what the intake package contains + which reminders
+  // nudge form completion + which reminders are plain appointment reminders.
+  const plan = getPreTemplatePlan(templateName, intakeFormId);
+
+  let intakePackageId: string | null = null;
+
+  if (plan.intakePackage) {
+    const { data: packageRow, error } = await supabase
+      .from("workflow_action_blocks")
+      .insert({
+        template_id: templateId,
+        action_type: "intake_package",
+        offset_minutes: 0,
+        offset_direction: "before",
+        config: {
+          includes_card_capture: plan.intakePackage.includes_card_capture,
+          includes_consent: plan.intakePackage.includes_consent,
+          form_ids: plan.intakePackage.form_ids,
+        },
+        sort_order: 0,
+      })
+      .select("id")
+      .single();
+
+    if (error) {
+      console.error(
+        `[WORKFLOW SEED] Failed to insert intake_package block for template '${templateName}':`,
+        error
+      );
+      return;
+    }
+    intakePackageId = packageRow?.id ?? null;
+  }
+
+  // Children and siblings: intake_reminder, send_reminder, add_to_runsheet
+  const children: Array<Record<string, unknown>> = [];
+
+  for (const [i, reminder] of plan.intakeReminders.entries()) {
+    if (!intakePackageId) continue;
+    children.push({
+      template_id: templateId,
+      action_type: "intake_reminder",
+      offset_minutes: reminder.offset_days * 24 * 60,
+      offset_direction: "after",
+      config: {
+        offset_days: reminder.offset_days,
+        message_body: reminder.message_body,
+      },
+      parent_action_block_id: intakePackageId,
+      sort_order: 10 + i,
+    });
+  }
+
+  for (const [i, reminder] of plan.appointmentReminders.entries()) {
+    children.push({
+      template_id: templateId,
+      action_type: "send_reminder",
+      offset_minutes: reminder.offset_minutes,
+      offset_direction: "before",
+      config: { message: reminder.message },
+      sort_order: 50 + i,
+    });
+  }
+
+  // Every pre-appointment run-sheet workflow needs an add_to_runsheet block.
+  children.push({
+    template_id: templateId,
+    action_type: "add_to_runsheet",
+    offset_minutes: 0,
+    offset_direction: "before",
+    config: {},
+    sort_order: 100,
+  });
+
+  if (children.length > 0) {
+    const { error } = await supabase
+      .from("workflow_action_blocks")
+      .insert(children);
+    if (error) {
+      console.error(
+        `[WORKFLOW SEED] Failed to insert child blocks for template '${templateName}':`,
+        error
+      );
+    }
+  }
+}
+
+interface IntakePackageSpec {
+  includes_card_capture: boolean;
+  includes_consent: boolean;
+  form_ids: string[];
+}
+
+interface IntakeReminderSpec {
+  offset_days: number;
+  message_body: string;
+}
+
+interface AppointmentReminderSpec {
+  offset_minutes: number;
+  message: string;
+}
+
+interface PreTemplatePlan {
+  intakePackage: IntakePackageSpec | null;
+  intakeReminders: IntakeReminderSpec[];
+  appointmentReminders: AppointmentReminderSpec[];
+}
+
+function getPreTemplatePlan(
+  templateName: string,
+  intakeFormId: string | null
+): PreTemplatePlan {
   switch (templateName) {
     case "Standard New Patient Intake":
-      return [
-        { template_id: templateId, action_type: "deliver_form", offset_minutes: 20160, offset_direction: "before", form_id: intakeFormId, config: {}, precondition: null, sort_order: 0 },
-        { template_id: templateId, action_type: "send_reminder", offset_minutes: 4320, offset_direction: "before", config: { message: "Hi {first_name}, just a reminder you have an appointment with {clinic_name} in 3 days. Please complete your intake form if you haven't already." }, precondition: intakeFormId ? { type: "form_not_completed", form_id: intakeFormId } : null, sort_order: 1 },
-        { template_id: templateId, action_type: "capture_card", offset_minutes: 2880, offset_direction: "before", config: {}, precondition: { type: "card_not_on_file" }, sort_order: 2 },
-        { template_id: templateId, action_type: "send_reminder", offset_minutes: 1440, offset_direction: "before", config: { message: "Hi {first_name}, your appointment with {clinician_name} at {clinic_name} is tomorrow at {appointment_time}. See you then!" }, precondition: null, sort_order: 3 },
-      ];
+      // Legacy shape: deliver_form @ 14d, send_reminder(form_not_completed) @ 3d,
+      // capture_card @ 2d, send_reminder @ 1d.
+      // New shape: intake_package fires on workflow start, one intake_reminder
+      // 11 days later (14d - 3d), plain appointment reminder at 1d before.
+      return {
+        intakePackage: {
+          includes_card_capture: true,
+          includes_consent: false,
+          form_ids: intakeFormId ? [intakeFormId] : [],
+        },
+        intakeReminders: [
+          {
+            offset_days: 11,
+            message_body:
+              "Hi {patient_first_name}, just a reminder to finish your intake before your appointment with {clinic_name}. Tap here to continue: {link}",
+          },
+        ],
+        appointmentReminders: [
+          {
+            offset_minutes: 1440,
+            message:
+              "Hi {first_name}, your appointment with {clinician_name} at {clinic_name} is tomorrow at {appointment_time}. See you then!",
+          },
+        ],
+      };
+
     case "Returning Patient Quick Check":
-      return [
-        { template_id: templateId, action_type: "send_reminder", offset_minutes: 2880, offset_direction: "before", config: { message: "Hi {first_name}, just a reminder about your appointment with {clinic_name} in 2 days at {appointment_time}." }, precondition: null, sort_order: 0 },
-        { template_id: templateId, action_type: "capture_card", offset_minutes: 1440, offset_direction: "before", config: {}, precondition: { type: "card_not_on_file" }, sort_order: 1 },
-      ];
+      // Legacy: send_reminder @ 2d, capture_card @ 1d.
+      // New shape: intake_package (card only, no forms), plain 2d reminder.
+      return {
+        intakePackage: {
+          includes_card_capture: true,
+          includes_consent: false,
+          form_ids: [],
+        },
+        intakeReminders: [],
+        appointmentReminders: [
+          {
+            offset_minutes: 2880,
+            message:
+              "Hi {first_name}, just a reminder about your appointment with {clinic_name} in 2 days at {appointment_time}.",
+          },
+        ],
+      };
+
     case "Telehealth-specific Setup":
-      return [
-        { template_id: templateId, action_type: "verify_contact", offset_minutes: 10080, offset_direction: "before", config: {}, precondition: { type: "contact_not_verified" }, sort_order: 0 },
-        { template_id: templateId, action_type: "send_reminder", offset_minutes: 1440, offset_direction: "before", config: { message: "Hi {first_name}, your telehealth appointment with {clinician_name} is tomorrow at {appointment_time}. Make sure you're in a quiet spot with good internet." }, precondition: null, sort_order: 1 },
-      ];
+      // Legacy: verify_contact @ 7d, send_reminder @ 1d.
+      // New shape: no intake package work (no form, no card). Ordinary 1d
+      // appointment reminder only. verify_contact drops out — contact
+      // verification happens inside the intake journey or entry flow.
+      return {
+        intakePackage: null,
+        intakeReminders: [],
+        appointmentReminders: [
+          {
+            offset_minutes: 1440,
+            message:
+              "Hi {first_name}, your telehealth appointment with {clinician_name} is tomorrow at {appointment_time}. Make sure you're in a quiet spot with good internet.",
+          },
+        ],
+      };
+
     case "Minimal Reminder Only":
-      return [
-        { template_id: templateId, action_type: "send_reminder", offset_minutes: 1440, offset_direction: "before", config: { message: "Hi {first_name}, quick reminder about your check-in with {clinic_name} tomorrow at {appointment_time}." }, precondition: null, sort_order: 0 },
-      ];
+      return {
+        intakePackage: null,
+        intakeReminders: [],
+        appointmentReminders: [
+          {
+            offset_minutes: 1440,
+            message:
+              "Hi {first_name}, quick reminder about your check-in with {clinic_name} tomorrow at {appointment_time}.",
+          },
+        ],
+      };
+
     default:
-      return [];
+      return {
+        intakePackage: null,
+        intakeReminders: [],
+        appointmentReminders: [],
+      };
   }
 }
 
