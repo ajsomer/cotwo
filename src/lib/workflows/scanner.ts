@@ -1,4 +1,5 @@
 import { createServiceClient } from "@/lib/supabase/service";
+import { executeScheduledActions } from "./engine";
 
 /**
  * Schedule a pre-appointment workflow for a newly created appointment.
@@ -166,4 +167,17 @@ export async function scheduleWorkflowForAppointment(
   console.log(
     `[WORKFLOW SCANNER] Scheduled ${scheduled} actions (${dropped} dropped) for appointment ${appointmentId} (run ${run.id})`
   );
+
+  // Fire immediately-due actions (e.g. intake_package) synchronously so the
+  // patient gets their SMS the moment the clinic adds them, without waiting
+  // for the daily-scan cron. Future-dated actions (reminders, add_to_runsheet
+  // the morning of the appointment) remain queued for the cron.
+  try {
+    await executeScheduledActions({ appointmentId });
+  } catch (err) {
+    console.error(
+      `[WORKFLOW SCANNER] Immediate execution failed for appointment ${appointmentId}:`,
+      err
+    );
+  }
 }

@@ -23,20 +23,37 @@ interface ScanResult {
  *
  * Idempotent: queries status='scheduled', transitions out immediately.
  * Already-processed actions are invisible to the query.
+ *
+ * When `appointmentId` is passed, scopes the claim to that single appointment
+ * — used by `scheduleWorkflowForAppointment` to fire immediately-due actions
+ * (e.g. intake_package) synchronously instead of waiting for the cron pass.
  */
-export async function executeScheduledActions(): Promise<ScanResult> {
+export async function executeScheduledActions(
+  options: { appointmentId?: string } = {}
+): Promise<ScanResult> {
   const supabase = createServiceClient();
   const result: ScanResult = { fired: 0, skipped: 0, failed: 0 };
 
-  console.log("[WORKFLOW ENGINE] Scan starting...");
+  console.log(
+    options.appointmentId
+      ? `[WORKFLOW ENGINE] Scan starting for appointment ${options.appointmentId}...`
+      : "[WORKFLOW ENGINE] Scan starting..."
+  );
 
   // Step 1: Claim — atomically move scheduled → firing
-  const { data: claimed, error: claimError } = await supabase
+  let claimQuery = supabase
     .from("appointment_actions")
     .update({ status: "firing" })
     .eq("status", "scheduled")
-    .lte("scheduled_for", new Date().toISOString())
-    .select("id, appointment_id, action_block_id, workflow_run_id, scheduled_for, session_id, config, form_id");
+    .lte("scheduled_for", new Date().toISOString());
+
+  if (options.appointmentId) {
+    claimQuery = claimQuery.eq("appointment_id", options.appointmentId);
+  }
+
+  const { data: claimed, error: claimError } = await claimQuery.select(
+    "id, appointment_id, action_block_id, workflow_run_id, scheduled_for, session_id, config, form_id"
+  );
 
   if (claimError) {
     console.error("[WORKFLOW ENGINE] Claim failed:", claimError.message);
