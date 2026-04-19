@@ -201,9 +201,22 @@ async function handleCaptureCard(ctx: HandlerContext): Promise<ActionHandlerResu
 // Intake Package Handlers (v2 pre-appointment model)
 // ============================================================================
 
-/** Create an intake package journey and send the patient the journey link. */
+/**
+ * Create an intake package journey and send the patient the journey link.
+ *
+ * The journey is seeded with `patient_id` drawn from the appointment, set at
+ * add-patient time. Identity in the journey is confirm-mode only: the patient
+ * proves ownership of the phone number the clinic asserted against.
+ */
 async function handleIntakePackage(ctx: HandlerContext): Promise<ActionHandlerResult> {
   const supabase = createServiceClient();
+
+  if (!ctx.patientId) {
+    return {
+      status: "failed",
+      error: "Intake package requires a patient on the appointment",
+    };
+  }
 
   const config = ctx.config as {
     includes_card_capture?: boolean;
@@ -217,7 +230,7 @@ async function handleIntakePackage(ctx: HandlerContext): Promise<ActionHandlerRe
     .from("intake_package_journeys")
     .insert({
       appointment_id: ctx.appointmentId,
-      patient_id: null, // populated after phone OTP verification
+      patient_id: ctx.patientId,
       journey_token: journeyToken,
       includes_card_capture: config.includes_card_capture ?? false,
       includes_consent: config.includes_consent ?? false,

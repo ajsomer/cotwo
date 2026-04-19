@@ -7,7 +7,6 @@ import 'survey-core/survey-core.min.css';
 import { coviuTheme } from '@/lib/survey/theme';
 import { PersistentHeader } from './persistent-header';
 import { PhoneVerification } from './phone-verification';
-import { IdentityConfirmation } from './identity-confirmation';
 import type { PatientContact } from '@/lib/supabase/types';
 
 export interface IntakeJourneyContext {
@@ -52,11 +51,19 @@ interface IntakeJourneyProps {
 type Phase =
   | 'phone'
   | 'identity'
+  | 'identity_picker'
+  | 'identity_no_match'
   | 'checklist'
   | 'card'
   | 'consent'
   | 'form'
   | 'done';
+
+interface ConfirmContact {
+  id: string;
+  first_name: string;
+  last_name: string;
+}
 
 // Lazy imports to keep phone-verification etc tree-shaken if unused
 import { IntakeCardCapture } from './intake-card-capture';
@@ -72,8 +79,8 @@ export function IntakeJourney({ context, token }: IntakeJourneyProps) {
   const [phoneNumber, setPhoneNumber] = useState<string | null>(
     appointment.prefill_phone
   );
-  const [existingPatients, setExistingPatients] = useState<PatientContact[]>([]);
   const [patient, setPatient] = useState<PatientContact | null>(null);
+  const [pickerContacts, setPickerContacts] = useState<ConfirmContact[]>([]);
   const [activeFormId, setActiveFormId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -98,37 +105,76 @@ export function IntakeJourney({ context, token }: IntakeJourneyProps) {
     setState((prev) => ({ ...prev, ...data.journey, forms: prev.forms }));
   }, [token]);
 
-  const handlePhoneVerified = useCallback(
-    (phone: string, _vId: string, patients: PatientContact[]) => {
-      setPhoneNumber(phone);
-      setExistingPatients(patients);
-      setPhase('identity');
+  const resolveIdentity = useCallback(
+    async (phone: string) => {
+      setError(null);
+      try {
+        const res = await fetch(`/api/intake/${token}/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone_number: phone }),
+        });
+        const data = await res.json();
+
+        if (data.status === 'matched') {
+          setPatient({
+            id: data.contact.id,
+            first_name: data.contact.first_name,
+            last_name: data.contact.last_name,
+            date_of_birth: null,
+          });
+          await reloadJourney();
+          setPhase('checklist');
+          return;
+        }
+
+        if (data.status === 'multi_match') {
+          setPickerContacts(data.contacts ?? []);
+          setPhase('identity_picker');
+          return;
+        }
+
+        // no_match or unexpected shape
+        setPhase('identity_no_match');
+      } catch {
+        setError('Something went wrong. Please try again.');
+      }
     },
-    []
+    [token, reloadJourney]
   );
 
-  const handleIdentityConfirmed = useCallback(
-    async (p: PatientContact) => {
-      // Attach the confirmed identity to the journey row. For a pre-existing
-      // contact, the verify endpoint just updates journey.patient_id. For a
-      // newly captured contact, the identity-confirmation component already
-      // created them via /api/patient/identity — we still need to point the
-      // journey at them.
+  const handlePhoneVerified = useCallback(
+    (phone: string) => {
+      setPhoneNumber(phone);
+      setPhase('identity');
+      resolveIdentity(phone);
+    },
+    [resolveIdentity]
+  );
+
+  const handlePickerChoice = useCallback(
+    async (contact: ConfirmContact) => {
+      setError(null);
       try {
         const res = await fetch(`/api/intake/${token}/verify`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             phone_number: phoneNumber,
-            existing_patient_id: p.id,
+            selected_patient_id: contact.id,
           }),
         });
-        if (!res.ok) {
-          const data = await res.json();
-          setError(data.error || 'Failed to confirm identity');
+        const data = await res.json();
+        if (data.status !== 'matched') {
+          setError('Unable to confirm contact. Please try again.');
           return;
         }
-        setPatient(p);
+        setPatient({
+          id: data.contact.id,
+          first_name: data.contact.first_name,
+          last_name: data.contact.last_name,
+          date_of_birth: null,
+        });
         await reloadJourney();
         setPhase('checklist');
       } catch {
@@ -160,25 +206,32 @@ export function IntakeJourney({ context, token }: IntakeJourneyProps) {
   }, [reloadJourney]);
 
   // Guard: if patient object missing but journey has patient_id (e.g. returning
-  // via reminder), fetch the patient to seed the confirm screen context.
+  // via reminder link on a device that doesn't have state), hydrate the
+  // display name from the journey row's contact so checklist headers can
+  // greet the patient by name.
   useEffect(() => {
     if (phase !== 'checklist' && phase !== 'card' && phase !== 'consent' && phase !== 'form') {
       return;
     }
     if (patient || !state.patient_id) return;
     (async () => {
-      // Reuse the identity endpoint's response shape via a lightweight fetch.
       const res = await fetch(`/api/intake/${token}/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           phone_number: phoneNumber ?? 'resume',
-          existing_patient_id: state.patient_id,
+          selected_patient_id: state.patient_id,
         }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setPatient(data.patient);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.status === 'matched') {
+        setPatient({
+          id: data.contact.id,
+          first_name: data.contact.first_name,
+          last_name: data.contact.last_name,
+          date_of_birth: null,
+        });
       }
     })();
   }, [phase, patient, state.patient_id, token, phoneNumber]);
@@ -225,32 +278,94 @@ export function IntakeJourney({ context, token }: IntakeJourneyProps) {
         prefillPhone={phoneNumber}
         sessionId={null}
         orgId={org.id}
-        onVerified={handlePhoneVerified}
+        onVerified={(phone) => handlePhoneVerified(phone)}
       />
     );
   }
 
   if (phase === 'identity') {
+    // Resolving contact — this is transient. Shown while /verify returns.
     return (
-      <>
-        <IdentityConfirmation
+      <div className="flex flex-col items-center">
+        <PersistentHeader
           clinicName={org.name}
           logoUrl={org.logo_url}
-          roomName={null}
           currentStep={2}
           totalSteps={totalSteps}
-          existingPatients={existingPatients}
-          sessionId={null}
-          orgId={org.id}
-          phoneNumber={phoneNumber!}
-          onConfirmed={handleIdentityConfirmed}
         />
+        <div className="flex h-32 w-full items-center justify-center">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-teal-500 border-t-transparent" />
+        </div>
         {error && (
-          <p className="mt-4 text-center text-sm text-red-500" role="alert">
+          <p className="text-center text-sm text-red-500" role="alert">
             {error}
           </p>
         )}
-      </>
+      </div>
+    );
+  }
+
+  if (phase === 'identity_picker') {
+    return (
+      <div className="flex flex-col items-center">
+        <PersistentHeader
+          clinicName={org.name}
+          logoUrl={org.logo_url}
+          currentStep={2}
+          totalSteps={totalSteps}
+        />
+        <div className="w-full space-y-4">
+          <h1 className="text-xl font-semibold text-gray-800">
+            Please confirm who this appointment is for
+          </h1>
+          <p className="text-sm text-gray-500">
+            We found more than one person on this phone number at {org.name}.
+          </p>
+          <div className="space-y-2">
+            {pickerContacts.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => handlePickerChoice(c)}
+                className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-left transition-colors hover:border-teal-500 hover:bg-teal-50"
+              >
+                <span className="text-base font-medium text-gray-800">
+                  {c.first_name} {c.last_name}
+                </span>
+              </button>
+            ))}
+          </div>
+          {error && (
+            <p className="text-center text-sm text-red-500" role="alert">
+              {error}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (phase === 'identity_no_match') {
+    return (
+      <div className="flex flex-col items-center">
+        <PersistentHeader
+          clinicName={org.name}
+          logoUrl={org.logo_url}
+          currentStep={2}
+          totalSteps={totalSteps}
+        />
+        <div className="w-full space-y-4 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-50">
+            <span className="text-lg text-amber-600">!</span>
+          </div>
+          <h1 className="text-xl font-semibold text-gray-800">
+            We couldn&apos;t find your contact
+          </h1>
+          <p className="text-sm text-gray-500">
+            This phone number isn&apos;t on file at {org.name}. Please contact
+            the clinic — they&apos;ll be able to sort this out for you.
+          </p>
+        </div>
+      </div>
     );
   }
 

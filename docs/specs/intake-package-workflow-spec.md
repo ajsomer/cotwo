@@ -23,12 +23,18 @@ This spec replaces the earlier granular action-block model (`deliver_form`, `cap
 
 A single composed bundle per workflow template containing whatever the practice manager configures:
 
-- **Create patient contact** (always included, always first). The patient verifies their phone and a contact record is created. This is what enables persistent progress across reminders.
+- **Verify identity and confirm contact** (always included, always first). The patient verifies their phone number and confirms they're the contact the clinic scheduled. The contact record itself is created at add-patient time, not inside the journey.
 - **Capture card on file** (optional).
 - **Deliver form(s)** (optional, one or more).
 - Additional patient-facing items as future action types warrant.
 
-The patient sees the intake package as a single journey. They tap a link in an SMS, verify their phone, and work through the items. Progress is saved against the patient contact. Reminder SMS contain the same link. The patient can leave and resume from any reminder, picking up wherever they left off.
+The patient sees the intake package as a single journey. They tap a link in an SMS, verify their phone, confirm their contact, and work through any configured items. Progress is saved against the patient contact. Reminder SMS contain the same link. The patient can leave and resume from any reminder, picking up wherever they left off.
+
+**Identity model: confirm, don't capture.** The clinic asserts identity (first name, last name, phone, optionally DOB) when they add the patient via the add-patient panel. The journey's job is to prove the patient controls the phone number the clinic assigned — not to capture identity. After phone OTP succeeds, the journey resolves contacts for that phone within the org and shows one of three screens:
+
+- **Matched** (single contact): confirm screen — "Please confirm who this appointment is for" with the contact name.
+- **Multi-match** (shared phone): picker screen listing the contacts at the org on that number.
+- **No match**: error screen instructing the patient to contact the clinic. This indicates a data-entry error on the clinic side, not something the patient can self-resolve.
 
 The intake package is **one action block** at the workflow engine level. Its internal composition (which items are included) is stored in the action block's config.
 
@@ -442,7 +448,7 @@ Changing this setting adds or removes the implicit `add_to_runsheet` action bloc
 **2. Intake package contents**
 
 A checklist of items to include in the package:
-- **Create patient contact** — locked, always included, always first. Labelled as "Required" with explanation text.
+- **Verify identity and confirm contact** — locked, always included, always first. Labelled as "Required" with explanation text. Identity capture happens at add-patient time; the journey only confirms ownership of the phone number the clinic assigned.
 - **Capture card on file** — toggle.
 - **Consent** — toggle.
 - **Forms** — multi-select from the clinic's form library. Order of selection = order presented to the patient.

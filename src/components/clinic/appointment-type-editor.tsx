@@ -365,8 +365,8 @@ export function AppointmentTypeEditor({
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                   </svg>
                   <div>
-                    <div className="text-sm font-medium text-gray-700">Verify identity and create contact</div>
-                    <div className="text-xs text-gray-500">The patient verifies their phone number and a contact record is created. This saves their progress across reminders.</div>
+                    <div className="text-sm font-medium text-gray-700">Verify identity and confirm contact</div>
+                    <div className="text-xs text-gray-500">The patient verifies their phone number and confirms they&apos;re the contact you scheduled. Contact records are captured when you add the patient, not in the journey.</div>
                   </div>
                 </div>
                 <span className="text-xs text-gray-500 bg-gray-200 rounded px-2 py-0.5 flex-shrink-0">Required</span>

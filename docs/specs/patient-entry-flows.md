@@ -263,7 +263,31 @@ The patient verifies ownership of their phone number via a one-time password sen
 
 ## Step 2: Identity Confirmation
 
-After phone verification, the patient confirms or provides their identity. This step always appears, regardless of whether the patient is new or returning. It serves dual purposes: confirming who the appointment is for, and allowing patients to add new people (children, family members) to their phone number.
+After phone verification, the patient confirms or provides their identity.
+
+Two modes exist across the platform. Which one a patient sees depends on which surface they landed on.
+
+### Capture mode — `/entry/[token]`
+
+Used for Core tier phone-only SMS entries, on-demand links, and QR check-in paths — anywhere the clinic did not provide the patient's identity upfront. The step serves dual purposes: confirming who the appointment is for, and allowing patients to add new people (children, family members) to their phone number. The rest of this section describes capture mode.
+
+### Confirm mode — `/intake/[token]`
+
+Used for Complete tier intake package journeys. The clinic provided identity at add-patient time (first name, last name, phone, optionally DOB), so `appointments.patient_id` is already set and `intake_package_journeys.patient_id` is seeded from it when the `intake_package` action fires. The journey's job at this step is to prove ownership of the phone number the clinic assigned — not to capture identity.
+
+After OTP succeeds, the journey resolves contacts for that phone within the org and shows one of three screens:
+
+- **Matched** (single contact): "Please confirm who this appointment is for" with the contact name and a single confirm button.
+- **Multi-match** (shared family phone): picker of the contacts at the org on this number. Selecting one attaches it to the journey.
+- **No match**: error screen — "Please contact your clinic." Indicates a data-entry error on the clinic side; the patient cannot self-resolve. No capture fallback.
+
+Confirm mode never renders a name/DOB input. Contact records are only created by the clinic via the add-patient panel.
+
+---
+
+### Capture mode scenarios
+
+This step always appears in capture mode, regardless of whether the patient is new or returning.
 
 ### Scenario: New Patient (No Existing Contacts)
 

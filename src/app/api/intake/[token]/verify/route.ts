@@ -3,14 +3,22 @@ import { createServiceClient } from '@/lib/supabase/service';
 
 /**
  * POST /api/intake/[token]/verify
- * Resolves the journey's patient contact after phone OTP verification.
  *
- * Two modes (Phase 7 — capture mode):
- * 1. existing_patient_id provided: confirm existing contact, attach to journey.
- * 2. new patient data provided: create contact, link phone, attach to journey.
+ * Confirm-mode identity resolution. The clinic provides identity at
+ * add-patient time, so the journey row already has a patient_id. The
+ * patient's job here is to prove they control the phone number the clinic
+ * assigned against.
  *
- * The calling client verifies the OTP via /api/patient/otp/verify first, then
- * posts here to attach the verified contact to the journey.
+ * Request body:
+ *   { phone_number: string, selected_patient_id?: string }
+ *
+ * Responses:
+ *   { status: 'matched',      contact: { id, first_name, last_name } }
+ *   { status: 'multi_match',  contacts: [{ id, first_name, last_name }, ...] }
+ *   { status: 'no_match' }      — clinic data-entry error. No capture path.
+ *
+ * When `selected_patient_id` is passed (after a picker choice), we skip
+ * resolution and attach that patient to the journey.
  */
 export async function POST(
   request: NextRequest,
@@ -18,7 +26,10 @@ export async function POST(
 ) {
   const { token } = await params;
   const body = await request.json();
-  const { phone_number, existing_patient_id, first_name, last_name, date_of_birth } = body;
+  const { phone_number, selected_patient_id } = body as {
+    phone_number?: string;
+    selected_patient_id?: string;
+  };
 
   if (!phone_number) {
     return NextResponse.json(
@@ -29,7 +40,7 @@ export async function POST(
 
   const supabase = createServiceClient();
 
-  // Resolve journey + appointment + org
+  // Resolve journey + org context
   const { data: journey } = await supabase
     .from('intake_package_journeys')
     .select('id, appointment_id, patient_id, appointments!inner (org_id)')
@@ -42,76 +53,60 @@ export async function POST(
 
   const orgId = (journey as unknown as { appointments: { org_id: string } })
     .appointments.org_id;
-  let patientId: string;
 
-  if (existing_patient_id) {
-    // Confirm existing patient contact
-    patientId = existing_patient_id;
-  } else {
-    if (!first_name || !last_name) {
-      return NextResponse.json(
-        { error: 'First name and last name are required' },
-        { status: 400 }
-      );
-    }
-
-    // Create new patient contact scoped to the journey's org
-    const { data: patient, error: patientError } = await supabase
+  // Fast path: picker selection. Attach the selected contact and return.
+  if (selected_patient_id) {
+    const { data: contact } = await supabase
       .from('patients')
-      .insert({
-        org_id: orgId,
-        first_name,
-        last_name,
-        date_of_birth: date_of_birth || null,
-      })
-      .select('id')
+      .select('id, first_name, last_name')
+      .eq('id', selected_patient_id)
+      .eq('org_id', orgId)
       .single();
 
-    if (patientError || !patient) {
-      console.error('[INTAKE VERIFY] Failed to create patient:', patientError);
-      return NextResponse.json(
-        { error: 'Failed to create contact' },
-        { status: 500 }
-      );
+    if (!contact) {
+      return NextResponse.json({ status: 'no_match' });
     }
 
-    patientId = patient.id;
+    await supabase
+      .from('intake_package_journeys')
+      .update({ patient_id: contact.id })
+      .eq('id', journey.id);
 
-    // Link phone to new contact
-    await supabase.from('patient_phone_numbers').insert({
-      patient_id: patientId,
-      phone_number,
-      is_primary: true,
-      verified_at: new Date().toISOString(),
-    });
+    return NextResponse.json({ status: 'matched', contact });
   }
 
-  // Attach verified patient to journey
+  // Resolve contacts for this phone number within this org.
+  const { data: phoneLinks } = await supabase
+    .from('patient_phone_numbers')
+    .select('patient_id, patients!inner (id, first_name, last_name, org_id)')
+    .eq('phone_number', phone_number)
+    .eq('patients.org_id', orgId);
+
+  type PhoneLink = {
+    patient_id: string;
+    patients: { id: string; first_name: string; last_name: string; org_id: string };
+  };
+  const links = (phoneLinks ?? []) as unknown as PhoneLink[];
+  const contacts = links.map((l) => ({
+    id: l.patients.id,
+    first_name: l.patients.first_name,
+    last_name: l.patients.last_name,
+  }));
+
+  if (contacts.length === 0) {
+    return NextResponse.json({ status: 'no_match' });
+  }
+
+  if (contacts.length > 1) {
+    return NextResponse.json({ status: 'multi_match', contacts });
+  }
+
+  // Single match: attach to journey and return.
+  const contact = contacts[0];
   await supabase
     .from('intake_package_journeys')
-    .update({ patient_id: patientId })
+    .update({ patient_id: contact.id })
     .eq('id', journey.id);
 
-  // If the appointment has no patient yet, backfill it (multi-contact: only if null)
-  const { data: appointment } = await supabase
-    .from('appointments')
-    .select('patient_id')
-    .eq('id', journey.appointment_id)
-    .single();
-
-  if (appointment && !appointment.patient_id) {
-    await supabase
-      .from('appointments')
-      .update({ patient_id: patientId })
-      .eq('id', journey.appointment_id);
-  }
-
-  // Return the patient for confirmation screen
-  const { data: patient } = await supabase
-    .from('patients')
-    .select('id, first_name, last_name, date_of_birth')
-    .eq('id', patientId)
-    .single();
-
-  return NextResponse.json({ patient });
+  return NextResponse.json({ status: 'matched', contact });
 }
