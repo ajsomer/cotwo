@@ -15,6 +15,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import next from "next";
 import { Server as SocketIOServer } from "socket.io";
 import { createServerClient } from "@supabase/ssr";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 
 const dev = process.env.NODE_ENV !== "production";
 const hostname = process.env.HOSTNAME ?? "0.0.0.0";
@@ -204,16 +205,78 @@ async function main() {
 
       const { locationId, sessionId } = presence;
       const locMap = activeLocations.get(locationId);
+      let lastSocketForSession = false;
       if (locMap) {
         const sockets = locMap.get(sessionId);
         sockets?.delete(socket.id);
-        if (sockets && sockets.size === 0) locMap.delete(sessionId);
+        if (sockets && sockets.size === 0) {
+          locMap.delete(sessionId);
+          lastSocketForSession = true;
+        }
         if (locMap.size === 0) activeLocations.delete(locationId);
       }
       socketReverseMap.delete(socket.id);
       broadcastPresence(locationId);
+
+      // On-demand sessions (no appointment) that are still waiting can be
+      // removed when the patient disconnects — they have no scheduled context
+      // worth keeping on the run sheet.
+      if (lastSocketForSession) {
+        void cleanUpOnDemandSession(sessionId, locationId);
+      }
     });
   });
+
+  /**
+   * Delete on-demand sessions (no appointment) that are still in `waiting`
+   * when the patient disconnects. These have no scheduled context — they were
+   * created on the fly and aren't worth keeping on the run sheet.
+   */
+  async function cleanUpOnDemandSession(sessionId: string, locationId: string) {
+    try {
+      const supabase = createSupabaseClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      );
+
+      // Only delete if the session is on-demand (no appointment) and still waiting.
+      const { data: session } = await supabase
+        .from("sessions")
+        .select("id, appointment_id, status")
+        .eq("id", sessionId)
+        .single();
+
+      if (!session) return;
+      if (session.appointment_id !== null) return; // scheduled session — keep it
+      if (session.status !== "waiting") return;    // already admitted/completed — keep it
+
+      // Clean up participant links first, then delete the session.
+      await supabase
+        .from("session_participants")
+        .delete()
+        .eq("session_id", sessionId);
+
+      const { error } = await supabase
+        .from("sessions")
+        .delete()
+        .eq("id", sessionId);
+
+      if (error) {
+        console.error(`[cleanup] Failed to delete on-demand session ${sessionId}:`, error);
+        return;
+      }
+
+      console.log(`[cleanup] Deleted on-demand session ${sessionId} (patient disconnected)`);
+
+      // Notify clinic clients so the row disappears from the run sheet.
+      io.to(`location:${locationId}`).emit("session_changed", {
+        event: "session_deleted",
+        session_id: sessionId,
+      });
+    } catch (err) {
+      console.error(`[cleanup] Error cleaning up on-demand session ${sessionId}:`, err);
+    }
+  }
 
   function handleInternalBroadcast(req: IncomingMessage, res: ServerResponse) {
     let body = "";

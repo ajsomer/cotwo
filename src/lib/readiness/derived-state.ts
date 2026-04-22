@@ -184,6 +184,26 @@ export function isFormNeedsTranscription(action: WorkflowAction): boolean {
 }
 
 /**
+ * An intake_package action needs transcription when its status is 'completed'
+ * (patient finished the package) but not yet 'transcribed' (receptionist
+ * hasn't copied data to PMS). Same pattern as deliver_form, just keyed off
+ * the intake_package action_type. Independent of other scheduled actions
+ * (add_to_runsheet etc.) — those continue to fire on their own clock.
+ */
+export function isIntakePackageActionNeedsTranscription(
+  action: WorkflowAction
+): boolean {
+  return action.action_type === 'intake_package' && action.status === 'completed';
+}
+
+/** True if any action on the appointment needs intake-package transcription. */
+export function appointmentHasIntakePackageNeedsTranscription(
+  appointment: ReadinessAppointment
+): boolean {
+  return appointment.actions.some(isIntakePackageActionNeedsTranscription);
+}
+
+/**
  * Derive the highest-priority state for an appointment based on all its actions.
  *
  * Priority order (spec):
@@ -198,6 +218,14 @@ export function getReadinessPriority(
   now: Date
 ): ReadinessPriority {
   const { actions } = appointment;
+
+  // Intake-package handoff takes precedence over the allTerminal short-circuit:
+  // a package-driven appointment whose other actions are terminal must still
+  // surface in the Form Completed slot if the intake_package action itself
+  // is completed-and-untranscribed.
+  if (appointmentHasIntakePackageNeedsTranscription(appointment)) {
+    return 'form_completed_needs_transcription';
+  }
 
   // Check if all actions are terminal (or effectively done for post-appointment demo)
   const allTerminal = actions.length > 0 && actions.every(
@@ -219,8 +247,10 @@ export function getReadinessPriority(
   const hasOverdue = actions.some((a) => isOverdue(a, appointment, now));
   if (hasOverdue) return 'overdue';
 
-  // Check for forms needing transcription
-  const hasFormNeedsTranscription = actions.some(isFormNeedsTranscription);
+  // Check for forms / intake packages needing transcription
+  const hasFormNeedsTranscription = actions.some(
+    (a) => isFormNeedsTranscription(a) || isIntakePackageActionNeedsTranscription(a)
+  );
   if (hasFormNeedsTranscription) return 'form_completed_needs_transcription';
 
   // Check for at-risk actions
@@ -282,9 +312,10 @@ export function sortByPriority(
         return bOverdue - aOverdue; // descending
       }
       case 'form_completed_needs_transcription': {
-        // Oldest form first (earliest scheduled_for among form actions)
-        const aForm = getEarliestFormTime(a);
-        const bForm = getEarliestFormTime(b);
+        // Oldest handoff first (earliest scheduled_for among completed
+        // form / intake_package actions).
+        const aForm = getEarliestHandoffTime(a);
+        const bForm = getEarliestHandoffTime(b);
         return aForm - bForm; // ascending
       }
       case 'at_risk': {
@@ -325,11 +356,17 @@ function getMostOverdueGap(appointment: ReadinessAppointment, now: Date): number
   return maxGap;
 }
 
-/** Get the earliest scheduled_for time among form-needs-transcription actions. */
-function getEarliestFormTime(appointment: ReadinessAppointment): number {
+/**
+ * Earliest "handoff" timestamp for sorting the Form Completed slot — the
+ * earliest scheduled_for among completed deliver_form / intake_package
+ * actions on the appointment.
+ */
+function getEarliestHandoffTime(appointment: ReadinessAppointment): number {
   let earliest = Infinity;
   for (const action of appointment.actions) {
-    if (isFormNeedsTranscription(action) && action.scheduled_for) {
+    const isHandoff =
+      isFormNeedsTranscription(action) || isIntakePackageActionNeedsTranscription(action);
+    if (isHandoff && action.scheduled_for) {
       const t = new Date(action.scheduled_for).getTime();
       if (t < earliest) earliest = t;
     }
@@ -426,7 +463,9 @@ export function getTriggeringActions(
     case 'overdue':
       return appointment.actions.filter((a) => isOverdue(a, appointment, now));
     case 'form_completed_needs_transcription':
-      return appointment.actions.filter(isFormNeedsTranscription);
+      return appointment.actions.filter(
+        (a) => isFormNeedsTranscription(a) || isIntakePackageActionNeedsTranscription(a)
+      );
     case 'at_risk':
       return appointment.actions.filter((a) => isAtRisk(a, appointment, now));
     default:

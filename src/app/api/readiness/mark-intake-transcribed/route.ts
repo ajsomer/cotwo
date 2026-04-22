@@ -3,11 +3,17 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { broadcastReadinessChange } from "@/lib/realtime/broadcast";
 
 /**
- * POST /api/readiness/mark-transcribed
+ * POST /api/readiness/mark-intake-transcribed
  *
- * Marks a deliver_form action as transcribed after the receptionist has copied
- * the form data into the clinic's PMS. Only valid for deliver_form actions in
- * 'completed' status.
+ * Marks an intake_package appointment_action as transcribed after the
+ * receptionist or practice manager has copied the package contents (forms,
+ * card, consent) into the clinic's PMS. Mirrors the legacy deliver_form
+ * mark-transcribed path: source of truth is appointment_actions.status.
+ *
+ * Independent of any other scheduled action — does NOT cancel or skip
+ * add_to_runsheet etc.
+ *
+ * Body: { action_id: string } — id of the intake_package appointment_actions row.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -19,7 +25,6 @@ export async function POST(request: NextRequest) {
 
     const supabase = createServiceClient();
 
-    // Verify action exists, is deliver_form, and is in completed status
     const { data: action, error: fetchError } = await supabase
       .from("appointment_actions")
       .select("id, status, action_block_id, appointment_id")
@@ -37,28 +42,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Verify action type is deliver_form
+    // Verify the action is an intake_package (defence-in-depth — the panel
+    // only opens for intake_package actions but a misuse of the endpoint
+    // shouldn't be able to flip an unrelated action).
     const { data: block } = await supabase
       .from("workflow_action_blocks")
       .select("action_type")
       .eq("id", action.action_block_id)
       .single();
 
-    if (!block || block.action_type !== "deliver_form") {
+    if (!block || block.action_type !== "intake_package") {
       return NextResponse.json(
-        { error: "Only deliver_form actions can be marked as transcribed" },
+        { error: "Only intake_package actions can be marked transcribed via this endpoint" },
         { status: 400 }
       );
     }
 
-    // Update status to transcribed
     const { error: updateError } = await supabase
       .from("appointment_actions")
       .update({ status: "transcribed" })
       .eq("id", action_id);
 
     if (updateError) {
-      console.error("[mark-transcribed] Update error:", updateError);
+      console.error("[mark-intake-transcribed] Update error:", updateError);
       return NextResponse.json({ error: "Failed to update action status" }, { status: 500 });
     }
 
@@ -78,7 +84,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    console.error("[mark-transcribed] Error:", err);
+    console.error("[mark-intake-transcribed] Error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

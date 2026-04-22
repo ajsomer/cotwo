@@ -33,11 +33,12 @@ export function ClinicDataProvider({ children }: ClinicDataProviderProps) {
     if (!locationId) return;
     const socket = getSocket();
 
-    // On every (re)connect: join the location room AND resync the sessions
-    // slice, since we may have missed a session_changed while disconnected.
+    // On every (re)connect: join the location room AND resync sessions +
+    // readiness, since we may have missed events while disconnected.
     const onConnect = () => {
       socket.emit("join:location", locationId);
       void getClinicStore().refreshSessions(locationId);
+      void getClinicStore().refreshReadiness(locationId);
     };
     if (socket.connected) socket.emit("join:location", locationId);
     socket.on("connect", onConnect);
@@ -50,6 +51,14 @@ export function ClinicDataProvider({ children }: ClinicDataProviderProps) {
     };
     socket.on("session_changed", onSessionChanged);
 
+    const onReadinessChanged = () => {
+      const currentLocId = getClinicStore().locationId;
+      if (currentLocId) {
+        void getClinicStore().refreshReadiness(currentLocId);
+      }
+    };
+    socket.on("readiness_changed", onReadinessChanged);
+
     const onPresenceUpdate = (payload: { sessionIds: string[] }) => {
       getClinicStore().setConnectedSessions(new Set(payload.sessionIds ?? []));
     };
@@ -58,6 +67,7 @@ export function ClinicDataProvider({ children }: ClinicDataProviderProps) {
     return () => {
       socket.off("connect", onConnect);
       socket.off("session_changed", onSessionChanged);
+      socket.off("readiness_changed", onReadinessChanged);
       socket.off("presence:update", onPresenceUpdate);
     };
   }, [locationId]);

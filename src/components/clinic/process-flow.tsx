@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { SlideOver } from "@/components/ui/slide-over";
 import { ProcessFlowPayment } from "./process-flow-payment";
 import { ProcessFlowOutcome } from "./process-flow-outcome";
@@ -26,11 +26,24 @@ export function ProcessFlow({
 }: ProcessFlowProps) {
   const { org } = useOrg();
   const isComplete = org?.tier === "complete";
-  const [currentStep, setCurrentStep] = useState<ProcessStep>("payment");
+
+  const paymentAlreadyCharged = session.payment_status === "completed";
 
   const steps: ProcessStep[] = isComplete
     ? ["payment", "outcome", "done"]
     : ["payment", "done"];
+
+  // Resume where the user left off — skip payment if already charged.
+  const initialStep = useMemo((): ProcessStep => {
+    if (paymentAlreadyCharged) {
+      const nextAfterPayment = steps[steps.indexOf("payment") + 1];
+      return nextAfterPayment ?? "done";
+    }
+    return "payment";
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const [currentStep, setCurrentStep] = useState<ProcessStep>(initialStep);
 
   const stepIndex = steps.indexOf(currentStep);
 

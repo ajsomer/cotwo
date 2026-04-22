@@ -40,6 +40,14 @@ const FormHandoffPanel = dynamic(
   { ssr: false }
 );
 
+const IntakePackageHandoffPanel = dynamic(
+  () =>
+    import("@/components/clinic/intake-package-handoff-panel").then(
+      (m) => m.IntakePackageHandoffPanel
+    ),
+  { ssr: false }
+);
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -52,6 +60,14 @@ type ActivePanel =
       appointment: ReadinessAppointment;
       actionId: string;
       formName: string;
+      /** What to show on close. "detail" reopens the patient card, "none" closes everything. */
+      returnTo: "detail" | "none";
+    }
+  | {
+      type: "intake-handoff";
+      appointment: ReadinessAppointment;
+      actionId: string;
+      returnTo: "detail" | "none";
     }
   | null;
 
@@ -328,6 +344,20 @@ export function ReadinessShell() {
       if (priority === "overdue") {
         setActivePanel({ type: "detail", appointment: appt });
       } else if (priority === "form_completed_needs_transcription") {
+        // Intake-package handoff takes precedence over the legacy deliver_form
+        // path. Source of truth is the action's status.
+        const intakeAction = appt.actions.find(
+          (a) => a.action_type === "intake_package" && a.status === "completed"
+        );
+        if (intakeAction) {
+          setActivePanel({
+            type: "intake-handoff",
+            appointment: appt,
+            actionId: intakeAction.action_id,
+            returnTo: "none",
+          });
+          return;
+        }
         const formAction = appt.actions.find(
           (a) => a.action_type === "deliver_form" && a.status === "completed"
         );
@@ -337,6 +367,7 @@ export function ReadinessShell() {
             appointment: appt,
             actionId: formAction.action_id,
             formName: formAction.form_name ?? "Unknown form",
+            returnTo: "none",
           });
         }
       }
@@ -545,6 +576,7 @@ export function ReadinessShell() {
               appointment: activePanel.appointment,
               actionId,
               formName,
+              returnTo: "detail",
             })
           }
           onDeleted={handleSaved}
@@ -556,12 +588,26 @@ export function ReadinessShell() {
           formName={activePanel.formName}
           patientName={`${activePanel.appointment.patient_first_name} ${activePanel.appointment.patient_last_name}`}
           appointmentId={activePanel.appointment.appointment_id}
-          onClose={() =>
-            setActivePanel({
-              type: "detail",
-              appointment: activePanel.appointment,
-            })
-          }
+          onClose={() => {
+            const { returnTo, appointment } = activePanel;
+            setActivePanel(
+              returnTo === "detail" ? { type: "detail", appointment } : null
+            );
+          }}
+          onTranscribed={handleSaved}
+        />
+      )}
+      {activePanel?.type === "intake-handoff" && locationId && (
+        <IntakePackageHandoffPanel
+          appointmentId={activePanel.appointment.appointment_id}
+          actionId={activePanel.actionId}
+          patientName={`${activePanel.appointment.patient_first_name} ${activePanel.appointment.patient_last_name}`}
+          onClose={() => {
+            const { returnTo, appointment } = activePanel;
+            setActivePanel(
+              returnTo === "detail" ? { type: "detail", appointment } : null
+            );
+          }}
           onTranscribed={handleSaved}
         />
       )}

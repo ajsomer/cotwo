@@ -150,6 +150,10 @@ export interface RunsheetSession {
   has_card_on_file: boolean;
   card_last_four: string | null;
   card_brand: string | null;
+
+  // Payment record (most recent completed payment for this session)
+  payment_status: 'pending' | 'processing' | 'completed' | 'failed' | 'refunded' | null;
+  payment_amount_cents: number | null;
 }
 
 /** A RunsheetSession enriched with its derived display state. */

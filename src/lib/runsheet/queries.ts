@@ -72,6 +72,10 @@ export const fetchRunsheetSessions = cache(async (
         name,
         room_type,
         sort_order
+      ),
+      payments!left (
+        status,
+        amount_cents
       )
     `)
     .eq('location_id', locationId)
@@ -94,6 +98,9 @@ export const fetchRunsheetSessions = cache(async (
     const paymentMethods = patient?.payment_methods as Array<Record<string, unknown>> | null;
     const defaultCard = paymentMethods?.find((pm) => pm.is_default) ?? paymentMethods?.[0];
     const room = row.rooms as Record<string, unknown> | null;
+    const payments = row.payments as Array<Record<string, unknown>> | null;
+    // Pick the most relevant payment: completed first, then any other.
+    const completedPayment = payments?.find((p) => p.status === 'completed') ?? payments?.[0] ?? null;
 
     return {
       session_id: row.id as string,
@@ -137,6 +144,9 @@ export const fetchRunsheetSessions = cache(async (
       has_card_on_file: !!defaultCard,
       card_last_four: defaultCard?.card_last_four as string | null ?? null,
       card_brand: defaultCard?.card_brand as string | null ?? null,
+
+      payment_status: completedPayment?.status as RunsheetSession['payment_status'] ?? null,
+      payment_amount_cents: completedPayment?.amount_cents as number | null ?? null,
     };
   });
 });

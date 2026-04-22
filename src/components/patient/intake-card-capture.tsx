@@ -72,6 +72,19 @@ export function IntakeCardCapture({
       setError(data.error || 'Failed to record card completion');
       return false;
     }
+    // TESTING ONLY: log the session join URL if add_to_runsheet fired early.
+    try {
+      const payload = (await res.json()) as { session_join_url?: string | null };
+      if (payload.session_join_url) {
+        console.log(
+          '%c[intake] Session join URL (testing hook):',
+          'color: teal; font-weight: bold',
+          payload.session_join_url
+        );
+      }
+    } catch {
+      /* ignore — body may already be consumed if markComplete is re-run */
+    }
     return true;
   };
 

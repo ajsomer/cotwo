@@ -5,6 +5,7 @@ import { getSmsProvider } from "@/lib/sms";
 import {
   broadcastSessionChange,
   broadcastSessionStatus,
+  broadcastReadinessChange,
 } from "@/lib/realtime/broadcast";
 
 /** Call a late patient — logs to console for prototype. */
@@ -190,6 +191,7 @@ export async function chargePayment(
       `
       id,
       appointment_id,
+      location_id,
       session_participants!left (
         patient_id,
         patients!inner (
@@ -229,6 +231,13 @@ export async function chargePayment(
   if (error) {
     console.error("[PAYMENT] Failed to create payment record:", error);
     return { success: false, error: error.message };
+  }
+
+  // Broadcast so the run sheet store refetches and picks up payment_status.
+  if (session.location_id) {
+    await broadcastSessionChange(session.location_id, "session_updated", {
+      session_id: sessionId,
+    });
   }
 
   return { success: true };
@@ -342,7 +351,7 @@ export async function resolveTask(
   // Check workflow run completion
   const { data: action } = await supabase
     .from("appointment_actions")
-    .select("workflow_run_id")
+    .select("workflow_run_id, appointment_id")
     .eq("id", actionId)
     .single();
 
@@ -359,6 +368,20 @@ export async function resolveTask(
         .from("appointment_workflow_runs")
         .update({ status: "complete", completed_at: now })
         .eq("id", action.workflow_run_id);
+    }
+  }
+
+  // Notify the readiness dashboard at this appointment's location.
+  if (action?.appointment_id) {
+    const { data: appt } = await supabase
+      .from("appointments")
+      .select("location_id")
+      .eq("id", action.appointment_id)
+      .maybeSingle();
+    if (appt?.location_id) {
+      await broadcastReadinessChange(appt.location_id, "action_resolved", {
+        appointment_id: action.appointment_id,
+      });
     }
   }
 

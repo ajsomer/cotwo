@@ -9,6 +9,23 @@ import { PersistentHeader } from './persistent-header';
 import { PhoneVerification } from './phone-verification';
 import type { PatientContact } from '@/lib/supabase/types';
 
+/**
+ * TESTING ONLY: if /api/intake/[token]/complete-item returned a
+ * session_join_url (because add_to_runsheet fired early), print it to the
+ * devtools console so we can walk the end-to-end flow without waiting for
+ * the real scheduled offset. See TODO.md — remove once test fixtures land.
+ */
+function logJoinUrlIfPresent(payload: unknown): void {
+  const url = (payload as { session_join_url?: string | null } | null)?.session_join_url;
+  if (url) {
+    console.log(
+      '%c[intake] Session join URL (testing hook):',
+      'color: teal; font-weight: bold',
+      url
+    );
+  }
+}
+
 export interface IntakeJourneyContext {
   org: {
     id: string;
@@ -184,26 +201,40 @@ export function IntakeJourney({ context, token }: IntakeJourneyProps) {
     [token, phoneNumber, reloadJourney]
   );
 
-  const advanceFromChecklist = useCallback(() => {
-    const nextItem = items.find((i) => !i.complete);
-    if (!nextItem) {
+  const goToItem = useCallback((item: ItemSlot | undefined) => {
+    if (!item) {
       setPhase('done');
       return;
     }
-    if (nextItem.kind === 'card') setPhase('card');
-    else if (nextItem.kind === 'consent') setPhase('consent');
-    else {
-      setActiveFormId(nextItem.formId!);
-      setPhase('form');
-    }
-  }, [items]);
+    setActiveFormId(item.kind === 'form' ? item.formId! : null);
+    if (item.kind === 'card') setPhase('card');
+    else if (item.kind === 'consent') setPhase('consent');
+    else setPhase('form');
+  }, []);
 
+  const advanceFromChecklist = useCallback(() => {
+    goToItem(items.find((i) => !i.complete));
+  }, [items, goToItem]);
+
+  // After completing an item, skip the checklist and jump straight to the
+  // next incomplete item. The checklist is a preview surface — patients see
+  // it once at the start, or again if they resume via a reminder link —
+  // not a landing pad between every step.
   const handleItemComplete = useCallback(async () => {
-    await reloadJourney();
-    // Small beat before transitioning to give users a moment to see the change
-    setPhase('checklist');
-    setActiveFormId(null);
-  }, [reloadJourney]);
+    const res = await fetch(`/api/intake/${token}`);
+    if (!res.ok) {
+      setPhase('checklist');
+      setActiveFormId(null);
+      return;
+    }
+    const data = await res.json();
+    const nextState = { ...state, ...data.journey, forms: state.forms };
+    setState(nextState);
+
+    const nextItems = buildItems(nextState);
+    const nextItem = nextItems.find((i) => !i.complete);
+    goToItem(nextItem);
+  }, [token, state, goToItem]);
 
   // Guard: if patient object missing but journey has patient_id (e.g. returning
   // via reminder link on a device that doesn't have state), hydrate the
@@ -597,6 +628,7 @@ function ConsentStep({
         setError(data.error || 'Failed to record consent');
         return;
       }
+      logJoinUrlIfPresent(await res.json());
       onComplete();
     } catch {
       setError('Something went wrong. Please try again.');
@@ -734,6 +766,7 @@ function FormStep({
           setError(data.error || 'Failed to submit form');
           return;
         }
+        logJoinUrlIfPresent(await res.json());
         onComplete();
       } catch {
         setError('Something went wrong. Please try again.');

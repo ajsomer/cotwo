@@ -79,8 +79,22 @@ export function RoomContainer({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [menuOpen]);
 
+  // Track the previous auto-state so we can detect a rising-edge transition
+  // (collapsed → auto-expanded) and reclaim the room from a manual override.
+  const prevAutoStateRef = useRef<RoomExpansionState>(autoState);
   useEffect(() => {
+    const prev = prevAutoStateRef.current;
+    prevAutoStateRef.current = autoState;
+
     if (!manualOverride) {
+      setExpansion(autoState);
+      return;
+    }
+
+    // New attention has arrived in a room the user previously collapsed —
+    // override the override so they can see it.
+    if (prev === "collapsed" && autoState === "auto-expanded") {
+      setManualOverride(false);
       setExpansion(autoState);
     }
   }, [autoState, manualOverride]);

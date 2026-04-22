@@ -14,6 +14,7 @@ import { PatientSlideOverProvider } from "./patient-slide-over-context";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import { useLocation } from "@/hooks/useLocation";
 import { useRole } from "@/hooks/useRole";
+import { useOrg } from "@/hooks/useOrg";
 
 // Lazy-load heavy modals — only downloaded when first opened
 const ProcessFlowDynamic = dynamic(
@@ -41,7 +42,9 @@ export function RunsheetShell() {
   // Context (persists across navigations)
   const { selectedLocation } = useLocation();
   const { role } = useRole();
+  const { org } = useOrg();
   const locationId = selectedLocation?.id ?? "";
+  const orgId = org?.id ?? "";
   const timezone = selectedLocation?.timezone ?? "Australia/Sydney";
 
   // Refetch helper — delegates to store
@@ -50,6 +53,8 @@ export function RunsheetShell() {
   }, [locationId]);
 
   // Fetch-if-empty: populate slices on first visit (once per tab lifetime).
+  // Workflows/forms/files are needed by the Process flow's outcome-pathway
+  // step, so we hydrate them here rather than waiting for the Workflows tab.
   useEffect(() => {
     if (!locationId) return;
     const store = getClinicStore();
@@ -58,7 +63,12 @@ export function RunsheetShell() {
     if (store.clinicianRoomIds.length === 0) {
       void store.refreshClinicianRoomIds(locationId);
     }
-  }, [locationId]);
+    if (orgId) {
+      if (!store.workflowsLoaded) void store.refreshWorkflows(orgId);
+      if (!store.formsLoaded) void store.refreshForms(orgId);
+      if (!store.filesLoaded) void store.refreshFiles(orgId);
+    }
+  }, [locationId, orgId]);
 
   // Tick `now` every 30s for derived state recalculation
   const [now, setNow] = useState(() => new Date());
@@ -153,16 +163,8 @@ export function RunsheetShell() {
     [activeCallSessionId, enriched]
   );
 
-  // Auto-close the panel if the session leaves in_session (ended elsewhere,
-  // e.g. the clinician hung up in another tab, or a realtime update).
-  useEffect(() => {
-    if (!activeCallSessionId) return;
-    if (!activeCallSession) return; // session gone (rare)
-    const state = activeCallSession.derived_state;
-    if (state !== "in_session" && state !== "running_over") {
-      setActiveCallSessionId(null);
-    }
-  }, [activeCallSessionId, activeCallSession]);
+  // Video panel closing is user-driven (Leave or Hold button inside the panel).
+  // No auto-close — the clinician controls when the panel dismisses.
 
   // Action dispatch
   const handleAction = useCallback(

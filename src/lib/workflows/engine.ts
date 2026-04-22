@@ -336,3 +336,140 @@ export async function executeScheduledActions(
 
   return result;
 }
+
+/**
+ * Fire a single action right now, ignoring its `scheduled_for`. Used for
+ * testing paths that want to skip ahead in a workflow — e.g. firing
+ * `add_to_runsheet` immediately when the patient finishes their intake
+ * package, so the end-to-end flow can be walked through in one sitting
+ * without waiting for the real scheduled offset.
+ *
+ * Returns the handler's result (same shape as `executeHandler`) so the
+ * caller can pull `session_id` / `entry_token` out for logging.
+ *
+ * Claims the action atomically (scheduled | firing → firing) so concurrent
+ * scans don't double-fire. Skips precondition evaluation — the caller has
+ * already decided this should fire now.
+ */
+export async function fireActionNow(
+  actionId: string
+): Promise<
+  | { status: "fired"; resultData: Record<string, unknown> | null }
+  | { status: "skipped"; reason: string }
+  | { status: "failed"; error: string }
+> {
+  const supabase = createServiceClient();
+
+  // Atomic claim: only transition scheduled → firing. If another process
+  // already claimed it, or it's already terminal, return skipped.
+  const { data: claimed } = await supabase
+    .from("appointment_actions")
+    .update({ status: "firing" })
+    .eq("id", actionId)
+    .eq("status", "scheduled")
+    .select("id, appointment_id, action_block_id, session_id, config, form_id")
+    .maybeSingle();
+
+  if (!claimed) {
+    return { status: "skipped", reason: "action not in scheduled state" };
+  }
+
+  const { data: block } = await supabase
+    .from("workflow_action_blocks")
+    .select("id, action_type, config, form_id, parent_action_block_id")
+    .eq("id", claimed.action_block_id)
+    .single();
+  if (!block) {
+    await supabase
+      .from("appointment_actions")
+      .update({ status: "failed", fired_at: new Date().toISOString(), error_message: "missing block" })
+      .eq("id", actionId);
+    return { status: "failed", error: "missing block" };
+  }
+
+  const { data: appt } = await supabase
+    .from("appointments")
+    .select("id, patient_id, scheduled_at, clinician_id, org_id, phone_number")
+    .eq("id", claimed.appointment_id)
+    .single();
+  if (!appt || !appt.patient_id) {
+    await supabase
+      .from("appointment_actions")
+      .update({ status: "failed", fired_at: new Date().toISOString(), error_message: "missing appointment or patient" })
+      .eq("id", actionId);
+    return { status: "failed", error: "missing appointment or patient" };
+  }
+
+  const { data: patient } = await supabase
+    .from("patients")
+    .select("first_name")
+    .eq("id", appt.patient_id)
+    .single();
+  const { data: phone } = await supabase
+    .from("patient_phone_numbers")
+    .select("phone_number")
+    .eq("patient_id", appt.patient_id)
+    .eq("is_primary", true)
+    .maybeSingle();
+
+  const { data: org } = appt.org_id
+    ? await supabase.from("organisations").select("name").eq("id", appt.org_id).single()
+    : { data: null };
+  const { data: clinician } = appt.clinician_id
+    ? await supabase.from("users").select("full_name").eq("id", appt.clinician_id).single()
+    : { data: null };
+
+  const sessionData = claimed.session_id
+    ? (await supabase
+        .from("sessions")
+        .select("session_ended_at")
+        .eq("id", claimed.session_id)
+        .single()).data
+    : null;
+
+  const actionConfig = claimed.session_id
+    ? ((claimed.config as Record<string, unknown>) ?? (block.config as Record<string, unknown>) ?? {})
+    : ((block.config as Record<string, unknown>) ?? {});
+
+  const handlerResult = await executeHandler(block.action_type as ActionType, {
+    actionId: claimed.id,
+    appointmentId: claimed.appointment_id,
+    patientId: appt.patient_id,
+    patientFirstName: patient?.first_name ?? "",
+    phoneNumber: phone?.phone_number ?? appt.phone_number ?? "",
+    scheduledAt: appt.scheduled_at ?? null,
+    clinicName: org?.name ?? "the clinic",
+    clinicianName: clinician?.full_name ?? null,
+    formId: (claimed.form_id as string | null) ?? block.form_id,
+    config: actionConfig,
+    parentActionBlockId: block.parent_action_block_id ?? null,
+    sessionId: claimed.session_id ?? null,
+    sessionEndedAt: sessionData?.session_ended_at ?? null,
+  });
+
+  if (handlerResult.status === "failed") {
+    await supabase
+      .from("appointment_actions")
+      .update({
+        status: "failed",
+        fired_at: new Date().toISOString(),
+        error_message: handlerResult.error,
+      })
+      .eq("id", actionId);
+    return { status: "failed", error: handlerResult.error };
+  }
+
+  await supabase
+    .from("appointment_actions")
+    .update({
+      status: handlerResult.status,
+      fired_at: new Date().toISOString(),
+      result: (handlerResult.resultData as Record<string, unknown>) ?? null,
+    })
+    .eq("id", actionId);
+
+  return {
+    status: "fired",
+    resultData: (handlerResult.resultData as Record<string, unknown>) ?? null,
+  };
+}

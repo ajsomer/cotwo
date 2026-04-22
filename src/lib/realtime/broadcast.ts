@@ -68,3 +68,23 @@ export async function broadcastSessionStatus(
 ): Promise<void> {
   await publish(`session:${sessionId}`, "status_changed", { sessionId, status });
 }
+
+export type ReadinessChangeEvent =
+  | "package_completed"
+  | "package_transcribed"
+  | "action_resolved"
+  | "action_updated";
+
+/**
+ * Notify all clinic clients joined to a location that something on the
+ * readiness dashboard has changed. Triggers a readiness slice refresh.
+ * The discriminator + appointment_id are informational only — the client
+ * refetches the whole readiness slice regardless.
+ */
+export async function broadcastReadinessChange(
+  locationId: string,
+  event: ReadinessChangeEvent,
+  payload: Record<string, unknown> = {}
+): Promise<void> {
+  await publish(`location:${locationId}`, "readiness_changed", { event, ...payload });
+}

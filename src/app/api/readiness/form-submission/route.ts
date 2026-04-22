@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { extractFieldsFromSchema } from "@/lib/forms/extract-fields";
 
 /**
  * GET /api/readiness/form-submission?appointment_id=xxx&form_name=yyy
@@ -48,7 +49,10 @@ export async function GET(request: NextRequest) {
       // Get form schema for field labels
       const form = matchingForm ?? forms?.[0];
       if (form?.schema) {
-        const fields = extractFieldsFromSchema(form.schema, submission.responses);
+        const fields = extractFieldsFromSchema(
+          form.schema as Record<string, unknown>,
+          submission.responses as Record<string, unknown>
+        );
         return NextResponse.json({
           fields,
           submitted_at: submission.created_at,
@@ -64,7 +68,10 @@ export async function GET(request: NextRequest) {
       .single();
 
     if (form?.schema) {
-      const fields = extractFieldsFromSchema(form.schema, submission.responses);
+      const fields = extractFieldsFromSchema(
+        form.schema as Record<string, unknown>,
+        submission.responses as Record<string, unknown>
+      );
       return NextResponse.json({
         fields,
         submitted_at: submission.created_at,
@@ -87,59 +94,4 @@ export async function GET(request: NextRequest) {
     console.error("[form-submission] Error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-}
-
-/**
- * Extract field labels and values from a SurveyJS-style schema and responses.
- */
-function extractFieldsFromSchema(
-  schema: Record<string, unknown>,
-  responses: Record<string, unknown>
-): { label: string; value: string }[] {
-  const fields: { label: string; value: string }[] = [];
-
-  // SurveyJS schema has pages -> elements -> name/title
-  const pages = (schema as { pages?: Array<{ elements?: Array<{ name: string; title?: string }> }> }).pages;
-  if (pages) {
-    for (const page of pages) {
-      for (const element of page.elements ?? []) {
-        const value = responses[element.name];
-        fields.push({
-          label: element.title ?? element.name,
-          value: formatValue(value),
-        });
-      }
-    }
-  }
-
-  // If no pages, try flat elements
-  if (fields.length === 0) {
-    const elements = (schema as { elements?: Array<{ name: string; title?: string }> }).elements;
-    if (elements) {
-      for (const element of elements) {
-        const value = responses[element.name];
-        fields.push({
-          label: element.title ?? element.name,
-          value: formatValue(value),
-        });
-      }
-    }
-  }
-
-  // Fallback: just use response keys
-  if (fields.length === 0) {
-    for (const [key, value] of Object.entries(responses)) {
-      fields.push({ label: key, value: formatValue(value) });
-    }
-  }
-
-  return fields;
-}
-
-function formatValue(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  if (Array.isArray(value)) return value.join(", ");
-  return JSON.stringify(value);
 }

@@ -177,14 +177,54 @@ export async function POST(request: NextRequest) {
       console.error("[add-patient] Workflow scheduling failed:", wfError);
     }
 
+    // Pull back any actions that fired synchronously during scheduling so
+    // the client can surface the stubbed SMS in the browser console. Easier
+    // than tailing the server terminal during demos.
+    const fired = await collectFiredActions(supabase, appointment.id);
+
     return NextResponse.json({
       appointment_id: appointment.id,
       patient_id: patientId,
+      fired_actions: fired,
     });
   } catch (err) {
     console.error("[add-patient] Error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
+}
+
+interface FiredAction {
+  action_type: string;
+  status: string;
+  result: Record<string, unknown> | null;
+  fired_at: string | null;
+}
+
+async function collectFiredActions(
+  supabase: ReturnType<typeof createServiceClient>,
+  appointmentId: string
+): Promise<FiredAction[]> {
+  const { data: actions } = await supabase
+    .from("appointment_actions")
+    .select("id, action_block_id, status, result, fired_at")
+    .eq("appointment_id", appointmentId)
+    .not("fired_at", "is", null);
+
+  if (!actions || actions.length === 0) return [];
+
+  const blockIds = actions.map((a) => a.action_block_id);
+  const { data: blocks } = await supabase
+    .from("workflow_action_blocks")
+    .select("id, action_type")
+    .in("id", blockIds);
+  const typeById = new Map((blocks ?? []).map((b) => [b.id, b.action_type]));
+
+  return actions.map((a) => ({
+    action_type: typeById.get(a.action_block_id) ?? "unknown",
+    status: a.status,
+    result: a.result as Record<string, unknown> | null,
+    fired_at: a.fired_at,
+  }));
 }
 
 /**

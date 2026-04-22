@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { broadcastReadinessChange, broadcastSessionChange } from '@/lib/realtime/broadcast';
+import { fireActionNow } from '@/lib/workflows/engine';
+import { getBaseUrl } from '@/lib/utils/url';
 
 type ItemType = 'card' | 'consent' | 'form';
 
@@ -104,6 +107,11 @@ export async function POST(
   // Check whether all configured items are now done
   const allDone = isJourneyComplete(updated);
 
+  // Testing convenience: the URL we hand back to the client so the patient
+  // tab can log its next join link to the devtools console (see
+  // intake-journey.tsx). Populated when add_to_runsheet fires.
+  let sessionJoinUrl: string | null = null;
+
   if (allDone) {
     await supabase
       .from('intake_package_journeys')
@@ -112,6 +120,36 @@ export async function POST(
 
     // Flip the matching intake_package appointment_action to completed
     await markIntakeActionCompleted(supabase, journey.appointment_id);
+
+    // TESTING ONLY: fire add_to_runsheet immediately so the end-to-end flow
+    // (intake → run sheet → waiting room) can be walked in one sitting. In
+    // production this fires on its real scheduled offset via the workflow
+    // engine cron. See TODO.md — remove once we have a dedicated test fixture.
+    const runsheetToken = await fireAddToRunsheetEarly(
+      supabase,
+      journey.appointment_id
+    );
+    if (runsheetToken) {
+      sessionJoinUrl = `${getBaseUrl()}/entry/${runsheetToken}`;
+    }
+
+    // Notify the readiness dashboard at this appointment's location.
+    const { data: appt } = await supabase
+      .from('appointments')
+      .select('location_id')
+      .eq('id', journey.appointment_id)
+      .maybeSingle();
+    if (appt?.location_id) {
+      await broadcastReadinessChange(appt.location_id, 'package_completed', {
+        appointment_id: journey.appointment_id,
+      });
+      if (runsheetToken) {
+        // New session appeared — notify the run sheet too.
+        await broadcastSessionChange(appt.location_id, 'session_created', {
+          appointment_id: journey.appointment_id,
+        });
+      }
+    }
   }
 
   const { data: finalJourney } = await supabase
@@ -124,7 +162,47 @@ export async function POST(
     .eq('id', journey.id)
     .single();
 
-  return NextResponse.json({ journey: finalJourney, completed: allDone });
+  return NextResponse.json({
+    journey: finalJourney,
+    completed: allDone,
+    session_join_url: sessionJoinUrl,
+  });
+}
+
+/**
+ * Find this appointment's add_to_runsheet action and fire it immediately.
+ * Returns the newly-minted session's entry_token if fired, null otherwise.
+ * TESTING ONLY — see call site.
+ */
+async function fireAddToRunsheetEarly(
+  supabase: ReturnType<typeof createServiceClient>,
+  appointmentId: string
+): Promise<string | null> {
+  const { data: actions } = await supabase
+    .from('appointment_actions')
+    .select('id, action_block_id, status')
+    .eq('appointment_id', appointmentId);
+  if (!actions?.length) return null;
+
+  const blockIds = actions.map((a) => a.action_block_id);
+  const { data: blocks } = await supabase
+    .from('workflow_action_blocks')
+    .select('id, action_type')
+    .in('id', blockIds);
+
+  const runsheetBlockIds = new Set(
+    (blocks ?? [])
+      .filter((b) => b.action_type === 'add_to_runsheet')
+      .map((b) => b.id)
+  );
+  const runsheetAction = actions.find(
+    (a) => runsheetBlockIds.has(a.action_block_id) && a.status === 'scheduled'
+  );
+  if (!runsheetAction) return null;
+
+  const result = await fireActionNow(runsheetAction.id);
+  if (result.status !== 'fired') return null;
+  return ((result.resultData as { entry_token?: string } | null)?.entry_token) ?? null;
 }
 
 function isJourneyComplete(j: {

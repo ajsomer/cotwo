@@ -15,6 +15,9 @@ export function ProcessFlowPayment({ session, onNext }: ProcessFlowPaymentProps)
   const defaultAmount = session.default_fee_cents ?? 0;
   const [amountCents, setAmountCents] = useState(defaultAmount);
   const [editing, setEditing] = useState(false);
+  // Separate string state for the input so the user can type freely without
+  // the value snapping back to a formatted number on every keystroke.
+  const [editValue, setEditValue] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,17 +73,27 @@ export function ProcessFlowPayment({ session, onNext }: ProcessFlowPaymentProps)
               type="number"
               step="0.01"
               min="0"
-              value={(amountCents / 100).toFixed(2)}
-              onChange={(e) =>
-                setAmountCents(Math.round(parseFloat(e.target.value || "0") * 100))
-              }
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onBlur={() => {
+                const parsed = parseFloat(editValue);
+                if (!isNaN(parsed) && parsed >= 0) {
+                  setAmountCents(Math.round(parsed * 100));
+                }
+              }}
               className="w-32 text-lg font-semibold text-gray-800 border border-gray-200 rounded-lg px-3 py-1 focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
               autoFocus
             />
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setEditing(false)}
+              onClick={() => {
+                const parsed = parseFloat(editValue);
+                if (!isNaN(parsed) && parsed >= 0) {
+                  setAmountCents(Math.round(parsed * 100));
+                }
+                setEditing(false);
+              }}
             >
               Done
             </Button>
@@ -91,7 +104,10 @@ export function ProcessFlowPayment({ session, onNext }: ProcessFlowPaymentProps)
               {formatCurrency(amountCents)}
             </span>
             <button
-              onClick={() => setEditing(true)}
+              onClick={() => {
+                setEditValue((amountCents / 100).toFixed(2));
+                setEditing(true);
+              }}
               className="text-xs text-teal-500 hover:text-teal-600"
             >
               Edit

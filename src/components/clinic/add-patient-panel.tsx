@@ -116,6 +116,30 @@ export function AddPatientPanel({
         return;
       }
 
+      if (Array.isArray(data.fired_actions) && data.fired_actions.length > 0) {
+        console.groupCollapsed(
+          `%c[intake] Fired ${data.fired_actions.length} workflow action(s) for appointment ${data.appointment_id}`,
+          "color:#2ABFBF;font-weight:600"
+        );
+        for (const a of data.fired_actions as Array<{
+          action_type: string;
+          status: string;
+          result: Record<string, unknown> | null;
+        }>) {
+          if (a.action_type === "intake_package" && a.result?.journey_token) {
+            console.log(
+              `%c  intake_package → ${a.status}`,
+              "color:#178F8F",
+              `\n  /intake/${a.result.journey_token}`,
+              `\n  full URL: ${window.location.origin}/intake/${a.result.journey_token}`
+            );
+          } else {
+            console.log(`  ${a.action_type} → ${a.status}`, a.result ?? "");
+          }
+        }
+        console.groupEnd();
+      }
+
       onSaved();
     } catch {
       setError("Network error");
