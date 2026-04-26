@@ -1,47 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServiceClient } from '@/lib/supabase/service';
+import { resolveJourney } from '@/lib/intake/resolve-journey';
 
 /**
  * GET /api/intake/[token]
- * Fetch current state of an intake package journey.
+ * Returns the full IntakeJourneyContext (org, location, appointment, journey).
  * No auth required — token-based access.
+ *
+ * Existing callers that only read `data.journey` continue to work; the
+ * additional top-level keys (`org`, `location`, `appointment`) are ignored
+ * by them and consumed by the embedded-intake-journey wrapper.
  */
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ token: string }> }
 ) {
   const { token } = await params;
-  const supabase = createServiceClient();
+  const context = await resolveJourney(token);
 
-  const { data: journey, error } = await supabase
-    .from('intake_package_journeys')
-    .select(
-      `
-      id, journey_token, status,
-      appointment_id, patient_id,
-      includes_card_capture, includes_consent, form_ids,
-      card_captured_at, consent_completed_at, forms_completed
-    `
-    )
-    .eq('journey_token', token)
-    .single();
-
-  if (error || !journey) {
+  if (!context) {
     return NextResponse.json({ error: 'Journey not found' }, { status: 404 });
   }
 
-  return NextResponse.json({
-    journey: {
-      id: journey.id,
-      journey_token: journey.journey_token,
-      status: journey.status,
-      patient_id: journey.patient_id,
-      includes_card_capture: journey.includes_card_capture,
-      includes_consent: journey.includes_consent,
-      form_ids: journey.form_ids,
-      card_captured_at: journey.card_captured_at,
-      consent_completed_at: journey.consent_completed_at,
-      forms_completed: journey.forms_completed,
-    },
-  });
+  return NextResponse.json(context);
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Model } from 'survey-core';
 import { Survey } from 'survey-react-ui';
 import 'survey-core/survey-core.min.css';
@@ -63,6 +63,20 @@ export interface IntakeJourneyContext {
 interface IntakeJourneyProps {
   context: IntakeJourneyContext;
   token: string;
+  /**
+   * When true, skip the phone OTP + contact picker and start at the checklist.
+   * Required when the host has already verified the patient (e.g. the
+   * arrival-flow gate, where identity has been confirmed earlier in the flow).
+   * Must be paired with `preConfirmedPatient`.
+   */
+  skipIdentity?: boolean;
+  preConfirmedPatient?: PatientContact;
+  /**
+   * Called when the journey transitions into its `done` phase. The standalone
+   * `/intake/[token]` page omits this and keeps showing the "You're all set"
+   * screen. Embedded hosts use it to advance their own state machine.
+   */
+  onAllItemsComplete?: () => void;
 }
 
 type Phase =
@@ -85,18 +99,33 @@ interface ConfirmContact {
 // Lazy imports to keep phone-verification etc tree-shaken if unused
 import { IntakeCardCapture } from './intake-card-capture';
 
-export function IntakeJourney({ context, token }: IntakeJourneyProps) {
+export function IntakeJourney({
+  context,
+  token,
+  skipIdentity,
+  preConfirmedPatient,
+  onAllItemsComplete,
+}: IntakeJourneyProps) {
   const { org, journey, appointment } = context;
 
   // Progress is driven by the journey row — reload it after each item so late
   // arrivals via reminder link resume at the right place.
   const [state, setState] = useState(journey);
 
-  const [rawPhase, setPhase] = useState<Phase>(() => deriveInitialPhase(journey));
+  const initialPhase: Phase =
+    skipIdentity && preConfirmedPatient
+      ? journey.status === 'completed'
+        ? 'done'
+        : 'checklist'
+      : deriveInitialPhase(journey);
+
+  const [rawPhase, setPhase] = useState<Phase>(initialPhase);
   const [phoneNumber, setPhoneNumber] = useState<string | null>(
     appointment.prefill_phone
   );
-  const [patient, setPatient] = useState<PatientContact | null>(null);
+  const [patient, setPatient] = useState<PatientContact | null>(
+    preConfirmedPatient ?? null
+  );
   const [pickerContacts, setPickerContacts] = useState<ConfirmContact[]>([]);
   const [activeFormId, setActiveFormId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -104,6 +133,16 @@ export function IntakeJourney({ context, token }: IntakeJourneyProps) {
   // Journey completion overrides any local phase state — keeps the "done"
   // screen sticky even if rawPhase is stale from before the last reload.
   const phase: Phase = state.status === 'completed' ? 'done' : rawPhase;
+
+  // Fire the host's completion hook when the journey reaches the done phase.
+  // Guarded so it fires once per mount even if the component re-renders.
+  const completionFiredRef = useRef(false);
+  useEffect(() => {
+    if (phase === 'done' && onAllItemsComplete && !completionFiredRef.current) {
+      completionFiredRef.current = true;
+      onAllItemsComplete();
+    }
+  }, [phase, onAllItemsComplete]);
 
   // Items list in fixed order. Used for the checklist screen and for
   // advancing between items.

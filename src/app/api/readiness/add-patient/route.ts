@@ -182,6 +182,29 @@ export async function POST(request: NextRequest) {
     // than tailing the server terminal during demos.
     const fired = await collectFiredActions(supabase, appointment.id);
 
+    // Demo helper: print the room URL the patient would use to enter via the
+    // direct room link. The arrival-flow gate will detect any outstanding
+    // intake package for this patient and route them through it before the
+    // waiting room. Prototype only — production builds skip this log.
+    if (room_id) {
+      const { data: room } = await supabase
+        .from('rooms')
+        .select('name, link_token')
+        .eq('id', room_id)
+        .single();
+      if (room?.link_token) {
+        const slug = room.name
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '');
+        const baseUrl =
+          process.env.NEXT_PUBLIC_BASE_URL ?? 'http://localhost:3000';
+        console.log(
+          `[readiness] patient added (${first_name} ${last_name}) — room URL: ${baseUrl}/entry/${room.link_token}?room=${slug}`
+        );
+      }
+    }
+
     return NextResponse.json({
       appointment_id: appointment.id,
       patient_id: patientId,
