@@ -146,10 +146,9 @@ export function getActionConfig(
     case 'upcoming':
       return { label: 'Nudge', variant: 'amber', action: 'nudge' };
     case 'waiting':
-      if (modality === 'telehealth') {
-        return { label: 'Admit', variant: 'teal', action: 'admit' };
-      }
-      return null;
+      // `waiting` is a telehealth-only state (in-person arrive → `checked_in`),
+      // so the Admit button always applies here regardless of modality.
+      return { label: 'Admit', variant: 'teal', action: 'admit' };
     case 'checked_in':
       return { label: 'Process', variant: 'blue', action: 'process' };
     case 'complete':
