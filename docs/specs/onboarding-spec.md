@@ -46,7 +46,7 @@ This spec assumes the following are already built (most of them are):
 
 **Not yet built — prerequisites for this spec:**
 
-- **Intake package Phase 7** (`docs/specs/intake-package-execution-plan.md` Phase 7). The patient-facing intake journey page and its API routes do not exist: `src/app/intake/[token]/page.tsx`, `src/app/intake/[token]/layout.tsx`, `src/app/api/intake/[token]/route.ts`, `src/app/api/intake/[token]/verify/route.ts`, `src/app/api/intake/[token]/complete-item/route.ts`, `src/components/patient/intake-journey.tsx`, `src/components/patient/intake-card-capture.tsx`. Workflow-fired intake package SMS links currently land on a 404. Onboarding's test session SMS uses the same `/intake/[token]` route, so Phase 7 must land first. Tracked in `TODO.md`.
+- **Intake package Phase 7** (`docs/specs/intake-package-execution-plan.md` Phase 7). The patient-facing intake journey page and its API routes are fully implemented (`/intake/[token]`). Onboarding's test session SMS uses this existing route.
 - **Refactored `seed-defaults.ts`.** The seeder still emits legacy action types (`deliver_form`, `send_reminder`, `capture_card`, `verify_contact`) instead of the new `intake_package` / `intake_reminder` / `add_to_runsheet` blocks. Both types work (handlers support both), but new orgs' default workflows don't produce intake package journeys. Onboarding's demo requires the test session to fire the intake package flow, so the seeder must be refactored first. Tracked in `TODO.md`.
 
 ### Migration numbering
@@ -97,10 +97,10 @@ Role model, permissions matrix, and the Clinic Owner vs Practice Manager distinc
 ### What we explicitly preserve (no behaviour change)
 
 - **`AddSessionPanel` is untouched.** The onboarding test session is created via a dedicated API route, not via the add-session panel. The panel's multi-patient / multi-room behaviour stays intact for real use.
-- **`EntryFlow` is untouched.** Onboarding forks to `OnboardingEntryFlow` via a flag on the session. Real patients hit `EntryFlow` exactly as they do today.
+- **`EntryFlow` is untouched.** Real patients hit `EntryFlow` exactly as they do today. The onboarding test session uses `/intake/[token]`, not `/entry/[token]`.
 - **Run sheet rendering is identical for demo sessions.** The `is_onboarding_demo` flag affects patient-side rendering only. The run sheet row, status transitions, Admit button, and video call behaviour are standard.
 - **`stripe_routing` defaults to `location`.** No changes to the payment routing model.
-- **Existing `useClinicStore` and `ClinicDataProvider`** are extended with new slices for onboarding state. No new store, no new provider, no new caching layer.
+- **`useClinicStore`** is extended with a new onboarding slice. `ClinicDataProvider` is not modified. No new store, no new provider, no new caching layer.
 - **Middleware gate extends the existing state chain.** New states (`no_pms`, `no_payments`) slotted in. Existing states (`no_org`, `no_rooms`, `complete`) retain current behaviour.
 
 ---
@@ -212,15 +212,7 @@ After the SMS is sent, the user has two parallel things happening: the laptop sh
 
 ## The Onboarding Patient Flow
 
-When the user taps the SMS on their phone, they land on `/intake/[token]` (the intake package journey page, per the intake package spec). This spec adds a fork: if the intake package journey is tied to a session with `is_onboarding_demo = true`, the page renders `OnboardingEntryFlow` instead of the standard intake journey component.
-
-### Why a fork
-
-Three reasons:
-
-1. **Fixed step sequence.** The demo needs to walk the user through the full patient surface area regardless of what the default workflow template configured. Hardcoding the sequence keeps the demo deterministic.
-2. **Tooltip layer.** Every screen has an onboarding-specific tooltip. The standard intake journey has no tooltips.
-3. **Compression framing.** A real intake package is sent days before the appointment and patients complete it across multiple sittings. The demo compresses all of that into one session and says so explicitly.
+When the user taps the SMS on their phone, they land on `/intake/[token]` (the intake package journey page, per the intake package spec). No fork component is introduced. The standard `IntakeJourney` renders for all sessions. When `is_onboarding_demo = true` on the session (passed through `resolveJourney()` → `IntakeJourneyContext`), each step is additively wrapped with `OnboardingTooltip`. The tooltip component no-ops when the flag is false, so real intake journeys are completely unaffected.
 
 ### Identity: confirm mode, not capture mode
 
@@ -355,9 +347,9 @@ Two implications:
 
 Future user-scoped slices (e.g. notification preferences, UI settings) should follow this same pattern. This spec is the first one to introduce it, so it's worth naming explicitly.
 
-### Layout hydration
+### Runsheet hydration
 
-`ClinicLayout` (server component) already performs parallel pre-fetches. Extend the fetch list with `fetchOnboardingState(userId)` which reads the two onboarding columns from `users` and looks up the test session if `test_session_sent`. The result is hydrated into the store alongside the existing slices in `ClinicDataProvider`.
+Fetch onboarding state at the `/runsheet` page level (e.g., in `RunsheetShell` or a thin server component wrapping it), rather than in `ClinicLayout`. This avoids adding a DB query to every clinic route. The result is hydrated into the store via a small client component (`OnboardingHydrator`) that calls `useClinicStore.setState({ onboarding: ... })` on mount. `ClinicLayout` and `ClinicDataProvider` are not modified.
 
 ### Realtime subscriptions
 
@@ -378,7 +370,7 @@ Existing routes (`/api/setup/clinic`, `/api/setup/rooms`, `/api/patient/arrive`,
 
 The setup pages (`/setup/pms`, `/setup/payments`) follow the existing pattern: thin server component for initial render, client component for interactivity. No data caching concerns — these are one-shot form submissions.
 
-The run sheet page is already hydrated via layout-level prefetch. Onboarding state is added to the prefetch set. No page-level loading spinners; the overlay and coach-marks render based on the hydrated store.
+Onboarding state is fetched at the runsheet page level and hydrated via `OnboardingHydrator`. No page-level loading spinners; the overlay and coach-marks render based on the hydrated store.
 
 ---
 
@@ -505,7 +497,7 @@ This route creates the full Complete-tier intake package journey for the test se
 3. **Create the session.** `is_onboarding_demo = true`, status `queued`. This populates the run sheet immediately.
 4. **Create the intake package journey.** One `intake_package_journeys` row. Config: `{ includes_card_capture: payments_enabled, includes_consent: false, form_ids: [demo_form_id] }`. The demo form ID is looked up by `org_id` + `is_platform_demo = true`.
 5. **Create the form assignment.** One `form_assignments` row against the test patient + demo form, tied to the appointment. The Phase 7 checklist picks it up as an outstanding item.
-6. **Send the SMS.** Via existing `sms.sendNotification`. Link is `${APP_URL}/intake/${journey_token}` (the Phase 7 route), not `/entry/${entry_token}`.
+6. **Send the SMS.** Via existing `sms.sendNotification`. Link is `${APP_URL}/intake/${journey_token}` (the Phase 7 route), not `/entry/${entry_token}`. The route also returns `journey_url` in its response body. The client logs this to the browser console on success (`console.log('%c[onboarding] Intake URL:', 'color: teal; font-weight: bold', journey_url)`) — the same pattern used by `logJoinUrlIfPresent` in the existing intake journey. This is the primary development affordance when SMS_PROVIDER is `console` and no real SMS is delivered.
 7. **Mark stage.** `users.onboarding_stage = 'test_session_sent'`.
 
 Returns `{ session_id, journey_token }`. The `entry_token` on the session is still populated (for `add_to_runsheet` path compatibility) but not used by onboarding.
@@ -564,8 +556,8 @@ No `OnboardingEntryFlow` component. The Phase 7 journey page (`src/app/intake/[t
 - **`WaitingRoom`** — accepts new optional prop `isOnboardingDemo: boolean`. When true, overlays the nudge message. Zero impact when false.
 - **Phase 7 journey components** — wrap each step with `OnboardingTooltip` when `is_onboarding_demo` is true on the associated session. The tooltip component no-ops when the flag is false, so the change is additive.
 - **Intake journey identity screen** — renders confirm-only for the single-match case and picker-only for multi-match. Onboarding always produces a single match since the test session's contact is created from `users.full_name` upfront.
-- **`ClinicLayout`** — extends the prefetch set to include onboarding state.
-- **`ClinicDataProvider`** — hydrates the onboarding slice into the store.
+- **`RunsheetShell`** (or a thin server component wrapping it) — fetches onboarding state at page level and passes it to `OnboardingHydrator`. Keeps the DB query off every clinic route.
+- **`OnboardingHydrator`** (`src/components/clinic/onboarding-hydrator.tsx`, new) — lightweight client component that calls `useClinicStore.setState({ onboarding: ... })` on mount. `ClinicLayout` and `ClinicDataProvider` are not modified.
 - **Forms-list queries** — every query that populates the clinic's Forms library, workflow editor form picker, or form assignment dropdown adds `AND is_platform_demo = false`. Precise list of files at implementation time.
 
 ---
@@ -610,7 +602,7 @@ Once `state === 'complete'`, the user lands on `/runsheet`. `onboarding_stage` i
 | User doesn't enter phone on test session modal | Send button disabled until a valid mobile is entered. |
 | User enters someone else's phone number | SMS sends to that number. The test session appears on the run sheet. The arc still works — the activation still requires the user to pick up the call, which they can do as long as they have access to that phone. |
 | User closes the laptop after step 5 modal but before tapping SMS | On next login: `onboarding_stage = 'test_session_sent'`, session is `queued`. Coach-mark 1 still showing. Banner reminds them to tap their SMS. |
-| User taps SMS after onboarding is already complete (`call_completed`) | `OnboardingEntryFlow` still renders (driven by `is_onboarding_demo` on the session), but `has_seen_patient_journey = true` suppresses tooltips. The user can re-run the flow as a refresher — read-only experience. |
+| User taps SMS after onboarding is already complete (`call_completed`) | Standard `IntakeJourney` renders (driven by `is_onboarding_demo` on the session), but `has_seen_patient_journey = true` suppresses all tooltips. The user can re-run the flow as a refresher — read-only experience. |
 | User deletes the test session before tapping SMS | Session removed. SMS link returns 'session not found'. `onboarding_stage` rolls back to `not_started`. Overlay returns on next `/runsheet` visit. |
 | User onboards on mobile | v1: supported for setup steps 1–4. Step 5 shows a gate message: 'Open this on your laptop to send yourself a test session and run your first call.' Not a blocker for setup completion. |
 | User's phone doesn't receive SMS | SMS provider (Vonage or console) returns an error or delivers late. Session row shows a 'Resend SMS' action. User can retry. |

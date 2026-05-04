@@ -61,7 +61,7 @@ const NAV_ITEMS: NavItemDef[] = [
   },
   {
     href: "/readiness",
-    label: "Readiness",
+    label: "Tasks",
     icon: icons.readiness,
     roles: ["clinic_owner", "practice_manager", "receptionist"],
     tiers: ["complete"],

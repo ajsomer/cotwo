@@ -12,7 +12,7 @@ This prototype demonstrates the full platform vision. It is not a production dep
 - **Styling**: Tailwind CSS with custom Coviu brand tokens
 - **Database**: Supabase (Postgres)
 - **Auth**: Supabase Auth (email/password for staff, phone OTP for patients)
-- **Real-time**: Supabase Realtime (session state changes, run sheet updates)
+- **Real-time**: Socket.io via a custom `server.ts` (clinic-side and patient-side). Supabase Realtime is available but not currently wired up — see `docs/claude-project/conventions-realtime-and-state.md`.
 - **Video**: LiveKit (stand-in for Coviu's proprietary video platform)
 - **Payments**: Stripe Connect (Custom Connect, controller properties model)
 - **Deployment**: Vercel
@@ -439,12 +439,13 @@ supabase/
 - Phone numbers in E.164 format.
 
 ### Real-Time Subscriptions
-- Run sheet updates: subscribe to `runsheet:{selected_location_id}`. When the user switches location via the app-level switcher, unsubscribe from the old channel and subscribe to the new one.
-- Background notifications: subscribe to `notifications:{location_id}` for ALL assigned locations (not just the selected one). This ensures tab title flashing and favicon badges fire even when viewing a different location.
-- Channel per session for waiting area updates: `waiting:{session_id}`
-- Channel per location for payment updates: `payments:{selected_location_id}`
+- One Socket.io room per location: `location:{selected_location_id}`. Joined via `socket.emit("join:location", locationId)`. Carries `session_changed`, `readiness_changed`, and `presence:update` events. The clinic side switches rooms when the location switcher changes.
+- Waiting room (patient side): connects to the same Socket.io server, uses `presence:track` and listens for `status_changed`. Not Supabase Realtime.
+- No separate `runsheet:`, `readiness:`, `notifications:`, `payments:`, or `waiting:` channels — those names appear in older specs but are not in the code. Reuse the location room and add a new event name when you need a new feed.
+- Cross-location notifications (tab flash / favicon badge across all assigned locations) is the intended design but is not yet implemented. The current build is selected-location only.
 - Subscribe on mount, clean up on unmount. Optimistic local state updates.
-- Fallback to 30-second polling if real-time connection drops.
+- Fallback to polling if Socket.io drops.
+- See `docs/claude-project/conventions-realtime-and-state.md` for the full picture.
 
 ### Error Handling
 - Toast notifications for user-facing errors (payment failed, SMS not sent)
@@ -471,23 +472,22 @@ ORDER BY a.scheduled_at ASC;
 
 ### Derived display state (calculated in application code, not SQL)
 ```typescript
-function getDerivedState(session: Session, appointment: Appointment | null): DisplayState {
+function getDerivedState(session: RunsheetSession, now: Date): DerivedDisplayState {
   if (session.status === 'done') return 'done';
   if (session.status === 'complete') return 'complete';
   if (session.status === 'in_session') {
-    if (appointment && isRunningOver(appointment)) return 'running_over';
+    if (isRunningOver(session, now)) return 'running_over';
     return 'in_session';
   }
   if (session.status === 'waiting') return 'waiting';
   if (session.status === 'checked_in') return 'checked_in';
-  if (session.status === 'queued') {
-    if (appointment && isPastScheduledTime(appointment)) return 'late';
-    if (session.notification_sent && !session.patient_arrived) return 'upcoming';
-    return 'queued';
-  }
+  if (isLate(session, now)) return 'late';
+  if (isUpcoming(session, now)) return 'upcoming';
   return 'queued';
 }
 ```
+
+`scheduled_at` and `duration_minutes` ride on the session row itself, so the function takes `(session, now)` rather than a separate appointment. `isUpcoming` is "within 10 minutes of scheduled time, patient hasn't arrived" — it does *not* check `notification_sent`. See `src/lib/runsheet/derived-state.ts`.
 
 ### Morning scan (create sessions from today's appointments)
 ```sql

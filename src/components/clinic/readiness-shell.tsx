@@ -430,7 +430,7 @@ export function ReadinessShell() {
       {/* Header — matches run sheet header card */}
       <div className="flex items-center bg-white rounded-xl border border-gray-200 px-6 py-2.5 mb-4">
         <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-semibold text-gray-800">Readiness</h1>
+          <h1 className="text-lg font-semibold text-gray-800">Tasks</h1>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <ReadinessModeToggle
