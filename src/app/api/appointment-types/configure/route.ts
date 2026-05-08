@@ -39,11 +39,14 @@ export async function POST(request: NextRequest) {
     if (!name?.trim()) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
     }
-    if (terminal_type !== "run_sheet" && terminal_type !== "collection_only") {
-      return NextResponse.json({ error: "terminal_type must be run_sheet or collection_only" }, { status: 400 });
+    if (terminal_type !== undefined && terminal_type !== "run_sheet") {
+      return NextResponse.json({ error: "terminal_type must be run_sheet" }, { status: 400 });
     }
-    if (terminal_type === "run_sheet" && !duration_minutes) {
-      return NextResponse.json({ error: "Duration is required for run sheet appointment types" }, { status: 400 });
+    if (duration_minutes == null || typeof duration_minutes !== "number" || duration_minutes < 0) {
+      return NextResponse.json({ error: "Duration is required" }, { status: 400 });
+    }
+    if (!modality) {
+      return NextResponse.json({ error: "Modality is required" }, { status: 400 });
     }
 
     // Urgency threshold validation
@@ -97,10 +100,10 @@ export async function POST(request: NextRequest) {
       p_org_id: org_id,
       p_appointment_type_id: appointment_type_id ?? null,
       p_name: name.trim(),
-      p_duration_minutes: terminal_type === "collection_only" ? 0 : (duration_minutes ?? 30),
-      p_modality: terminal_type === "collection_only" ? "telehealth" : (modality ?? "telehealth"),
+      p_duration_minutes: duration_minutes,
+      p_modality: modality,
       p_default_fee_cents: default_fee_cents ?? 0,
-      p_terminal_type: terminal_type,
+      p_terminal_type: "run_sheet",
       p_includes_card_capture: includes_card_capture ?? false,
       p_includes_consent: includes_consent ?? false,
       p_form_ids: formIdList,

@@ -7,9 +7,6 @@ import { scheduleWorkflowForAppointment } from "@/lib/workflows/scanner";
  *
  * Creates a patient (or matches existing) and an appointment, then kicks off
  * the workflow engine. Used by the Readiness Dashboard's "+ Add patient" flow.
- *
- * room_id and scheduled_at are required only for run_sheet appointment types.
- * Collection-only types create appointments with null scheduled_at and room_id.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -27,9 +24,24 @@ export async function POST(request: NextRequest) {
       confirm_existing,
     } = body;
 
-    // Validate always-required fields
-    if (!first_name || !last_name || !dob || !mobile || !appointment_type_id || !org_id || !location_id) {
-      return NextResponse.json({ error: "Required fields: first_name, last_name, dob, mobile, appointment_type_id, org_id, location_id" }, { status: 400 });
+    if (
+      !first_name ||
+      !last_name ||
+      !dob ||
+      !mobile ||
+      !appointment_type_id ||
+      !org_id ||
+      !location_id ||
+      !room_id ||
+      !scheduled_at
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Required fields: first_name, last_name, dob, mobile, appointment_type_id, org_id, location_id, room_id, scheduled_at",
+        },
+        { status: 400 }
+      );
     }
 
     // Normalise phone to E.164 (basic Australian mobile normalisation)
@@ -39,35 +51,6 @@ export async function POST(request: NextRequest) {
     }
 
     const supabase = createServiceClient();
-
-    // Look up the workflow template's terminal_type to determine required fields
-    const { data: link } = await supabase
-      .from("type_workflow_links")
-      .select("workflow_template_id")
-      .eq("appointment_type_id", appointment_type_id)
-      .eq("direction", "pre_appointment")
-      .maybeSingle();
-
-    let terminalType: string | null = null;
-    if (link) {
-      const { data: template } = await supabase
-        .from("workflow_templates")
-        .select("terminal_type")
-        .eq("id", link.workflow_template_id)
-        .single();
-      terminalType = template?.terminal_type ?? null;
-    }
-
-    const isRunSheet = terminalType !== "collection_only";
-
-    if (isRunSheet) {
-      if (!room_id || !scheduled_at) {
-        return NextResponse.json(
-          { error: "Room and appointment time are required for this appointment type" },
-          { status: 400 }
-        );
-      }
-    }
 
     // Check for existing patient by phone + DOB + org
     const { data: existingPatients } = await supabase
@@ -142,7 +125,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Create appointment (scheduled_at and room_id nullable for collection-only)
+    // Create appointment
     const { data: appointment, error: apptError } = await supabase
       .from("appointments")
       .insert({
@@ -150,8 +133,8 @@ export async function POST(request: NextRequest) {
         location_id,
         patient_id: patientId,
         appointment_type_id,
-        room_id: room_id ?? null,
-        scheduled_at: scheduled_at ?? null,
+        room_id,
+        scheduled_at,
         clinician_id: null,
         phone_number: normalised,
         status: "scheduled",
@@ -169,7 +152,7 @@ export async function POST(request: NextRequest) {
       await scheduleWorkflowForAppointment(
         appointment.id,
         appointment_type_id,
-        scheduled_at ?? null
+        scheduled_at
       );
     } catch (wfError) {
       // Workflow scheduling failure is non-fatal — the appointment exists,

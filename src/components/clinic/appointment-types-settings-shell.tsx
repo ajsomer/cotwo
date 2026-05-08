@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState } from "react";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import { useOrg } from "@/hooks/useOrg";
 import type { AppointmentTypeRow } from "@/stores/clinic-store";
@@ -69,33 +69,14 @@ export function AppointmentTypesSettingsShell() {
   }, [org]);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingType, setEditingType] = useState<AppointmentTypeRow | null>(null);
-  const [editorTerminalType, setEditorTerminalType] = useState<"run_sheet" | "collection_only">("run_sheet");
-
-  const runSheetTypes = useMemo(
-    () => appointmentTypes.filter((t) => t.terminal_type !== "collection_only"),
-    [appointmentTypes]
-  );
-
-  const collectionTypes = useMemo(
-    () => appointmentTypes.filter((t) => t.terminal_type === "collection_only"),
-    [appointmentTypes]
-  );
 
   const handleRowClick = (type: AppointmentTypeRow) => {
     setEditingType(type);
-    setEditorTerminalType(type.terminal_type === "collection_only" ? "collection_only" : "run_sheet");
     setEditorOpen(true);
   };
 
   const handleNewType = () => {
     setEditingType(null);
-    setEditorTerminalType("run_sheet");
-    setEditorOpen(true);
-  };
-
-  const handleNewCollection = () => {
-    setEditingType(null);
-    setEditorTerminalType("collection_only");
     setEditorOpen(true);
   };
 
@@ -126,8 +107,6 @@ export function AppointmentTypesSettingsShell() {
 
   return (
     <div className="p-5 space-y-4">
-      {/* ── Appointment types section ── */}
-
       {/* Label + explainer + button */}
       <div className="flex items-center justify-between gap-4">
         <div>
@@ -144,8 +123,8 @@ export function AppointmentTypesSettingsShell() {
         </button>
       </div>
 
-      {/* Appointment types table (run_sheet only) */}
-      {runSheetTypes.length === 0 ? (
+      {/* Appointment types table */}
+      {appointmentTypes.length === 0 ? (
         <div className="text-center py-12 text-sm text-gray-500">
           No appointment types yet. Create one to get started.
         </div>
@@ -161,7 +140,7 @@ export function AppointmentTypesSettingsShell() {
           </div>
 
           {/* Rows */}
-          {runSheetTypes.map((type, i) => {
+          {appointmentTypes.map((type, i) => {
             const hasInFlight = type.pre_workflow_template_id && type.in_flight_count > 0;
             const actionLabel = type.action_count > 0
               ? `${type.action_count} action${type.action_count === 1 ? "" : "s"}`
@@ -172,7 +151,7 @@ export function AppointmentTypesSettingsShell() {
                 key={type.id}
                 onClick={() => handleRowClick(type)}
                 className={`grid grid-cols-5 gap-3 w-full px-5 py-2.5 text-left transition-colors hover:bg-gray-50/50 ${
-                  i < runSheetTypes.length - 1 ? "border-b border-gray-100" : ""
+                  i < appointmentTypes.length - 1 ? "border-b border-gray-100" : ""
                 }`}
                 style={{ backgroundColor: hasInFlight ? IN_FLIGHT_ROW_BG : undefined }}
               >
@@ -205,75 +184,10 @@ export function AppointmentTypesSettingsShell() {
         </div>
       )}
 
-      {/* ── Standalone collections section ── */}
-
-      {/* Label + explainer + button */}
-      <div className="flex items-center justify-between gap-4 pt-2">
-        <div>
-          <span className="text-sm font-medium text-gray-800">Standalone collections</span>
-          <p className="text-[13px] italic mt-1" style={{ color: IDLE_GREY }}>
-            Send forms to patients outside of an appointment. Terminates when all forms are returned.
-          </p>
-        </div>
-        <button
-          onClick={handleNewCollection}
-          className="flex-shrink-0 inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 transition-colors"
-        >
-          + New collection
-        </button>
-      </div>
-
-      {/* Collections table */}
-      {collectionTypes.length === 0 ? (
-        <div className="text-center py-8 text-sm text-gray-500">
-          No standalone collections yet.
-        </div>
-      ) : (
-        <div className="rounded-xl overflow-hidden border border-gray-200 bg-white">
-          {/* Column headers */}
-          <div className="grid grid-cols-3 gap-3 px-5 py-2 border-b border-gray-200">
-            <span className="text-[11px] tracking-wide text-gray-500">Collection</span>
-            <span className="text-[11px] tracking-wide text-gray-500">Actions</span>
-            <span className="text-[11px] tracking-wide text-gray-500">Status</span>
-          </div>
-
-          {/* Rows */}
-          {collectionTypes.map((type, i) => {
-            const hasInFlight = type.pre_workflow_template_id && type.in_flight_count > 0;
-            const actionLabel = type.action_count > 0
-              ? `${type.action_count} action${type.action_count === 1 ? "" : "s"}`
-              : "Not configured";
-
-            return (
-              <button
-                key={type.id}
-                onClick={() => handleRowClick(type)}
-                className={`grid grid-cols-3 gap-3 w-full px-5 py-2.5 text-left transition-colors hover:bg-gray-50/50 ${
-                  i < collectionTypes.length - 1 ? "border-b border-gray-100" : ""
-                }`}
-                style={{ backgroundColor: hasInFlight ? IN_FLIGHT_ROW_BG : undefined }}
-              >
-                {/* Name */}
-                <div className="min-w-0 self-center">
-                  <span className="text-sm font-medium text-gray-800 truncate block">{type.name}</span>
-                </div>
-
-                {/* Actions */}
-                <span className="text-xs self-center" style={{ color: IDLE_GREY }}>{actionLabel}</span>
-
-                {/* Status */}
-                <div className="self-center"><RuntimeStateCell type={type} /></div>
-              </button>
-            );
-          })}
-        </div>
-      )}
-
       {/* Editor slide-out */}
       {editorOpen && (
         <AppointmentTypeEditor
           appointmentType={editingType}
-          forceTerminalType={editorTerminalType}
           onClose={handleEditorClose}
           onSaved={handleSaved}
         />

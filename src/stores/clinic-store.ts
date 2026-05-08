@@ -90,6 +90,14 @@ export interface ReadinessCounts {
   post: number;
 }
 
+export interface CompletedFormSubmission {
+  submission_id: string;
+  form_id: string;
+  form_name: string;
+  completed_at: string;
+  source: 'assignment' | 'intake_package';
+}
+
 export interface ReadinessAppointment {
   appointment_id: string;
   scheduled_at: string | null;
@@ -106,6 +114,7 @@ export interface ReadinessAppointment {
   outstanding_actions: number;
   actions: WorkflowAction[];
   outstanding_forms: OutstandingForm[];
+  completed_form_submissions: CompletedFormSubmission[];
   // Post-appointment fields
   pathway_name?: string | null;
   session_ended_at?: string | null;
@@ -230,6 +239,14 @@ export interface ClinicStore {
   filesLoaded: boolean;
   workflowsLoaded: boolean;
   paymentConfigLoaded: boolean;
+  clinicianRoomIdsLoaded: boolean;
+
+  // Per-slice last-fetched timestamps (epoch ms). Used by the Socket.IO
+  // connect handler to skip refetches that would race with a fresh SSR
+  // hydration on cold load.
+  sessionsFetchedAt: number | null;
+  readinessFetchedAt: number | null;
+  roomsFetchedAt: number | null;
 
   // --- Actions ---
 
@@ -238,6 +255,18 @@ export interface ClinicStore {
     locationId: string,
     orgId: string,
     data: ClinicInitialData
+  ) => void;
+
+  // Hydrate just the slices needed for the runsheet's first frame.
+  // Called from src/components/clinic/runsheet-hydrator.tsx on cold load.
+  hydrateRunsheetSlices: (
+    locationId: string,
+    orgId: string,
+    data: {
+      sessions: RunsheetSession[];
+      rooms: RoomWithClinicians[];
+      clinicianRoomIds: string[];
+    }
   ) => void;
 
   // Refresh all location-scoped data (client-side fetches)
@@ -338,6 +367,10 @@ export const useClinicStore = create<ClinicStore>()(
       filesLoaded: false,
       workflowsLoaded: false,
       paymentConfigLoaded: false,
+      clinicianRoomIdsLoaded: false,
+      sessionsFetchedAt: null,
+      readinessFetchedAt: null,
+      roomsFetchedAt: null,
 
       // Hydrate from server-side initial data (synchronous, no fetch)
       hydrateFromInitialData: (locationId, orgId, data) => {
@@ -373,9 +406,46 @@ export const useClinicStore = create<ClinicStore>()(
             filesLoaded: true,
             workflowsLoaded: true,
             paymentConfigLoaded: true,
+            clinicianRoomIdsLoaded: true,
+            sessionsFetchedAt: Date.now(),
+            readinessFetchedAt: Date.now(),
+            roomsFetchedAt: Date.now(),
           },
           false,
           "hydrateFromInitialData"
+        );
+      },
+
+      // Hydrate just the slices needed for the runsheet's first frame.
+      // Sets per-slice loaded flags and fetched-at timestamps so the
+      // socket connect handler can skip the cold-load resync race.
+      hydrateRunsheetSlices: (locationId, orgId, data) => {
+        const now = Date.now();
+        const rooms: Room[] = data.rooms.map((r) => ({
+          id: r.id,
+          location_id: r.location_id,
+          name: r.name,
+          room_type: r.room_type,
+          link_token: r.link_token,
+          sort_order: r.sort_order,
+          payments_enabled: r.payments_enabled ?? false,
+        }));
+        set(
+          {
+            locationId,
+            orgId,
+            sessions: data.sessions,
+            rooms,
+            roomsWithClinicians: data.rooms,
+            clinicianRoomIds: data.clinicianRoomIds,
+            sessionsLoaded: true,
+            roomsLoaded: true,
+            clinicianRoomIdsLoaded: true,
+            sessionsFetchedAt: now,
+            roomsFetchedAt: now,
+          },
+          false,
+          "hydrateRunsheetSlices"
         );
       },
 
@@ -397,7 +467,11 @@ export const useClinicStore = create<ClinicStore>()(
           const data = await fetchJson<{ sessions: RunsheetSession[] }>(
             `/api/runsheet?locationId=${locationId}&_t=${Date.now()}`
           );
-          set({ sessions: data.sessions, sessionsLoaded: true }, false, "refreshSessions");
+          set(
+            { sessions: data.sessions, sessionsLoaded: true, sessionsFetchedAt: Date.now() },
+            false,
+            "refreshSessions"
+          );
         } catch (e) {
           console.error("Failed to refresh sessions:", e);
         }
@@ -420,7 +494,7 @@ export const useClinicStore = create<ClinicStore>()(
             payments_enabled: r.payments_enabled ?? false,
           }));
           set(
-            { rooms, roomsWithClinicians, roomsLoaded: true },
+            { rooms, roomsWithClinicians, roomsLoaded: true, roomsFetchedAt: Date.now() },
             false,
             "refreshRooms"
           );
@@ -451,6 +525,7 @@ export const useClinicStore = create<ClinicStore>()(
               },
               readinessLoadedPre: true,
               readinessLoadedPost: true,
+              readinessFetchedAt: Date.now(),
             },
             false,
             "refreshReadiness"
@@ -549,7 +624,11 @@ export const useClinicStore = create<ClinicStore>()(
           const data = await fetchJson<{ roomIds: string[] }>(
             `/api/runsheet/clinician-rooms?location_id=${locationId}`
           );
-          set({ clinicianRoomIds: data.roomIds ?? [] }, false, "refreshClinicianRoomIds");
+          set(
+            { clinicianRoomIds: data.roomIds ?? [], clinicianRoomIdsLoaded: true },
+            false,
+            "refreshClinicianRoomIds"
+          );
         } catch (e) {
           console.error("Failed to refresh clinician room IDs:", e);
         }
@@ -648,7 +727,11 @@ export const useClinicStore = create<ClinicStore>()(
       setPaymentRooms: (rooms) =>
         set({ paymentRooms: rooms }, false, "setPaymentRooms"),
       setClinicianRoomIds: (ids) =>
-        set({ clinicianRoomIds: ids }, false, "setClinicianRoomIds"),
+        set(
+          { clinicianRoomIds: ids, clinicianRoomIdsLoaded: true },
+          false,
+          "setClinicianRoomIds"
+        ),
       setConnectedSessions: (sessions) =>
         set({ connectedSessions: sessions }, false, "setConnectedSessions"),
       setOnboarding: (partial) =>
@@ -678,6 +761,10 @@ export const useClinicStore = create<ClinicStore>()(
             readinessLoadedPre: false,
             readinessLoadedPost: false,
             paymentConfigLoaded: false,
+            clinicianRoomIdsLoaded: false,
+            sessionsFetchedAt: null,
+            readinessFetchedAt: null,
+            roomsFetchedAt: null,
           },
           false,
           "resetLocationData"

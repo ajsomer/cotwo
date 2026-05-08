@@ -35,10 +35,49 @@ export function ClinicDataProvider({ children }: ClinicDataProviderProps) {
 
     // On every (re)connect: join the location room AND resync sessions +
     // readiness, since we may have missed events while disconnected.
+    //
+    // Per-slice freshness gate: skip the resync for any slice that was
+    // hydrated/fetched within the last 30s. This suppresses the cold-load
+    // race where the first socket `connect` fires moments after SSR
+    // hydration and would otherwise refetch what we just received. Real
+    // post-disconnect reconnects have stale timestamps and refresh as before.
+    const FRESH_WINDOW_MS = 30_000;
     const onConnect = () => {
       socket.emit("join:location", locationId);
-      void getClinicStore().refreshSessions(locationId);
-      void getClinicStore().refreshReadiness(locationId);
+      const store = getClinicStore();
+      const now = Date.now();
+      // Location must match too — a recent timestamp for a different
+      // location must not suppress a real refresh.
+      const locationMatches = store.locationId === locationId;
+      const sessionsAge =
+        store.sessionsFetchedAt != null ? now - store.sessionsFetchedAt : null;
+      const readinessAge =
+        store.readinessFetchedAt != null ? now - store.readinessFetchedAt : null;
+      const sessionsFresh =
+        locationMatches &&
+        store.sessionsLoaded &&
+        store.sessionsFetchedAt != null &&
+        now - store.sessionsFetchedAt < FRESH_WINDOW_MS;
+      const readinessFresh =
+        locationMatches &&
+        store.readinessLoadedPre &&
+        store.readinessFetchedAt != null &&
+        now - store.readinessFetchedAt < FRESH_WINDOW_MS;
+      console.log("[onConnect]", {
+        locationId,
+        storeLocationId: store.locationId,
+        locationMatches,
+        sessionsLoaded: store.sessionsLoaded,
+        sessionsFetchedAt: store.sessionsFetchedAt,
+        sessionsAge,
+        sessionsFresh,
+        readinessLoadedPre: store.readinessLoadedPre,
+        readinessFetchedAt: store.readinessFetchedAt,
+        readinessAge,
+        readinessFresh,
+      });
+      if (!sessionsFresh) void store.refreshSessions(locationId);
+      if (!readinessFresh) void store.refreshReadiness(locationId);
     };
     if (socket.connected) socket.emit("join:location", locationId);
     socket.on("connect", onConnect);

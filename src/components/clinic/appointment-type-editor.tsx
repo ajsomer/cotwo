@@ -9,7 +9,6 @@ import type { AppointmentTypeRow } from "@/stores/clinic-store";
 
 interface AppointmentTypeEditorProps {
   appointmentType: AppointmentTypeRow | null; // null = new
-  forceTerminalType?: "run_sheet" | "collection_only";
   onClose: () => void;
   onSaved: () => void;
 }
@@ -25,7 +24,6 @@ const DEFAULT_REMINDER_MESSAGE =
 
 export function AppointmentTypeEditor({
   appointmentType,
-  forceTerminalType,
   onClose,
   onSaved,
 }: AppointmentTypeEditorProps) {
@@ -66,11 +64,6 @@ export function AppointmentTypeEditor({
     appointmentType?.default_fee_cents ? (appointmentType.default_fee_cents / 100).toFixed(2) : ""
   );
 
-  // Terminal type: determined by creation context or existing data, no longer user-editable
-  const [terminalType] = useState<"run_sheet" | "collection_only">(
-    forceTerminalType ?? appointmentType?.terminal_type ?? "run_sheet"
-  );
-
   // Section 3: Intake package — initialize from existing config
   const [includesCardCapture, setIncludesCardCapture] = useState(
     existingIntakeConfig.includes_card_capture ?? false
@@ -108,8 +101,6 @@ export function AppointmentTypeEditor({
   const [error, setError] = useState<string | null>(null);
   const [showDiscardBanner, setShowDiscardBanner] = useState(false);
 
-  const isCollectionOnly = terminalType === "collection_only";
-
   const toggleSection = useCallback((key: string) => {
     setExpandedSections((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
@@ -118,9 +109,6 @@ export function AppointmentTypeEditor({
   const detailsSummary = (() => {
     if (!name) return "Not set";
     const feeDisplay = defaultFeeDollars ? `$${parseFloat(defaultFeeDollars).toFixed(2)}` : "$0.00";
-    if (isCollectionOnly) {
-      return `Collection only · ${feeDisplay}`;
-    }
     return `${durationMinutes || "—"} min ${modality} · ${feeDisplay}`;
   })();
 
@@ -153,9 +141,8 @@ export function AppointmentTypeEditor({
   // Validation
   const validate = (): string | null => {
     if (!name.trim()) return "Name is required";
-    if (terminalType === "run_sheet") {
-      if (!durationMinutes) return "Duration is required for run sheet types";
-    }
+    if (durationMinutes === "" || durationMinutes == null) return "Duration is required";
+    if (durationMinutes < 0) return "Duration must be non-negative";
     if (atRiskAfterDays && overdueAfterDays && Number(overdueAfterDays) <= Number(atRiskAfterDays)) {
       return "Overdue threshold must be greater than at-risk threshold";
     }
@@ -187,10 +174,10 @@ export function AppointmentTypeEditor({
           appointment_type_id: appointmentType?.id ?? null,
           org_id: org?.id,
           name: name.trim(),
-          duration_minutes: isCollectionOnly ? null : (durationMinutes || null),
-          modality: isCollectionOnly ? null : modality,
+          duration_minutes: durationMinutes === "" ? null : durationMinutes,
+          modality,
           default_fee_cents: defaultFeeDollars ? Math.round(parseFloat(defaultFeeDollars) * 100) : 0,
-          terminal_type: terminalType,
+          terminal_type: "run_sheet",
           includes_card_capture: includesCardCapture,
           includes_consent: includesConsent,
           form_ids: selectedFormIds,
@@ -255,9 +242,7 @@ export function AppointmentTypeEditor({
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-base font-semibold text-gray-800">
-                {isNew
-                  ? (isCollectionOnly ? "Create new collection" : "Create new appointment type")
-                  : appointmentType.name}
+                {isNew ? "Create new appointment type" : appointmentType.name}
               </h2>
               {isPmsSynced && (
                 <div className="flex items-center gap-1 mt-0.5">
@@ -312,27 +297,20 @@ export function AppointmentTypeEditor({
                   type="number"
                   value={durationMinutes}
                   onChange={(e) => setDurationMinutes(e.target.value ? parseInt(e.target.value) : "")}
-                  disabled={isPmsSynced || isCollectionOnly}
+                  disabled={isPmsSynced}
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none disabled:bg-gray-50 disabled:text-gray-500"
                 />
-                {isCollectionOnly && (
-                  <p className="text-xs text-gray-400 mt-1">Not applicable for collection-only</p>
-                )}
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Modality</label>
                 <select
                   value={modality}
                   onChange={(e) => setModality(e.target.value)}
-                  disabled={isCollectionOnly}
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none disabled:bg-gray-50 disabled:text-gray-500"
                 >
                   <option value="telehealth">Telehealth</option>
                   <option value="in_person">In-person</option>
                 </select>
-                {isCollectionOnly && (
-                  <p className="text-xs text-gray-400 mt-1">Not applicable for collection-only</p>
-                )}
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Default fee ($)</label>
@@ -608,13 +586,11 @@ export function AppointmentTypeEditor({
               </div>
             </div>
 
-            {terminalType === "run_sheet" && (
-              <div className="mt-3 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2.5">
-                <p className="text-xs text-blue-800">
-                  For run-sheet appointments, Coviu will always mark the package as at-risk 2 days before the appointment and overdue 1 day before, regardless of the thresholds above.
-                </p>
-              </div>
-            )}
+            <div className="mt-3 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2.5">
+              <p className="text-xs text-blue-800">
+                For run-sheet appointments, Coviu will always mark the package as at-risk 2 days before the appointment and overdue 1 day before, regardless of the thresholds above.
+              </p>
+            </div>
           </CollapsibleSection>
 
           {error && (
@@ -665,7 +641,7 @@ export function AppointmentTypeEditor({
               disabled={saving}
               className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 disabled:opacity-50"
             >
-              {saving ? "Saving..." : isNew ? (isCollectionOnly ? "Create collection" : "Create appointment type") : "Save changes"}
+              {saving ? "Saving..." : isNew ? "Create appointment type" : "Save changes"}
             </button>
           </div>
         </div>

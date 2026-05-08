@@ -39,7 +39,6 @@ export function RunsheetShell() {
   const rooms = useClinicStore((s) => s.rooms);
   const clinicianRoomIds = useClinicStore((s) => s.clinicianRoomIds);
   const connectedSessions = useClinicStore((s) => s.connectedSessions);
-  const sessionsLoaded = useClinicStore((s) => s.sessionsLoaded);
 
   // Context (persists across navigations)
   const { selectedLocation } = useLocation();
@@ -60,9 +59,17 @@ export function RunsheetShell() {
   useEffect(() => {
     if (!locationId) return;
     const store = getClinicStore();
+    console.log("[RunsheetShell.fetchIfEmpty]", {
+      locationId,
+      orgId,
+      sessionsLoaded: store.sessionsLoaded,
+      roomsLoaded: store.roomsLoaded,
+      clinicianRoomIdsLoaded: store.clinicianRoomIdsLoaded,
+      storeLocationId: store.locationId,
+    });
     if (!store.sessionsLoaded) void store.refreshSessions(locationId);
     if (!store.roomsLoaded) void store.refreshRooms(locationId);
-    if (store.clinicianRoomIds.length === 0) {
+    if (!store.clinicianRoomIdsLoaded) {
       void store.refreshClinicianRoomIds(locationId);
     }
     if (orgId) {

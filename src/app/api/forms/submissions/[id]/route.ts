@@ -1,17 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import {
+  assertStaffCanAccessPatient,
+  requireAuthenticatedUser,
+} from "@/lib/auth/staff-access";
 
 // GET /api/forms/submissions/[id]
+// Staff-only; org-scoped via the submission's patient.
 export async function GET(
   _request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+
+  // Cookie auth first — must precede any service-role lookup so an
+  // unauthenticated caller can't tell valid IDs from invalid ones.
+  const auth = await requireAuthenticatedUser();
+  if (!auth.ok) {
+    return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
+  }
 
   try {
     const supabase = createServiceClient();
 
-    // Fetch submission
     const { data: submission, error } = await supabase
       .from("form_submissions")
       .select("id, form_id, patient_id, appointment_id, responses, created_at")
@@ -22,7 +33,13 @@ export async function GET(
       return NextResponse.json({ error: "Submission not found" }, { status: 404 });
     }
 
-    // Fetch form name and schema snapshot from the assignment
+    const access = await assertStaffCanAccessPatient(supabase, submission.patient_id);
+    if (!access.ok) {
+      // 404 (not 403) on the org-mismatch case — same shape as the
+      // submission-not-found branch above, no existence leak.
+      return NextResponse.json({ error: "Submission not found" }, { status: 404 });
+    }
+
     const [formRes, assignmentRes, patientRes] = await Promise.all([
       supabase
         .from("forms")

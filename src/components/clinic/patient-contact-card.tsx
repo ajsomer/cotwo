@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { SlideOver } from "@/components/ui/slide-over";
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "./status-badge";
@@ -17,8 +17,42 @@ interface PatientContactCardProps {
   onClose: () => void;
   // Readiness-specific (optional — omit for run sheet usage)
   appointment?: ReadinessAppointment | null;
-  onOpenFormHandoff?: (actionId: string, formName: string) => void;
   onDeleted?: () => void;
+}
+
+interface AppointmentRow {
+  appointment_id: string | null;
+  session_id: string | null;
+  scheduled_at: string | null;
+  created_at: string | null;
+  type_name: string | null;
+  room_name: string | null;
+  modality: "telehealth" | "in_person" | null;
+  appointment_status: string | null;
+  session_status: string | null;
+  bucket: "past" | "today" | "upcoming" | "awaiting_scheduling";
+  location_timezone: string | null;
+}
+
+interface FormAssignmentRow {
+  id: string;
+  form_id: string;
+  appointment_id: string | null;
+  form_name: string;
+  status: string;
+  sent_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  submission_id: string | null;
+}
+
+interface FormSubmissionRow {
+  submission_id: string;
+  form_id: string;
+  appointment_id: string | null;
+  form_name: string;
+  completed_at: string;
+  created_at: string;
 }
 
 interface PatientDetails {
@@ -35,22 +69,16 @@ interface PatientDetails {
     card_expiry: string | null;
     is_default: boolean;
   }[];
-  current_session: {
-    status: string;
-    scheduled_at: string | null;
-    type_name: string | null;
-    room_name: string | null;
-  } | null;
-  visit_history: { date: string; type_name: string | null }[];
-  form_assignments: {
-    id: string;
-    form_name: string;
-    status: string;
-    sent_at: string | null;
-    completed_at: string | null;
-    created_at: string;
-    submission_id: string | null;
-  }[];
+  appointments: AppointmentRow[];
+  total_appointment_count: number;
+  form_assignments: FormAssignmentRow[];
+  form_submissions: FormSubmissionRow[];
+}
+
+interface CompletedFormDisplayRow {
+  submission_id: string;
+  form_name: string;
+  completed_at: string;
 }
 
 const ACTION_STATUS_BADGE: Record<string, { label: string; variant: string }> = {
@@ -73,12 +101,11 @@ export function PatientContactCard({
   open,
   onClose,
   appointment,
-  onOpenFormHandoff,
   onDeleted,
 }: PatientContactCardProps) {
   const [details, setDetails] = useState<PatientDetails | null>(null);
   const [loading, setLoading] = useState(false);
-  const [resendingId, setResendingId] = useState<string | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -88,19 +115,52 @@ export function PatientContactCard({
   useEffect(() => {
     if (!open || !resolvedPatientId) {
       setDetails(null);
+      setFetchError(null);
       return;
     }
 
     setLoading(true);
-    const url = session?.session_id
-      ? `/api/patient/${resolvedPatientId}?session_id=${session.session_id}`
-      : `/api/patient/${resolvedPatientId}`;
-    fetch(url)
-      .then((res) => res.json())
-      .then((data) => setDetails(data))
-      .catch((err) => console.error("[ContactCard] fetch failed:", err))
-      .finally(() => setLoading(false));
-  }, [open, resolvedPatientId, session?.session_id]);
+    setFetchError(null);
+    const params = new URLSearchParams();
+    // Active row hints — let the server force-include the active row even if
+    // it falls outside the regular candidate window.
+    if (session?.session_id) params.set("session_id", session.session_id);
+    if (appointment?.appointment_id) params.set("appointment_id", appointment.appointment_id);
+    else if (session?.appointment_id) params.set("appointment_id", session.appointment_id);
+    const qs = params.toString();
+    const url = qs ? `/api/patient/${resolvedPatientId}?${qs}` : `/api/patient/${resolvedPatientId}`;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(url);
+        if (cancelled) return;
+        if (!res.ok) {
+          setDetails(null);
+          setFetchError(
+            res.status === 401
+              ? "Your session has expired. Please reload."
+              : res.status === 404
+                ? "Patient not found."
+                : "Failed to load patient details.",
+          );
+          return;
+        }
+        const data = (await res.json()) as PatientDetails;
+        if (cancelled) return;
+        setDetails(data);
+      } catch (err) {
+        if (cancelled) return;
+        console.error("[ContactCard] fetch failed:", err);
+        setFetchError("Failed to load patient details.");
+        setDetails(null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, resolvedPatientId, session?.session_id, session?.appointment_id, appointment?.appointment_id]);
 
   // Reset delete confirm when panel closes
   useEffect(() => {
@@ -127,21 +187,40 @@ export function PatientContactCard({
     }
   };
 
-  // Readiness: completed form actions for the handoff section
-  const formActions = appointment?.actions.filter(
-    (a) =>
-      a.action_type === "deliver_form" &&
-      (a.status === "completed" || a.status === "transcribed")
-  ) ?? [];
-
-  // Readiness: all actions sorted by offset for the workflow timeline
+  // Workflow timeline (readiness only) — sorted by offset
   const sortedActions = appointment
     ? [...appointment.actions].sort((a, b) => b.offset_minutes - a.offset_minutes)
     : [];
 
+  // Active row matching: in run-sheet mode, match by appointment_id when present,
+  // else by session_id (on-demand sessions). In readiness mode, match by appointment_id.
+  const activeAppointmentId = appointment?.appointment_id ?? session?.appointment_id ?? null;
+  const activeSessionId = !activeAppointmentId ? session?.session_id ?? null : null;
+
+  const orderedAppointments = useMemo(
+    () => orderAppointmentsForDisplay(details?.appointments ?? [], activeAppointmentId, activeSessionId),
+    [details?.appointments, activeAppointmentId, activeSessionId],
+  );
+
+  // Completed forms list — see "Slide-out data source" in the spec.
+  const completedForms = useMemo(
+    () => buildCompletedFormsList(details, appointment, session, isReadinessMode),
+    [details, appointment, session, isReadinessMode],
+  );
+
+  const hiddenAppointmentCount = details
+    ? Math.max(0, details.total_appointment_count - orderedAppointments.length)
+    : 0;
+
   return (
     <SlideOver open={open} onClose={onClose} title="Patient details">
-      {loading || !details ? (
+      {fetchError ? (
+        <div className="p-5">
+          <div className="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {fetchError}
+          </div>
+        </div>
+      ) : loading || !details || !details.patient ? (
         <div className="p-5 space-y-4">
           {/* Skeleton */}
           <div className="flex flex-col items-center gap-3">
@@ -255,39 +334,41 @@ export function PatientContactCard({
 
           <div className="h-px bg-gray-200" />
 
-          {/* Appointment details (readiness only) */}
-          {isReadinessMode && appointment && (
-            <>
-              <section>
-                <h4 className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
-                  Appointment
-                </h4>
-                <div className="rounded-lg bg-gray-50 px-3 py-3 space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    {appointment.scheduled_at && (
-                      <span className="text-sm font-medium text-gray-800">
-                        {new Date(appointment.scheduled_at).toLocaleDateString("en-AU", {
-                          weekday: "short",
-                          day: "numeric",
-                          month: "short",
-                        })}{" "}
-                        at{" "}
-                        {formatTime(appointment.scheduled_at)}
-                      </span>
-                    )}
-                  </div>
-                  {appointment.appointment_type_name && (
-                    <p className="text-xs text-gray-500">{appointment.appointment_type_name}</p>
-                  )}
-                  {appointment.room_name && (
-                    <p className="text-xs text-gray-500">{appointment.room_name}</p>
-                  )}
-                </div>
-              </section>
+          {/* Appointments — unified past + today + upcoming + awaiting_scheduling */}
+          <section>
+            <h4 className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
+              Appointments
+            </h4>
+            {orderedAppointments.length === 0 ? (
+              <p className="text-sm text-gray-400">No appointments yet</p>
+            ) : (
+              <div className="space-y-1.5">
+                {orderedAppointments.map((row) => {
+                  const isActive = isActiveRow(row, activeAppointmentId, activeSessionId);
+                  return (
+                    <AppointmentRowView
+                      key={appointmentRowKey(row)}
+                      row={row}
+                      isActive={isActive}
+                      sessionDerivedState={isActive ? session?.derived_state ?? null : null}
+                    />
+                  );
+                })}
+              </div>
+            )}
+            {hiddenAppointmentCount > 0 && (
+              <p className="text-[11px] text-gray-400 mt-2">
+                + {hiddenAppointmentCount} earlier appointment{hiddenAppointmentCount === 1 ? "" : "s"}
+              </p>
+            )}
+            {isReadinessMode && (
+              <p className="text-[10px] text-gray-400 italic mt-1">
+                Coviu appointments only — not a complete clinical history
+              </p>
+            )}
+          </section>
 
-              <div className="h-px bg-gray-200" />
-            </>
-          )}
+          <div className="h-px bg-gray-200" />
 
           {/* Workflow timeline (readiness only) */}
           {isReadinessMode && sortedActions.length > 0 && (
@@ -352,40 +433,37 @@ export function PatientContactCard({
             </>
           )}
 
-          {/* Completed forms with handoff (readiness only) */}
-          {isReadinessMode && formActions.length > 0 && (
+          {/* Completed forms — read-only, opens PDF in new tab */}
+          {completedForms.length > 0 && (
             <>
               <section>
                 <h4 className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
-                  Completed Forms
+                  Completed forms
                 </h4>
                 <div className="space-y-1.5">
-                  {formActions.map((action) => (
-                    <div
-                      key={action.action_id}
-                      className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2"
+                  {completedForms.map((row) => (
+                    <button
+                      key={row.submission_id}
+                      type="button"
+                      onClick={() => window.open(`/api/forms/submissions/${row.submission_id}/pdf`, "_blank")}
+                      className="w-full flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 text-left transition-colors hover:bg-gray-100"
+                      title={`Submitted ${formatFullTimestamp(row.completed_at)}`}
                     >
-                      <span className="text-sm text-gray-800 truncate">
-                        {action.form_name ?? "Form"}
-                      </span>
-                      {action.status === "transcribed" ? (
-                        <Badge variant="teal">Transcribed</Badge>
-                      ) : onOpenFormHandoff ? (
-                        <button
-                          onClick={() =>
-                            onOpenFormHandoff(
-                              action.action_id,
-                              action.form_name ?? "Form"
-                            )
-                          }
-                          className="rounded-full bg-amber-500/15 px-3 py-1 text-xs font-medium text-amber-700 hover:bg-amber-500/25"
+                      <div className="min-w-0 flex-1">
+                        <span className="text-sm text-gray-800 block truncate">
+                          {row.form_name}
+                        </span>
+                        <span
+                          className="text-xs text-gray-400"
+                          title={formatFullTimestamp(row.completed_at)}
                         >
-                          Review
-                        </button>
-                      ) : (
-                        <Badge variant="teal">Completed</Badge>
-                      )}
-                    </div>
+                          Submitted {relativeTime(row.completed_at)}
+                        </span>
+                      </div>
+                      <span className="text-[11px] font-medium text-teal-600 ml-2 flex-shrink-0">
+                        View
+                      </span>
+                    </button>
                   ))}
                 </div>
               </section>
@@ -424,159 +502,240 @@ export function PatientContactCard({
               <p className="text-sm text-gray-400">No card on file</p>
             )}
           </section>
-
-          <div className="h-px bg-gray-200" />
-
-          {/* Today's Session (run sheet only) */}
-          {session && (
-            <section>
-              <h4 className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
-                Today&apos;s session
-              </h4>
-              <div className="rounded-lg bg-gray-50 px-3 py-3 space-y-1.5">
-                <div className="flex items-center gap-2">
-                  {session.scheduled_at && (
-                    <span className="text-sm font-medium text-gray-800">
-                      {formatTime(session.scheduled_at)}
-                    </span>
-                  )}
-                  {session.type_name && (
-                    <>
-                      <span className="text-gray-300">&middot;</span>
-                      <span className="text-sm text-gray-600">{session.type_name}</span>
-                    </>
-                  )}
-                </div>
-                {session.room_name && (
-                  <p className="text-xs text-gray-500">{session.room_name}</p>
-                )}
-                <div className="flex items-center gap-2">
-                  <StatusBadge state={session.derived_state} />
-                  {session.modality && (
-                    <span className="text-xs text-gray-400 capitalize">
-                      {session.modality === "telehealth" ? "Telehealth" : "In-person"}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </section>
-          )}
-
-          {session && <div className="h-px bg-gray-200" />}
-
-          {/* Visit History */}
-          <section>
-            <h4 className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
-              Visit history
-            </h4>
-            {details.visit_history.length > 0 ? (
-              <div className="space-y-1">
-                {details.visit_history.map((v, i) => (
-                  <div key={i} className="flex items-center justify-between py-1.5">
-                    <span className="text-sm text-gray-800">
-                      {formatDate(v.date)}
-                    </span>
-                    {v.type_name && (
-                      <span className="text-xs text-gray-400">{v.type_name}</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm text-gray-400">First visit</p>
-            )}
-            {isReadinessMode && (
-              <p className="text-[10px] text-gray-400 italic mt-1">
-                Coviu appointments only — not a complete clinical history
-              </p>
-            )}
-          </section>
-
-          <div className="h-px bg-gray-200" />
-
-          {/* Forms (run sheet / legacy) */}
-          {!isReadinessMode && (
-            <section>
-              <h4 className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
-                Forms
-              </h4>
-              {details.form_assignments && details.form_assignments.length > 0 ? (
-                <div className="space-y-1.5">
-                  {details.form_assignments.map((fa) => (
-                    <div
-                      key={fa.id}
-                      className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <span className="text-sm text-gray-800 block truncate">
-                          {fa.form_name}
-                        </span>
-                        <span className="text-xs text-gray-400">
-                          {fa.status === "completed" && fa.completed_at
-                            ? `Completed ${relativeTime(fa.completed_at)}`
-                            : fa.sent_at
-                              ? `Sent ${relativeTime(fa.sent_at)}`
-                              : "Pending"}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 ml-2 flex-shrink-0">
-                        <span
-                          className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                            fa.status === "completed"
-                              ? "bg-teal-500/15 text-teal-700"
-                              : fa.status === "opened"
-                                ? "bg-amber-500/15 text-amber-700"
-                                : fa.status === "sent"
-                                  ? "bg-amber-500/15 text-amber-700"
-                                  : "bg-gray-200 text-gray-600"
-                          }`}
-                        >
-                          {fa.status === "completed" ? "Completed" : fa.status === "opened" ? "Opened" : fa.status === "sent" ? "Sent" : "Pending"}
-                        </span>
-                        {fa.status !== "completed" ? (
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              setResendingId(fa.id);
-                              try {
-                                await fetch("/api/forms/assignments/send", {
-                                  method: "POST",
-                                  headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({ assignment_id: fa.id }),
-                                });
-                              } catch {
-                                // silent
-                              }
-                              setTimeout(() => setResendingId(null), 2000);
-                            }}
-                            className="text-[11px] text-teal-600 hover:text-teal-700 whitespace-nowrap"
-                          >
-                            {resendingId === fa.id ? "Sent!" : "Resend"}
-                          </button>
-                        ) : fa.submission_id ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              window.open(`/api/forms/submissions/${fa.submission_id}`, "_blank");
-                            }}
-                            className="text-[11px] text-teal-600 hover:text-teal-700 whitespace-nowrap"
-                          >
-                            View
-                          </button>
-                        ) : null}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-gray-400">No forms sent to this patient.</p>
-              )}
-            </section>
-          )}
         </div>
       )}
     </SlideOver>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Appointment ordering and rendering
+// ---------------------------------------------------------------------------
+
+function appointmentRowKey(row: AppointmentRow): string {
+  return row.appointment_id ?? `session:${row.session_id ?? ""}`;
+}
+
+function isActiveRow(
+  row: AppointmentRow,
+  activeAppointmentId: string | null,
+  activeSessionId: string | null,
+): boolean {
+  if (activeAppointmentId && row.appointment_id === activeAppointmentId) return true;
+  if (!activeAppointmentId && activeSessionId && row.session_id === activeSessionId) return true;
+  return false;
+}
+
+/**
+ * Within-bucket sort plus active-row hoisting in today.
+ *
+ * The API has already grouped rows into the right bucket order
+ * (upcoming → today → past → awaiting_scheduling) and sorted within each
+ * bucket. The slide-out's only adjustment is to float the active row to the
+ * top of the today bucket if present, since the API doesn't know which row
+ * is active for this caller.
+ */
+function orderAppointmentsForDisplay(
+  rows: AppointmentRow[],
+  activeAppointmentId: string | null,
+  activeSessionId: string | null,
+): AppointmentRow[] {
+  const todayActiveIdx = rows.findIndex(
+    (r) => r.bucket === "today" && isActiveRow(r, activeAppointmentId, activeSessionId),
+  );
+  if (todayActiveIdx === -1) return rows;
+  const out = [...rows];
+  const [active] = out.splice(todayActiveIdx, 1);
+  // Find the first today row in the new array and insert before it.
+  const firstTodayIdx = out.findIndex((r) => r.bucket === "today");
+  out.splice(firstTodayIdx === -1 ? 0 : firstTodayIdx, 0, active);
+  return out;
+}
+
+function dateLabel(row: AppointmentRow): string {
+  if (row.bucket === "awaiting_scheduling") return "Awaiting scheduling";
+  const instant = row.scheduled_at ?? row.created_at;
+  if (!instant) return "—";
+  const tz = row.location_timezone ?? undefined;
+
+  const dayParts = new Intl.DateTimeFormat("en-AU", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(instant));
+  const partOf = (type: string) => Number(dayParts.find((p) => p.type === type)?.value ?? "0");
+  const rowDay = { y: partOf("year"), m: partOf("month"), d: partOf("day") };
+
+  const nowParts = new Intl.DateTimeFormat("en-AU", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const nowPartOf = (type: string) => Number(nowParts.find((p) => p.type === type)?.value ?? "0");
+  const nowDay = { y: nowPartOf("year"), m: nowPartOf("month"), d: nowPartOf("day") };
+
+  const dayDelta = daysBetween(rowDay, nowDay);
+  if (dayDelta === 0) return "Today";
+  if (dayDelta === 1) return "Tomorrow";
+  if (dayDelta === -1) return "Yesterday";
+
+  return new Date(instant).toLocaleDateString("en-AU", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: dayDelta < -180 || dayDelta > 180 ? "numeric" : undefined,
+    timeZone: tz,
+  });
+}
+
+function daysBetween(
+  a: { y: number; m: number; d: number },
+  b: { y: number; m: number; d: number },
+): number {
+  const aMs = Date.UTC(a.y, a.m - 1, a.d);
+  const bMs = Date.UTC(b.y, b.m - 1, b.d);
+  return Math.round((aMs - bMs) / (24 * 60 * 60 * 1000));
+}
+
+function timeLabel(row: AppointmentRow): string | null {
+  if (!row.scheduled_at) return null;
+  return new Date(row.scheduled_at).toLocaleTimeString("en-AU", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: row.location_timezone ?? undefined,
+  });
+}
+
+function modalityLabel(row: AppointmentRow): string | null {
+  if (!row.modality) return null;
+  return row.modality === "telehealth" ? "Telehealth" : "In-person";
+}
+
+function AppointmentRowView({
+  row,
+  isActive,
+  sessionDerivedState,
+}: {
+  row: AppointmentRow;
+  isActive: boolean;
+  sessionDerivedState: EnrichedSession["derived_state"] | null;
+}) {
+  const date = dateLabel(row);
+  const time = timeLabel(row);
+  const modality = modalityLabel(row);
+
+  const cardClass = isActive
+    ? "rounded-lg bg-white border border-gray-200 px-3 py-3"
+    : "rounded-lg bg-gray-50 px-3 py-2";
+
+  const showUpcomingTag = row.bucket === "upcoming" && isWithinNextDays(row, 7);
+  // Modality is helpful on every actionable row, not just the active one —
+  // shown on upcoming and active rows; suppressed on past/awaiting to keep
+  // the history list compact.
+  const showModality = modality && (isActive || row.bucket === "upcoming");
+
+  return (
+    <div className={cardClass}>
+      <div className="flex items-baseline gap-2">
+        <span className="text-sm font-medium text-gray-800">{date}</span>
+        {time && <span className="text-xs text-gray-500">at {time}</span>}
+      </div>
+      {(row.type_name || row.room_name) && (
+        <p className="text-xs text-gray-500 mt-0.5">
+          {row.type_name}
+          {row.type_name && row.room_name ? " · " : ""}
+          {row.room_name}
+        </p>
+      )}
+      <div className="flex items-center gap-2 mt-1">
+        {row.appointment_status === "no_show" && <Badge variant="faded">No show</Badge>}
+        {showUpcomingTag && <span className="text-[10px] text-gray-400">Upcoming</span>}
+        {isActive && sessionDerivedState && <StatusBadge state={sessionDerivedState} />}
+        {showModality && (
+          <span className="text-xs text-gray-400">{modality}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function isWithinNextDays(row: AppointmentRow, days: number): boolean {
+  if (!row.scheduled_at) return false;
+  const ms = new Date(row.scheduled_at).getTime() - Date.now();
+  if (ms < 0) return false;
+  return ms <= days * 24 * 60 * 60 * 1000;
+}
+
+// ---------------------------------------------------------------------------
+// Completed forms list assembly
+// ---------------------------------------------------------------------------
+
+function buildCompletedFormsList(
+  details: PatientDetails | null,
+  appointment: ReadinessAppointment | null | undefined,
+  session: EnrichedSession | null | undefined,
+  isReadinessMode: boolean,
+): CompletedFormDisplayRow[] {
+  if (!details) return [];
+
+  // Readiness mode: read directly from the readiness payload's
+  // completed_form_submissions (built in fetchers/readiness.ts).
+  if (isReadinessMode && appointment) {
+    return (appointment.completed_form_submissions ?? [])
+      .slice()
+      .sort((a, b) => b.completed_at.localeCompare(a.completed_at))
+      .map((s) => ({
+        submission_id: s.submission_id,
+        form_name: s.form_name,
+        completed_at: s.completed_at,
+      }));
+  }
+
+  // Non-readiness modes: union of form_assignments (completed, with a
+  // submission_id) + form_submissions, deduplicated by submission_id.
+  const assignmentRows = details.form_assignments
+    .filter((a) => a.status === "completed" && a.submission_id)
+    .map((a) => ({
+      submission_id: a.submission_id!,
+      form_name: a.form_name,
+      completed_at: a.completed_at ?? a.created_at,
+      appointment_id: a.appointment_id,
+    }));
+
+  const submissionRows = details.form_submissions.map((s) => ({
+    submission_id: s.submission_id,
+    form_name: s.form_name,
+    completed_at: s.completed_at,
+    appointment_id: s.appointment_id,
+  }));
+
+  const seen = new Set<string>();
+  const merged: { submission_id: string; form_name: string; completed_at: string; appointment_id: string | null }[] = [];
+  for (const row of [...assignmentRows, ...submissionRows]) {
+    if (seen.has(row.submission_id)) continue;
+    seen.add(row.submission_id);
+    merged.push(row);
+  }
+
+  // Run-sheet mode (regular session): scope to session.appointment_id.
+  // Run-sheet on-demand session (no appointment_id): fall back to standalone.
+  // Standalone: all rows.
+  let scoped = merged;
+  if (session?.appointment_id) {
+    scoped = merged.filter((r) => r.appointment_id === session.appointment_id);
+  }
+
+  return scoped
+    .sort((a, b) => b.completed_at.localeCompare(a.completed_at))
+    .slice(0, 10)
+    .map((r) => ({
+      submission_id: r.submission_id,
+      form_name: r.form_name,
+      completed_at: r.completed_at,
+    }));
 }
 
 // --- Helpers ---
@@ -594,19 +753,24 @@ function formatDob(dob: string): string {
   return `${formatted} (${age})`;
 }
 
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString("en-AU", {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
-}
-
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-AU", {
     day: "2-digit",
     month: "short",
     year: "numeric",
+  });
+}
+
+function formatFullTimestamp(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("en-AU", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
   });
 }
 

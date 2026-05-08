@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { SlideOver } from "@/components/ui/slide-over";
 import { useClinicStore } from "@/stores/clinic-store";
 
@@ -18,7 +18,11 @@ export function AddPatientPanel({
   onSaved,
 }: AddPatientPanelProps) {
   const rooms = useClinicStore((s) => s.rooms);
-  const appointmentTypes = useClinicStore((s) => s.appointmentTypes);
+  // Hide legacy collection_only types from creation. The DB enum still
+  // permits the value, but new appointments must be run-sheet only.
+  const appointmentTypes = useClinicStore((s) => s.appointmentTypes).filter(
+    (t) => t.terminal_type !== "collection_only"
+  );
 
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -38,14 +42,6 @@ export function AddPatientPanel({
 
   const today = new Date().toISOString().split("T")[0];
 
-  // Determine if the selected appointment type needs run sheet fields
-  const selectedType = useMemo(
-    () => appointmentTypes.find((t) => t.id === appointmentTypeId),
-    [appointmentTypes, appointmentTypeId]
-  );
-  const isRunSheet = selectedType?.terminal_type !== "collection_only";
-  const needsScheduling = !!appointmentTypeId && isRunSheet;
-
   const validate = (): string | null => {
     if (!firstName.trim()) return "First name is required";
     if (!lastName.trim()) return "Last name is required";
@@ -55,17 +51,13 @@ export function AddPatientPanel({
     if (mobile.replace(/\D/g, "").length < 10)
       return "Mobile number must be at least 10 digits";
     if (!appointmentTypeId) return "Workflow type is required";
+    if (!roomId) return "Room is required";
+    if (!date) return "Appointment date is required";
+    if (date < today) return "Appointment date cannot be in the past";
+    if (!time) return "Appointment time is required";
 
-    // Run sheet types require room, date, and time
-    if (needsScheduling) {
-      if (!roomId) return "Room is required";
-      if (!date) return "Appointment date is required";
-      if (date < today) return "Appointment date cannot be in the past";
-      if (!time) return "Appointment time is required";
-
-      const scheduled = new Date(`${date}T${time}`);
-      if (scheduled <= new Date()) return "Appointment must be in the future";
-    }
+    const scheduled = new Date(`${date}T${time}`);
+    if (scheduled <= new Date()) return "Appointment must be in the future";
 
     return null;
   };
@@ -90,13 +82,9 @@ export function AddPatientPanel({
         org_id: orgId,
         location_id: locationId,
         confirm_existing: confirmExisting,
+        scheduled_at: new Date(`${date}T${time}`).toISOString(),
+        room_id: roomId,
       };
-
-      // Only include scheduling fields for run sheet types
-      if (needsScheduling) {
-        body.scheduled_at = new Date(`${date}T${time}`).toISOString();
-        body.room_id = roomId;
-      }
 
       const res = await fetch("/api/readiness/add-patient", {
         method: "POST",
@@ -247,15 +235,7 @@ export function AddPatientPanel({
             </label>
             <select
               value={appointmentTypeId}
-              onChange={(e) => {
-                setAppointmentTypeId(e.target.value);
-                // Reset scheduling fields when switching types
-                if (!e.target.value) {
-                  setRoomId("");
-                  setDate("");
-                  setTime("");
-                }
-              }}
+              onChange={(e) => setAppointmentTypeId(e.target.value)}
               className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none"
             >
               <option value="">Select type...</option>
@@ -267,56 +247,51 @@ export function AddPatientPanel({
             </select>
           </div>
 
-          {/* Run sheet fields — only shown when a run sheet type is selected */}
-          {needsScheduling && (
-            <>
-              {/* Room */}
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
-                  Room *
-                </label>
-                <select
-                  value={roomId}
-                  onChange={(e) => setRoomId(e.target.value)}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none"
-                >
-                  <option value="">Select room...</option>
-                  {rooms.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+          {/* Room */}
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Room *
+            </label>
+            <select
+              value={roomId}
+              onChange={(e) => setRoomId(e.target.value)}
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none"
+            >
+              <option value="">Select room...</option>
+              {rooms.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </select>
+          </div>
 
-              {/* Date */}
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
-                  Appointment date *
-                </label>
-                <input
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  min={today}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none"
-                />
-              </div>
+          {/* Date */}
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Appointment date *
+            </label>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              min={today}
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none"
+            />
+          </div>
 
-              {/* Time */}
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
-                  Appointment time *
-                </label>
-                <input
-                  type="time"
-                  value={time}
-                  onChange={(e) => setTime(e.target.value)}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none"
-                />
-              </div>
-            </>
-          )}
+          {/* Time */}
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Appointment time *
+            </label>
+            <input
+              type="time"
+              value={time}
+              onChange={(e) => setTime(e.target.value)}
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none"
+            />
+          </div>
 
           {error && (
             <p className="text-xs text-red-500">{error}</p>

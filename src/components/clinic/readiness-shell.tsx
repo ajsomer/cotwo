@@ -570,15 +570,6 @@ export function ReadinessShell() {
           patientId={activePanel.appointment.patient_id || null}
           appointment={activePanel.appointment}
           onClose={() => setActivePanel(null)}
-          onOpenFormHandoff={(actionId, formName) =>
-            setActivePanel({
-              type: "form-handoff",
-              appointment: activePanel.appointment,
-              actionId,
-              formName,
-              returnTo: "detail",
-            })
-          }
           onDeleted={handleSaved}
         />
       )}

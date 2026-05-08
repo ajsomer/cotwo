@@ -7,6 +7,7 @@ import {
 } from "@/lib/readiness/derived-state";
 import { getPostActionLabel } from "@/lib/workflows/types";
 import type {
+  CompletedFormSubmission,
   ReadinessAppointment,
   ReadinessCounts,
 } from "@/stores/clinic-store";
@@ -153,6 +154,112 @@ export const fetchReadinessSlice = cache(async (
     }
   }
 
+  // ------------------------------------------------------------
+  // completed_form_submissions per appointment
+  //
+  // Two queries merged by submission_id:
+  //   (1) form_assignments (status='completed', has submission_id) — covers
+  //       deliver_form workflow actions.
+  //   (2) form_submissions filtered by intake-package journey's configured
+  //       form_ids — covers intake-package submissions, which write directly
+  //       to form_submissions without a form_assignments row.
+  // completed_at precedence:
+  //   - assignment rows → form_assignments.completed_at
+  //   - intake-package rows → journey.forms_completed[form_id] ??
+  //       form_submissions.created_at
+  //
+  // Filtering query 2 on the journey's configured form_ids (not on
+  // forms_completed) is intentional: forms_completed is the per-form
+  // completion timestamp JSONB, which may be missing for historical rows.
+  // form_ids is the stable configured list; the JSONB drives only the
+  // completed_at fallback.
+  // ------------------------------------------------------------
+  const completedSubsByAppt = new Map<string, CompletedFormSubmission[]>();
+
+  // Form names from the existing formMap cover assignment-block and action
+  // form_ids, but intake-package submissions reference forms via the journey's
+  // configured form_ids — those may not be in formMap. Top up the map with
+  // any unseen IDs from journey rows before we render rows.
+  const journeyFormIds = new Set<string>();
+  for (const j of journeysRes.data ?? []) {
+    if (Array.isArray(j.form_ids)) {
+      for (const fid of j.form_ids as string[]) {
+        if (fid && !formMap.has(fid)) journeyFormIds.add(fid);
+      }
+    }
+  }
+  if (journeyFormIds.size > 0) {
+    const { data: extraForms } = await supabase
+      .from("forms")
+      .select("id, name")
+      .in("id", [...journeyFormIds]);
+    for (const f of extraForms ?? []) formMap.set(f.id, f.name);
+  }
+
+  if (locationApptIds.length > 0) {
+    const [completedAssignmentsRes, intakeSubmissionsRes] = await Promise.all([
+      supabase
+        .from("form_assignments")
+        .select("submission_id, form_id, completed_at, appointment_id")
+        .in("appointment_id", locationApptIds)
+        .eq("status", "completed")
+        .not("submission_id", "is", null),
+      // For intake-package submissions, scope to journey-configured form IDs
+      // for each appointment that has a journey row.
+      (async () => {
+        const journeyAppts = (journeysRes.data ?? []).filter(
+          (j) => Array.isArray(j.form_ids) && j.form_ids.length > 0,
+        );
+        if (journeyAppts.length === 0) return { data: [] as Array<{ id: string; form_id: string; appointment_id: string; created_at: string }> };
+        // We need (appointment_id, form_id) pairs; build a single OR predicate.
+        const orFilters = journeyAppts.flatMap((j) =>
+          (j.form_ids as string[]).map(
+            (fid) => `and(appointment_id.eq.${j.appointment_id},form_id.eq.${fid})`,
+          ),
+        );
+        return supabase
+          .from("form_submissions")
+          .select("id, form_id, appointment_id, created_at")
+          .or(orFilters.join(","));
+      })(),
+    ]);
+
+    const assignmentSubmissionIds = new Set<string>();
+
+    for (const row of completedAssignmentsRes.data ?? []) {
+      if (!row.submission_id || !row.appointment_id) continue;
+      assignmentSubmissionIds.add(row.submission_id);
+      const list = completedSubsByAppt.get(row.appointment_id) ?? [];
+      list.push({
+        submission_id: row.submission_id,
+        form_id: row.form_id,
+        form_name: formMap.get(row.form_id) ?? "Form",
+        completed_at: row.completed_at ?? "",
+        source: "assignment",
+      });
+      completedSubsByAppt.set(row.appointment_id, list);
+    }
+
+    for (const row of intakeSubmissionsRes.data ?? []) {
+      // Skip if the same submission was already added via the assignment path
+      // (defensive — intake-package submissions don't have assignment rows by
+      // design, but the union by submission_id keeps us safe).
+      if (assignmentSubmissionIds.has(row.id)) continue;
+      const journey = journeyMap.get(row.appointment_id);
+      const formsCompleted = (journey?.forms_completed as Record<string, string> | null | undefined) ?? null;
+      const completedAt = formsCompleted?.[row.form_id] ?? row.created_at;
+      const list = completedSubsByAppt.get(row.appointment_id) ?? [];
+      list.push({
+        submission_id: row.id,
+        form_id: row.form_id,
+        form_name: formMap.get(row.form_id) ?? "Form",
+        completed_at: completedAt,
+        source: "intake_package",
+      });
+      completedSubsByAppt.set(row.appointment_id, list);
+    }
+  }
+
   type GroupedAppointment = {
     appointment_id: string;
     scheduled_at: string | null;
@@ -175,6 +282,7 @@ export const fetchReadinessSlice = cache(async (
     session_ended_at: string | null;
     actions: ReadinessAppointment["actions"];
     outstanding_forms: ReadinessAppointment["outstanding_forms"];
+    completed_form_submissions: CompletedFormSubmission[];
   };
 
   const grouped = new Map<string, GroupedAppointment>();
@@ -218,6 +326,7 @@ export const fetchReadinessSlice = cache(async (
         session_ended_at: null,
         actions: [],
         outstanding_forms: [],
+        completed_form_submissions: completedSubsByAppt.get(appt.id) ?? [],
       });
     }
 
