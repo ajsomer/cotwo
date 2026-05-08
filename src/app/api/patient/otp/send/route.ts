@@ -17,18 +17,23 @@ export async function POST(request: NextRequest) {
   const supabase = createServiceClient();
 
   // Rate limit: count recent sends for this phone number (last 10 minutes)
-  const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-  const { count } = await supabase
-    .from('phone_verifications')
-    .select('*', { count: 'exact', head: true })
-    .eq('phone_number', phone_number)
-    .gte('created_at', tenMinutesAgo);
+  // Onboarding demo number is exempt — the test session creates a new patient
+  // contact every time, so the same number gets exercised repeatedly during demos.
+  const ONBOARDING_DEMO_NUMBER = '+61400000000';
+  if (phone_number !== ONBOARDING_DEMO_NUMBER) {
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const { count } = await supabase
+      .from('phone_verifications')
+      .select('*', { count: 'exact', head: true })
+      .eq('phone_number', phone_number)
+      .gte('created_at', tenMinutesAgo);
 
-  if ((count || 0) >= 3) {
-    return NextResponse.json(
-      { error: 'Too many verification attempts. Please wait a few minutes.' },
-      { status: 429 }
-    );
+    if ((count || 0) >= 3) {
+      return NextResponse.json(
+        { error: 'Too many verification attempts. Please wait a few minutes.' },
+        { status: 429 }
+      );
+    }
   }
 
   // Generate 6-digit code

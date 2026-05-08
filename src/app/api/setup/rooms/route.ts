@@ -2,8 +2,50 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { NextResponse, type NextRequest } from "next/server";
 
+export async function GET() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const service = createServiceClient();
+
+  const { data: assignment } = await service
+    .from("staff_assignments")
+    .select("location_id, locations!inner(org_id)")
+    .eq("user_id", user.id)
+    .limit(1)
+    .single();
+
+  if (!assignment) {
+    return NextResponse.json({ rooms: [], imported: false });
+  }
+
+  const orgId = (assignment as unknown as { locations: { org_id: string } }).locations.org_id;
+
+  const [{ data: rooms }, { data: pms }] = await Promise.all([
+    service
+      .from("rooms")
+      .select("id, name, sort_order")
+      .eq("location_id", assignment.location_id)
+      .order("sort_order", { ascending: true }),
+    service
+      .from("pms_connections")
+      .select("provider, status")
+      .eq("org_id", orgId)
+      .maybeSingle(),
+  ]);
+
+  const imported = pms?.provider === "gentu" && pms?.status === "connected";
+
+  return NextResponse.json({ rooms: rooms ?? [], imported });
+}
+
 export async function POST(request: NextRequest) {
-  // Verify auth
   const supabase = await createClient();
   const {
     data: { user },
@@ -15,7 +57,7 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json();
   const { rooms } = body as {
-    rooms?: Array<{ name: string; sort_order: number }>;
+    rooms?: Array<{ id?: string; name: string; sort_order: number }>;
   };
 
   if (!rooms || rooms.length === 0) {
@@ -25,7 +67,6 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Validate room names
   if (rooms.some((r) => !r.name?.trim())) {
     return NextResponse.json(
       { error: "All rooms must have a name." },
@@ -35,7 +76,6 @@ export async function POST(request: NextRequest) {
 
   const service = createServiceClient();
 
-  // Look up the user's staff assignment and location
   const { data: assignment, error: saError } = await service
     .from("staff_assignments")
     .select("id, location_id, role")
@@ -50,39 +90,83 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Insert rooms
-  const roomInserts = rooms.map((r) => ({
-    location_id: assignment.location_id,
-    name: r.name.trim(),
-    sort_order: r.sort_order,
-  }));
-
-  const { data: createdRooms, error: roomError } = await service
+  // Diff against existing rooms: update kept rows, insert new ones, delete removed ones.
+  const { data: existing } = await service
     .from("rooms")
-    .insert(roomInserts)
-    .select("id, sort_order");
+    .select("id")
+    .eq("location_id", assignment.location_id);
 
-  if (roomError || !createdRooms) {
-    return NextResponse.json(
-      { error: "Failed to create rooms." },
-      { status: 500 }
-    );
+  const existingIds = new Set((existing ?? []).map((r) => r.id));
+  const submittedIds = new Set(rooms.filter((r) => r.id).map((r) => r.id as string));
+  const toDelete = [...existingIds].filter((id) => !submittedIds.has(id));
+
+  if (toDelete.length > 0) {
+    await service.from("rooms").delete().in("id", toDelete);
   }
 
-  // Auto-assign clinic owner to the first room
-  const firstRoom = createdRooms.find((r) => r.sort_order === 0) ?? createdRooms[0];
+  // Updates for kept rooms
+  await Promise.all(
+    rooms
+      .filter((r) => r.id && existingIds.has(r.id))
+      .map((r) =>
+        service
+          .from("rooms")
+          .update({ name: r.name.trim(), sort_order: r.sort_order })
+          .eq("id", r.id as string)
+      )
+  );
 
-  if (
-    firstRoom &&
-    (assignment.role === "clinic_owner" || assignment.role === "clinician")
-  ) {
-    await service.from("clinician_room_assignments").insert({
-      staff_assignment_id: assignment.id,
-      room_id: firstRoom.id,
-    });
+  // Inserts for new rooms
+  const newRows = rooms.filter((r) => !r.id || !existingIds.has(r.id));
+  let inserted: { id: string; sort_order: number }[] = [];
+  if (newRows.length > 0) {
+    const { data, error } = await service
+      .from("rooms")
+      .insert(
+        newRows.map((r) => ({
+          location_id: assignment.location_id,
+          name: r.name.trim(),
+          sort_order: r.sort_order,
+          room_type: "clinical",
+        }))
+      )
+      .select("id, sort_order");
+
+    if (error) {
+      return NextResponse.json({ error: "Failed to save rooms." }, { status: 500 });
+    }
+    inserted = data ?? [];
   }
 
-  return NextResponse.json({
-    rooms: createdRooms.map((r) => r.id),
-  });
+  // Auto-assign clinic owner to the first room (sort_order 0)
+  if (assignment.role === "clinic_owner" || assignment.role === "clinician") {
+    const firstSubmitted = rooms.find((r) => r.sort_order === 0) ?? rooms[0];
+    let firstRoomId: string | undefined = firstSubmitted.id;
+    if (!firstRoomId) {
+      // Newly inserted — find by sort_order
+      firstRoomId = inserted.find((r) => r.sort_order === firstSubmitted.sort_order)?.id;
+    }
+
+    if (firstRoomId) {
+      const { data: existingAssignment } = await service
+        .from("clinician_room_assignments")
+        .select("id, room_id")
+        .eq("staff_assignment_id", assignment.id)
+        .maybeSingle();
+
+      if (!existingAssignment) {
+        await service.from("clinician_room_assignments").insert({
+          staff_assignment_id: assignment.id,
+          room_id: firstRoomId,
+        });
+      } else if (existingAssignment.room_id !== firstRoomId) {
+        await service
+          .from("clinician_room_assignments")
+          .update({ room_id: firstRoomId })
+          .eq("id", existingAssignment.id);
+      }
+    }
+  }
+
+  return NextResponse.json({ ok: true });
 }

@@ -10,7 +10,6 @@ import { LogoUpload } from "@/components/ui/logo-upload";
 export default function SetupClinicPage() {
   const router = useRouter();
   const [clinicName, setClinicName] = useState("");
-  const [address, setAddress] = useState("");
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -19,7 +18,6 @@ export default function SetupClinicPage() {
     e.preventDefault();
     const errs: Record<string, string> = {};
     if (!clinicName.trim()) errs.clinicName = "Clinic name is required.";
-    if (!address.trim()) errs.address = "Address is required.";
     setErrors(errs);
     if (Object.keys(errs).length > 0) return;
 
@@ -27,7 +25,6 @@ export default function SetupClinicPage() {
 
     let logo_url: string | null = null;
 
-    // Upload logo if provided
     if (logoFile) {
       const supabase = createClient();
       const ext = logoFile.name.split(".").pop();
@@ -38,7 +35,6 @@ export default function SetupClinicPage() {
 
       if (uploadError) {
         setErrors({ logo: "Failed to upload logo. You can add it later in Settings." });
-        // Continue without logo — it is optional
       } else {
         const { data: urlData } = supabase.storage
           .from("org-logos")
@@ -50,11 +46,7 @@ export default function SetupClinicPage() {
     const res = await fetch("/api/setup/clinic", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: clinicName.trim(),
-        address: address.trim(),
-        logo_url,
-      }),
+      body: JSON.stringify({ name: clinicName.trim(), logo_url }),
     });
 
     if (!res.ok) {
@@ -64,10 +56,9 @@ export default function SetupClinicPage() {
       return;
     }
 
-    router.push("/setup/rooms");
+    router.push("/setup/pms");
   }
 
-  // Live initial placeholder
   const initial = clinicName.trim().charAt(0).toUpperCase();
 
   return (
@@ -92,16 +83,6 @@ export default function SetupClinicPage() {
         error={errors.clinicName}
         placeholder="e.g. Sunrise Allied Health"
         autoFocus
-        disabled={loading}
-      />
-
-      <Input
-        label="Address"
-        type="text"
-        value={address}
-        onChange={(e) => setAddress(e.target.value)}
-        error={errors.address}
-        placeholder="e.g. 123 Oxford St, Bondi Junction NSW 2022"
         disabled={loading}
       />
 

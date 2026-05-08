@@ -19,7 +19,8 @@ export async function GET(request: NextRequest) {
         .from("forms")
         .select("id, name, status")
         .eq("org_id", orgId)
-        .eq("status", "published"),
+        .eq("status", "published")
+        .eq("is_platform_demo", false),
     ]);
 
     const forms = (formsRes.data ?? []).map((f) => ({ id: f.id, name: f.name }));

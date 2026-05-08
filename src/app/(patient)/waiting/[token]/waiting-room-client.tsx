@@ -11,6 +11,7 @@ interface WaitingRoomClientProps {
   roomName: string;
   clinicianName: string | null;
   scheduledAt: string | null;
+  isOnboardingDemo?: boolean;
 }
 
 export function WaitingRoomClient(props: WaitingRoomClientProps) {

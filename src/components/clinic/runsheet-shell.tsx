@@ -15,6 +15,8 @@ import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import { useLocation } from "@/hooks/useLocation";
 import { useRole } from "@/hooks/useRole";
 import { useOrg } from "@/hooks/useOrg";
+import { OnboardingOverlay } from "./onboarding-overlay";
+import { OnboardingCoachMark } from "./onboarding-coach-mark";
 
 // Lazy-load heavy modals — only downloaded when first opened
 const ProcessFlowDynamic = dynamic(
@@ -166,6 +168,17 @@ export function RunsheetShell() {
   // Video panel closing is user-driven (Leave or Hold button inside the panel).
   // No auto-close — the clinician controls when the panel dismisses.
 
+  const onboarding = useClinicStore((s) => s.onboarding);
+
+  async function advanceOnboardingStage(to: "call_active" | "call_completed") {
+    await fetch("/api/onboarding/advance-stage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to }),
+    });
+    getClinicStore().setOnboarding({ stage: to });
+  }
+
   // Action dispatch
   const handleAction = useCallback(
     async (sessionId: string, action: string) => {
@@ -195,12 +208,16 @@ export function RunsheetShell() {
           const result = await admitPatient(sessionId);
           if (result.success) {
             setActiveCallSessionId(sessionId);
+            if (onboarding.testSessionId === sessionId && onboarding.stage === "test_session_sent") {
+              void advanceOnboardingStage("call_active");
+            }
           }
           break;
         }
       }
     },
-    []
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [onboarding.testSessionId, onboarding.stage]
   );
 
   // Session row click handler
@@ -243,6 +260,8 @@ export function RunsheetShell() {
 
   return (
     <PatientSlideOverProvider onOpenPatient={handleOpenPatient}>
+      <OnboardingOverlay />
+      <OnboardingCoachMark />
     <div className="p-6 max-w-[860px] mx-auto">
       <div className="mb-4">
         <RunsheetHeader
@@ -332,7 +351,12 @@ export function RunsheetShell() {
               .filter(Boolean)
               .join(" ") || "Patient"
           }
-          onClose={() => setActiveCallSessionId(null)}
+          onClose={() => {
+            setActiveCallSessionId(null);
+            if (onboarding.testSessionId === activeCallSession.session_id && onboarding.stage === "call_active") {
+              void advanceOnboardingStage("call_completed");
+            }
+          }}
         />
       )}
     </div>

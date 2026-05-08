@@ -172,6 +172,19 @@ export interface ClinicInitialData {
 }
 
 // ---------------------------------------------------------------------------
+// Onboarding
+// ---------------------------------------------------------------------------
+
+export type OnboardingStage = 'not_started' | 'test_session_sent' | 'call_active' | 'call_completed';
+
+export interface OnboardingState {
+  stage: OnboardingStage;
+  hasSeenPatientJourney: boolean;
+  testSessionId: string | null;
+  coachMarkDismissed: Partial<Record<OnboardingStage, boolean>>;
+}
+
+// ---------------------------------------------------------------------------
 // Store interface
 // ---------------------------------------------------------------------------
 
@@ -200,6 +213,9 @@ export interface ClinicStore {
 
   // Tier 3: Real-time
   connectedSessions: Set<string>;
+
+  // User-scoped (does not reset on location switch)
+  onboarding: OnboardingState;
 
   // Metadata
   locationId: string | null;
@@ -263,6 +279,7 @@ export interface ClinicStore {
   setPaymentRooms: (rooms: RoomPayment[]) => void;
   setClinicianRoomIds: (ids: string[]) => void;
   setConnectedSessions: (sessions: Set<string>) => void;
+  setOnboarding: (state: Partial<OnboardingState>) => void;
 
   // Reset location-scoped data on location switch
   resetLocationData: () => void;
@@ -305,6 +322,12 @@ export const useClinicStore = create<ClinicStore>()(
       readinessDirection: 'pre_appointment' as ReadinessDirection,
       readinessCounts: { pre: 0, post: 0 },
       connectedSessions: new Set(),
+      onboarding: {
+        stage: 'not_started',
+        hasSeenPatientJourney: false,
+        testSessionId: null,
+        coachMarkDismissed: {},
+      },
       locationId: null,
       orgId: null,
       roomsLoaded: false,
@@ -628,6 +651,12 @@ export const useClinicStore = create<ClinicStore>()(
         set({ clinicianRoomIds: ids }, false, "setClinicianRoomIds"),
       setConnectedSessions: (sessions) =>
         set({ connectedSessions: sessions }, false, "setConnectedSessions"),
+      setOnboarding: (partial) =>
+        set(
+          (s) => ({ onboarding: { ...s.onboarding, ...partial } }),
+          false,
+          "setOnboarding"
+        ),
 
       // Reset location-scoped data on location switch
       resetLocationData: () => {

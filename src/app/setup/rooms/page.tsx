@@ -4,10 +4,13 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Trash2, Plus } from "lucide-react";
+import { Trash2, Plus, CheckCircle2 } from "lucide-react";
 
 interface RoomRow {
   id: string;
+  // dbId is set when the row corresponds to an existing DB row. New rows
+  // (added via "Add another room") have only a local id.
+  dbId?: string;
   name: string;
 }
 
@@ -18,23 +21,34 @@ function makeId() {
 export default function SetupRoomsPage() {
   const router = useRouter();
   const [rooms, setRooms] = useState<RoomRow[]>([]);
+  const [imported, setImported] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [initialized, setInitialized] = useState(false);
   const lastInputRef = useRef<HTMLInputElement>(null);
   const shouldFocusLast = useRef(false);
 
-  // Pre-fill first room with user's name
   useEffect(() => {
     async function init() {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      const fullName =
-        user?.user_metadata?.full_name ?? "My";
-      const firstName = fullName.split(" ")[0];
-      setRooms([{ id: makeId(), name: `${firstName}'s Room` }]);
+      const res = await fetch("/api/setup/rooms");
+      const data = await res.json();
+      const existing: { id: string; name: string; sort_order: number }[] =
+        data.rooms ?? [];
+
+      if (existing.length > 0) {
+        setRooms(
+          existing.map((r) => ({ id: makeId(), dbId: r.id, name: r.name }))
+        );
+        setImported(!!data.imported);
+      } else {
+        // Pre-fill with user's full name (no "Room" suffix)
+        const supabase = createClient();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        const fullName = user?.user_metadata?.full_name ?? "Room 1";
+        setRooms([{ id: makeId(), name: fullName }]);
+      }
       setInitialized(true);
     }
     init();
@@ -87,6 +101,7 @@ export default function SetupRoomsPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         rooms: rooms.map((r, i) => ({
+          id: r.dbId,
           name: r.name.trim(),
           sort_order: i,
         })),
@@ -102,7 +117,7 @@ export default function SetupRoomsPage() {
       return;
     }
 
-    router.push("/runsheet");
+    router.push("/setup/payments");
   }
 
   if (!initialized) {
@@ -119,12 +134,12 @@ export default function SetupRoomsPage() {
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       <h1 className="text-xl font-semibold text-gray-800">
-        Create your rooms
+        {imported ? "Review your rooms" : "Create your rooms"}
       </h1>
       <p className="text-sm text-gray-500">
-        Rooms group sessions on your run sheet. Common setups: one room per
-        clinician, a shared room for rotating staff, or an on-demand room for
-        walk-ins. You can change this later in Settings.
+        {imported
+          ? "We've set these up from your Gentu data. Edit, delete, or add rooms as needed."
+          : "Rooms group sessions on your run sheet. Common setups: one room per clinician, a shared room for rotating staff, or an on-demand room for walk-ins. You can change this later in Settings."}
       </p>
 
       {errors.form && (
@@ -134,20 +149,29 @@ export default function SetupRoomsPage() {
       <div className="space-y-2">
         {rooms.map((room, index) => (
           <div key={room.id} className="flex items-center gap-2">
-            <input
-              ref={index === rooms.length - 1 ? lastInputRef : undefined}
-              type="text"
-              value={room.name}
-              onChange={(e) => updateRoom(room.id, e.target.value)}
-              onKeyDown={(e) => handleKeyDown(e, index)}
-              placeholder="Room name"
-              disabled={loading}
-              className={`flex-1 h-11 px-3 text-sm border rounded-lg outline-none transition-colors ${
-                errors[room.id]
-                  ? "border-red-500 focus:border-red-500"
-                  : "border-gray-200 focus:border-teal-500"
-              }`}
-            />
+            <div className="relative flex-1">
+              <input
+                ref={index === rooms.length - 1 ? lastInputRef : undefined}
+                type="text"
+                value={room.name}
+                onChange={(e) => updateRoom(room.id, e.target.value)}
+                onKeyDown={(e) => handleKeyDown(e, index)}
+                placeholder="Room name"
+                disabled={loading}
+                className={`w-full h-11 px-3 ${imported && room.dbId ? "pr-9" : ""} text-sm border rounded-lg outline-none transition-colors ${
+                  errors[room.id]
+                    ? "border-red-500 focus:border-red-500"
+                    : "border-gray-200 focus:border-teal-500"
+                }`}
+              />
+              {imported && room.dbId && (
+                <CheckCircle2
+                  size={16}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-green-500"
+                  aria-label="Imported from Gentu"
+                />
+              )}
+            </div>
             <button
               type="button"
               onClick={() => removeRoom(room.id)}
@@ -177,7 +201,7 @@ export default function SetupRoomsPage() {
         className="w-full"
         disabled={loading}
       >
-        {loading ? "Creating rooms..." : "Finish setup"}
+        {loading ? "Saving..." : "Continue"}
       </Button>
     </form>
   );

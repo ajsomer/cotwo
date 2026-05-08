@@ -13,7 +13,8 @@ export async function resolveJourney(
       id, journey_token, status,
       appointment_id, patient_id,
       includes_card_capture, includes_consent, form_ids,
-      card_captured_at, consent_completed_at, forms_completed
+      card_captured_at, consent_completed_at, forms_completed,
+      appointments!inner(sessions(id, is_onboarding_demo, entry_token))
     `
     )
     .eq('journey_token', token)
@@ -92,6 +93,18 @@ export async function resolveJourney(
     forms = (formRows ?? []).map((f) => ({ id: f.id, name: f.name }));
   }
 
+  // is_onboarding_demo + entry_token come from the session linked to this appointment
+  type JourneyWithSessions = typeof journey & {
+    appointments?: {
+      sessions?: Array<{ id: string; is_onboarding_demo: boolean; entry_token: string }>;
+    };
+  };
+  const journeyTyped = journey as unknown as JourneyWithSessions;
+  const linkedSession = journeyTyped.appointments?.sessions?.[0];
+  const isOnboardingDemo = linkedSession?.is_onboarding_demo ?? false;
+  const sessionEntryToken = linkedSession?.entry_token ?? null;
+  const sessionId = linkedSession?.id ?? null;
+
   return {
     org: {
       id: org.id,
@@ -123,6 +136,9 @@ export async function resolveJourney(
       card_captured_at: journey.card_captured_at,
       consent_completed_at: journey.consent_completed_at,
       forms_completed: (journey.forms_completed as Record<string, string>) ?? {},
+      is_onboarding_demo: isOnboardingDemo,
+      session_entry_token: sessionEntryToken,
+      session_id: sessionId,
     },
   };
 }

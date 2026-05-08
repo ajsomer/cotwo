@@ -14,6 +14,7 @@ interface WaitingRoomProps {
   roomName: string;
   clinicianName: string | null;
   scheduledAt: string | null;
+  isOnboardingDemo?: boolean;
 }
 
 type SessionStatus = 'waiting' | 'in_session' | 'complete' | 'done';
@@ -27,6 +28,7 @@ export function WaitingRoom({
   roomName,
   clinicianName,
   scheduledAt,
+  isOnboardingDemo = false,
 }: WaitingRoomProps) {
   const [status, setStatus] = useState<SessionStatus>('waiting');
   const [message, setMessage] = useState<string | null>(null);
@@ -113,6 +115,17 @@ export function WaitingRoom({
         logoUrl={logoUrl}
         roomName={roomName}
       />
+
+      {isOnboardingDemo && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="w-full mb-4 rounded-xl bg-teal-500 px-4 py-3 text-sm text-white text-center"
+        >
+          <span className="font-medium">Your clinician is about to admit you.</span>{" "}
+          Check your laptop — look for the green Admit button.
+        </div>
+      )}
 
       <div className="w-full space-y-6 text-center">
         {/* Waiting animation */}

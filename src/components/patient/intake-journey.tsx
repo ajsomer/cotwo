@@ -57,6 +57,9 @@ export interface IntakeJourneyContext {
     card_captured_at: string | null;
     consent_completed_at: string | null;
     forms_completed: Record<string, string>;
+    is_onboarding_demo: boolean;
+    session_entry_token: string | null;
+    session_id: string | null;
   };
 }
 
@@ -98,6 +101,7 @@ interface ConfirmContact {
 
 // Lazy imports to keep phone-verification etc tree-shaken if unused
 import { IntakeCardCapture } from './intake-card-capture';
+import { OnboardingTooltip } from './onboarding-tooltip';
 
 export function IntakeJourney({
   context,
@@ -107,6 +111,7 @@ export function IntakeJourney({
   onAllItemsComplete,
 }: IntakeJourneyProps) {
   const { org, journey, appointment } = context;
+  const isDemo = journey.is_onboarding_demo && !journey.status.includes('completed');
 
   // Progress is driven by the journey row — reload it after each item so late
   // arrivals via reminder link resume at the right place.
@@ -307,6 +312,28 @@ export function IntakeJourney({
   }, [phase, patient, state.patient_id, token, phoneNumber]);
 
   if (phase === 'done' || state.status === 'completed') {
+    // Onboarding demo: transition the session into 'waiting' and send the user
+    // to the waiting room so they can be admitted by the clinician.
+    if (journey.is_onboarding_demo && journey.session_entry_token && journey.session_id) {
+      const sessionId = journey.session_id;
+      const entryToken = journey.session_entry_token;
+      if (typeof window !== 'undefined') {
+        void (async () => {
+          await fetch('/api/patient/arrive', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: sessionId, modality: 'telehealth' }),
+          });
+          window.location.replace(`/waiting/${entryToken}`);
+        })();
+      }
+      return (
+        <div className="flex flex-col items-center py-8">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-teal-500 border-t-transparent" />
+        </div>
+      );
+    }
+
     return (
       <div className="flex flex-col items-center">
         <PersistentHeader clinicName={org.name} logoUrl={org.logo_url} />
@@ -339,17 +366,22 @@ export function IntakeJourney({
 
   if (phase === 'phone') {
     return (
-      <PhoneVerification
-        clinicName={org.name}
-        logoUrl={org.logo_url}
-        roomName={null}
-        currentStep={1}
-        totalSteps={totalSteps}
-        prefillPhone={phoneNumber}
-        sessionId={null}
-        orgId={org.id}
-        onVerified={(phone) => handlePhoneVerified(phone)}
-      />
+      <OnboardingTooltip
+        show={isDemo}
+        copy="Phone verification proves ownership of the number you have on file for this patient. Always required."
+      >
+        <PhoneVerification
+          clinicName={org.name}
+          logoUrl={org.logo_url}
+          roomName={null}
+          currentStep={1}
+          totalSteps={totalSteps}
+          prefillPhone={phoneNumber}
+          sessionId={null}
+          orgId={org.id}
+          onVerified={(phone) => handlePhoneVerified(phone)}
+        />
+      </OnboardingTooltip>
     );
   }
 
@@ -441,6 +473,10 @@ export function IntakeJourney({
 
   if (phase === 'checklist') {
     return (
+      <OnboardingTooltip
+        show={isDemo}
+        copy="Configurable per appointment type in Workflows. Real patients receive this days before their appointment and can complete it across multiple sittings."
+      >
       <div className="flex flex-col items-center">
         <PersistentHeader clinicName={org.name} logoUrl={org.logo_url} />
         <div className="w-full space-y-4">
@@ -507,20 +543,26 @@ export function IntakeJourney({
           </button>
         </div>
       </div>
+      </OnboardingTooltip>
     );
   }
 
   if (phase === 'card' && patient && state.patient_id) {
     return (
-      <IntakeCardCapture
-        clinicName={org.name}
-        logoUrl={org.logo_url}
-        currentStep={currentStepNumber ?? 3}
-        totalSteps={totalSteps}
-        patientId={state.patient_id}
-        token={token}
-        onComplete={handleItemComplete}
-      />
+      <OnboardingTooltip
+        show={isDemo}
+        copy="Card storage is optional. Toggle it per intake package in Workflows."
+      >
+        <IntakeCardCapture
+          clinicName={org.name}
+          logoUrl={org.logo_url}
+          currentStep={currentStepNumber ?? 3}
+          totalSteps={totalSteps}
+          patientId={state.patient_id}
+          token={token}
+          onComplete={handleItemComplete}
+        />
+      </OnboardingTooltip>
     );
   }
 
@@ -539,16 +581,21 @@ export function IntakeJourney({
 
   if (phase === 'form' && activeFormId) {
     return (
-      <FormStep
-        clinicName={org.name}
-        logoUrl={org.logo_url}
-        currentStep={currentStepNumber ?? 3}
-        totalSteps={totalSteps}
-        formId={activeFormId}
-        formName={state.forms.find((f) => f.id === activeFormId)?.name ?? 'Form'}
-        token={token}
-        onComplete={handleItemComplete}
-      />
+      <OnboardingTooltip
+        show={isDemo}
+        copy="Build your own forms in the Forms library. Drag and drop, any question types including signatures."
+      >
+        <FormStep
+          clinicName={org.name}
+          logoUrl={org.logo_url}
+          currentStep={currentStepNumber ?? 3}
+          totalSteps={totalSteps}
+          formId={activeFormId}
+          formName={state.forms.find((f) => f.id === activeFormId)?.name ?? 'Form'}
+          token={token}
+          onComplete={handleItemComplete}
+        />
+      </OnboardingTooltip>
     );
   }
 

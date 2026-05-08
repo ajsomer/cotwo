@@ -18,7 +18,8 @@ export function PersistentHeader({
   totalSteps,
 }: PersistentHeaderProps) {
   return (
-    <div className="mb-6 flex flex-col items-center gap-2">
+    <>
+    <div className="mb-2 flex flex-col items-center gap-2">
       {/* Clinic logo */}
       {logoUrl ? (
         <div className="relative h-12 w-32">
@@ -74,5 +75,8 @@ export function PersistentHeader({
         </div>
       )}
     </div>
+    {/* Slot for onboarding tooltips — rendered just below the header */}
+    <div data-onboarding-tooltip-slot className="w-full mb-4 empty:hidden" />
+    </>
   );
 }

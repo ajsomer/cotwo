@@ -80,7 +80,8 @@ export async function POST(request: NextRequest) {
         .from("forms")
         .select("id")
         .in("id", formIdList)
-        .eq("org_id", org_id);
+        .eq("org_id", org_id)
+        .eq("is_platform_demo", false);
 
       const existingIds = new Set((existingForms ?? []).map((f) => f.id));
       const missing = formIdList.filter((id: string) => !existingIds.has(id));

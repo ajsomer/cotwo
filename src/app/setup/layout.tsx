@@ -4,8 +4,11 @@ import { usePathname } from "next/navigation";
 import { Check } from "lucide-react";
 
 const STEPS = [
-  { label: "Clinic", path: "/setup/clinic" },
+  { label: "Account", path: "/signup" },
+  { label: "PMS", path: "/setup/pms" },
   { label: "Rooms", path: "/setup/rooms" },
+  { label: "Payments", path: "/setup/payments" },
+  { label: "First session", path: "/runsheet" },
 ];
 
 function StepIndicator() {

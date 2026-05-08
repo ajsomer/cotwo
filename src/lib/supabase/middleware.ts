@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 
 // Routes that never require auth
-const PUBLIC_ROUTES = ["/entry", "/waiting", "/auth/callback"];
+const PUBLIC_ROUTES = ["/entry", "/waiting", "/intake", "/auth/callback"];
 
 // Routes that handle their own auth — skip setup gate
 const API_ROUTES_PREFIX = "/api/";
@@ -12,7 +12,7 @@ const API_ROUTES_PREFIX = "/api/";
 const AUTH_ROUTES = ["/login", "/signup"];
 
 // Setup routes in prerequisite order
-const SETUP_ROUTES = ["/setup/clinic", "/setup/rooms"];
+const SETUP_ROUTES = ["/setup/clinic", "/setup/pms", "/setup/rooms", "/setup/payments"];
 
 function isPublicRoute(pathname: string) {
   return PUBLIC_ROUTES.some(
@@ -30,7 +30,7 @@ function isSetupRoute(pathname: string) {
   );
 }
 
-type SetupState = "no_org" | "no_rooms" | "complete";
+type SetupState = "no_org" | "no_pms" | "no_rooms" | "no_payments" | "complete";
 
 async function getSetupState(userId: string): Promise<SetupState> {
   const supabase = createClient(
@@ -40,22 +40,40 @@ async function getSetupState(userId: string): Promise<SetupState> {
 
   const { data: assignments } = await supabase
     .from("staff_assignments")
-    .select("id, location_id")
+    .select("id, location_id, locations!inner(org_id)")
     .eq("user_id", userId)
     .limit(1);
 
-  const assignment = assignments?.[0];
+  const assignment = assignments?.[0] as
+    | { id: string; location_id: string; locations: { org_id: string } }
+    | undefined;
 
   console.log("[middleware] getSetupState userId:", userId, "assignments:", assignments?.length ?? 0);
 
   if (!assignment) return "no_org";
 
-  const { count } = await supabase
+  const orgId = assignment.locations.org_id;
+
+  const { count: pmsCount } = await supabase
+    .from("pms_connections")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId);
+
+  if (!pmsCount || pmsCount === 0) return "no_pms";
+
+  const { count: roomCount } = await supabase
     .from("rooms")
     .select("id", { count: "exact", head: true })
     .eq("location_id", assignment.location_id);
 
-  if (!count || count === 0) return "no_rooms";
+  if (!roomCount || roomCount === 0) return "no_rooms";
+
+  const { count: stripeCount } = await supabase
+    .from("stripe_connections")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId);
+
+  if (!stripeCount || stripeCount === 0) return "no_payments";
 
   return "complete";
 }
@@ -64,8 +82,12 @@ function redirectForState(state: SetupState): string {
   switch (state) {
     case "no_org":
       return "/setup/clinic";
+    case "no_pms":
+      return "/setup/pms";
     case "no_rooms":
       return "/setup/rooms";
+    case "no_payments":
+      return "/setup/payments";
     case "complete":
       return "/runsheet";
   }
@@ -133,24 +155,30 @@ export async function updateSession(request: NextRequest) {
   // Setup routes — enforce prerequisite chain
   if (isSetupRoute(pathname)) {
     const state = await getSetupState(user.id);
-
-    if (pathname.startsWith("/setup/clinic") && state !== "no_org") {
+    const redirect = (to: string) => {
       const url = request.nextUrl.clone();
-      url.pathname = state === "no_rooms" ? "/setup/rooms" : "/runsheet";
+      url.pathname = to;
       return NextResponse.redirect(url);
-    }
+    };
 
-    if (pathname.startsWith("/setup/rooms")) {
-      if (state === "no_org") {
-        const url = request.nextUrl.clone();
-        url.pathname = "/setup/clinic";
-        return NextResponse.redirect(url);
-      }
-      if (state === "complete") {
-        const url = request.nextUrl.clone();
-        url.pathname = "/runsheet";
-        return NextResponse.redirect(url);
-      }
+    // Setup pages enforce ordering (can't skip ahead) and bounce to runsheet
+    // when setup is complete. They do NOT auto-skip when their own data is
+    // populated — Gentu pre-populates rooms but the user still gets to review
+    // them, and the connected PMS card stays visible with a Continue button.
+    if (pathname.startsWith("/setup/clinic")) {
+      if (state !== "no_org") return redirect(redirectForState(state));
+    } else if (pathname.startsWith("/setup/pms")) {
+      if (state === "no_org") return redirect("/setup/clinic");
+      if (state === "complete") return redirect("/runsheet");
+    } else if (pathname.startsWith("/setup/rooms")) {
+      if (state === "no_org") return redirect("/setup/clinic");
+      if (state === "no_pms") return redirect("/setup/pms");
+      if (state === "complete") return redirect("/runsheet");
+    } else if (pathname.startsWith("/setup/payments")) {
+      if (state === "no_org") return redirect("/setup/clinic");
+      if (state === "no_pms") return redirect("/setup/pms");
+      if (state === "no_rooms") return redirect("/setup/rooms");
+      if (state === "complete") return redirect("/runsheet");
     }
 
     return supabaseResponse;

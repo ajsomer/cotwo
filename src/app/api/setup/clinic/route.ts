@@ -5,7 +5,6 @@ import { seedDefaultWorkflows } from "@/lib/workflows/seed-defaults";
 import { NextResponse, type NextRequest } from "next/server";
 
 export async function POST(request: NextRequest) {
-  // Verify auth
   const supabase = await createClient();
   const {
     data: { user },
@@ -16,22 +15,14 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { name, address, logo_url } = body as {
-    name?: string;
-    address?: string;
-    logo_url?: string | null;
-  };
+  const { name, logo_url } = body as { name?: string; logo_url?: string | null };
 
-  if (!name?.trim() || !address?.trim()) {
-    return NextResponse.json(
-      { error: "Clinic name and address are required." },
-      { status: 400 }
-    );
+  if (!name?.trim()) {
+    return NextResponse.json({ error: "Clinic name is required." }, { status: 400 });
   }
 
   const service = createServiceClient();
 
-  // Generate unique slug
   let slug = generateSlug(name);
   for (let attempt = 0; attempt < 3; attempt++) {
     const { data: existing } = await service
@@ -40,22 +31,15 @@ export async function POST(request: NextRequest) {
       .eq("slug", slug)
       .limit(1)
       .single();
-
     if (!existing) break;
-    slug = generateSlug(name); // Retry with new random suffix
+    slug = generateSlug(name);
   }
 
   console.log("[setup/clinic] Creating org for user:", user.id, "slug:", slug);
 
-  // Create organisation
   const { data: org, error: orgError } = await service
     .from("organisations")
-    .insert({
-      name: name.trim(),
-      slug,
-      logo_url: logo_url ?? null,
-      tier: "complete",
-    })
+    .insert({ name: name.trim(), slug, logo_url: logo_url ?? null, tier: "complete" })
     .select("id")
     .single();
 
@@ -68,14 +52,9 @@ export async function POST(request: NextRequest) {
   }
   console.log("[setup/clinic] org created:", org.id);
 
-  // Create location (inherits clinic name)
   const { data: location, error: locError } = await service
     .from("locations")
-    .insert({
-      org_id: org.id,
-      name: name.trim(),
-      address: address.trim(),
-    })
+    .insert({ org_id: org.id, name: name.trim(), address: null })
     .select("id")
     .single();
 
@@ -88,7 +67,6 @@ export async function POST(request: NextRequest) {
   }
   console.log("[setup/clinic] location created:", location.id);
 
-  // Create staff assignment (clinic owner)
   const { error: saError } = await service.from("staff_assignments").insert({
     user_id: user.id,
     location_id: location.id,
@@ -98,13 +76,16 @@ export async function POST(request: NextRequest) {
 
   if (saError) {
     console.log("[setup/clinic] staff_assignment error:", saError.message);
-    return NextResponse.json(
-      { error: "Failed to create staff assignment." },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to create staff assignment." }, { status: 500 });
   }
 
-  // Seed default workflow templates for the new org
+  // Seed no-PMS floor: default appointment type + forms
+  await seedNoPmsFloor(service, org.id);
+
+  // Seed platform demo form (hidden from clinic UI)
+  await seedPlatformDemoForm(service, org.id);
+
+  // Seed default workflow templates
   try {
     await seedDefaultWorkflows(org.id);
   } catch (err) {
@@ -114,3 +95,101 @@ export async function POST(request: NextRequest) {
   console.log("[setup/clinic] Success. org:", org.id, "location:", location.id);
   return NextResponse.json({ org_id: org.id, location_id: location.id });
 }
+
+type ServiceClient = ReturnType<typeof createServiceClient>;
+
+async function seedNoPmsFloor(service: ServiceClient, orgId: string): Promise<void> {
+  // Default appointment type
+  const { data: existing } = await service
+    .from("appointment_types")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("name", "Initial Consultation")
+    .maybeSingle();
+
+  if (!existing) {
+    await service.from("appointment_types").insert({
+      org_id: orgId,
+      name: "Initial Consultation",
+      modality: "telehealth",
+      duration_minutes: 30,
+      default_fee_cents: 0,
+    });
+  }
+
+  // Default forms (referenced by workflow seeder by name)
+  const defaultForms = [
+    { name: "New Patient Intake", description: "Standard new patient intake form" },
+    { name: "Mental Health Assessment (K10)", description: "Kessler Psychological Distress Scale" },
+    { name: "Patient Satisfaction Survey", description: "Post-appointment satisfaction survey" },
+  ];
+
+  for (const form of defaultForms) {
+    const { data: existingForm } = await service
+      .from("forms")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("name", form.name)
+      .maybeSingle();
+
+    if (!existingForm) {
+      await service.from("forms").insert({
+        org_id: orgId,
+        name: form.name,
+        description: form.description,
+        status: "published",
+        is_platform_demo: false,
+        schema: {},
+      });
+    }
+  }
+}
+
+async function seedPlatformDemoForm(service: ServiceClient, orgId: string): Promise<void> {
+  const { data: existing } = await service
+    .from("forms")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("is_platform_demo", true)
+    .maybeSingle();
+
+  if (existing) return;
+
+  await service.from("forms").insert({
+    org_id: orgId,
+    name: "Coviu Demo Form",
+    description: null,
+    status: "published",
+    is_platform_demo: true,
+    schema: DEMO_FORM_SCHEMA,
+  });
+}
+
+// SurveyJS-compatible schema for the onboarding demo form
+const DEMO_FORM_SCHEMA = {
+  pages: [
+    {
+      name: "page1",
+      elements: [
+        {
+          type: "text",
+          name: "reason_for_visit",
+          title: "What brings you in today?",
+          isRequired: true,
+        },
+        {
+          type: "comment",
+          name: "duration",
+          title: "How long has this been going on?",
+          isRequired: true,
+        },
+        {
+          type: "signaturepad",
+          name: "patient_signature",
+          title: "Patient signature",
+          isRequired: true,
+        },
+      ],
+    },
+  ],
+};

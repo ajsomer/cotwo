@@ -14,7 +14,7 @@ export default async function WaitingRoomPage({
   const { data: session } = await supabase
     .from('sessions')
     .select(`
-      id, status, entry_token,
+      id, status, entry_token, is_onboarding_demo,
       rooms!inner (id, name,
         locations!inner (id, name,
           organisations!inner (id, name, logo_url)
@@ -58,6 +58,7 @@ export default async function WaitingRoomPage({
       roomName={room.name}
       clinicianName={appointment?.users?.full_name || null}
       scheduledAt={appointment?.scheduled_at || null}
+      isOnboardingDemo={session.is_onboarding_demo ?? false}
     />
     </div>
   );

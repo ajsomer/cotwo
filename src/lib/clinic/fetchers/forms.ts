@@ -9,6 +9,7 @@ export const fetchForms = cache(async (orgId: string): Promise<FormRow[]> => {
     .from("forms")
     .select("id, name, description, status, schema, created_at, updated_at")
     .eq("org_id", orgId)
+    .eq("is_platform_demo", false)
     .order("updated_at", { ascending: false });
 
   if (error) {
