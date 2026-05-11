@@ -17,6 +17,7 @@ import { useRole } from "@/hooks/useRole";
 import { useOrg } from "@/hooks/useOrg";
 import { OnboardingOverlay } from "./onboarding-overlay";
 import { OnboardingCoachMark } from "./onboarding-coach-mark";
+import { RunsheetSkeleton } from "./runsheet-skeleton";
 
 // Lazy-load heavy modals — only downloaded when first opened
 const ProcessFlowDynamic = dynamic(
@@ -39,6 +40,15 @@ export function RunsheetShell() {
   const rooms = useClinicStore((s) => s.rooms);
   const clinicianRoomIds = useClinicStore((s) => s.clinicianRoomIds);
   const connectedSessions = useClinicStore((s) => s.connectedSessions);
+  const sessionsLoaded = useClinicStore((s) => s.sessionsLoaded);
+  const roomsLoaded = useClinicStore((s) => s.roomsLoaded);
+  const clinicianRoomIdsLoaded = useClinicStore((s) => s.clinicianRoomIdsLoaded);
+  const onboardingLoaded = useClinicStore((s) => s.onboardingLoaded);
+  // Track what location the store's data is for. The selected-location
+  // context can move ahead of the store briefly (between switcher change
+  // and ClinicDataProvider's effect resetting the store), so the skeleton
+  // gate also checks this matches before unblocking render.
+  const storeLocationId = useClinicStore((s) => s.locationId);
 
   // Context (persists across navigations)
   const { selectedLocation } = useLocation();
@@ -53,31 +63,78 @@ export function RunsheetShell() {
     if (locationId) await getClinicStore().refreshSessions(locationId);
   }, [locationId]);
 
+  // Cold-load fetch error: surfaces a retry affordance instead of leaving
+  // the user staring at a skeleton forever when a transient fetch fails.
+  const [fetchError, setFetchError] = useState(false);
+  // Bumping this triggers the fetch effect to re-run on user retry.
+  const [retryKey, setRetryKey] = useState(0);
+
   // Fetch-if-empty: populate slices on first visit (once per tab lifetime).
   // Workflows/forms/files are needed by the Process flow's outcome-pathway
   // step, so we hydrate them here rather than waiting for the Workflows tab.
   useEffect(() => {
     if (!locationId) return;
     const store = getClinicStore();
-    console.log("[RunsheetShell.fetchIfEmpty]", {
-      locationId,
-      orgId,
-      sessionsLoaded: store.sessionsLoaded,
-      roomsLoaded: store.roomsLoaded,
-      clinicianRoomIdsLoaded: store.clinicianRoomIdsLoaded,
-      storeLocationId: store.locationId,
-    });
-    if (!store.sessionsLoaded) void store.refreshSessions(locationId);
-    if (!store.roomsLoaded) void store.refreshRooms(locationId);
-    if (!store.clinicianRoomIdsLoaded) {
-      void store.refreshClinicianRoomIds(locationId);
+    setFetchError(false);
+    // The store's refresh actions swallow errors (so all fire-and-forget
+    // callers across the app don't see unhandled rejections). To detect
+    // cold-load failure here, we kick the refreshes off, await settlement,
+    // then inspect whether the loaded flags actually flipped. If one or
+    // more didn't, we surface the retry affordance.
+    let cancelled = false;
+    const needSessions = !store.sessionsLoaded;
+    const needRooms = !store.roomsLoaded;
+    const needClinicianRoomIds = !store.clinicianRoomIdsLoaded;
+    const critical: Promise<unknown>[] = [];
+    if (needSessions) critical.push(store.refreshSessions(locationId));
+    if (needRooms) critical.push(store.refreshRooms(locationId));
+    if (needClinicianRoomIds) {
+      critical.push(store.refreshClinicianRoomIds(locationId));
+    }
+    if (critical.length > 0) {
+      void Promise.all(critical).then(() => {
+        if (cancelled) return;
+        const s = getClinicStore();
+        // Skip the check if the user has switched locations — the new
+        // location's effect run will own its own loaded-flag status.
+        if (s.locationId !== locationId) return;
+        const failed =
+          (needSessions && !s.sessionsLoaded) ||
+          (needRooms && !s.roomsLoaded) ||
+          (needClinicianRoomIds && !s.clinicianRoomIdsLoaded);
+        if (failed) setFetchError(true);
+      });
     }
     if (orgId) {
       if (!store.workflowsLoaded) void store.refreshWorkflows(orgId);
       if (!store.formsLoaded) void store.refreshForms(orgId);
       if (!store.filesLoaded) void store.refreshFiles(orgId);
     }
-  }, [locationId, orgId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [locationId, orgId, retryKey]);
+
+  // Onboarding fetch — replaces the SSR call that used to live in page.tsx.
+  // setOnboarding flips onboardingLoaded → true, which un-suppresses the
+  // overlay/coach-mark gates added in the same change.
+  useEffect(() => {
+    if (onboardingLoaded) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/onboarding/state");
+        if (!res.ok || cancelled) return;
+        const state = await res.json();
+        getClinicStore().setOnboarding(state);
+      } catch {
+        // Swallow — onboarding is non-critical for the run sheet itself.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [onboardingLoaded]);
 
   // Tick `now` every 30s for derived state recalculation
   const [now, setNow] = useState(() => new Date());
@@ -86,9 +143,12 @@ export function RunsheetShell() {
     return () => clearInterval(interval);
   }, []);
 
-  // Filter rooms for clinician view
+  // Filter rooms for clinician view. The skeleton gate above guarantees
+  // clinicianRoomIdsLoaded === true by the time this runs, so an empty array
+  // correctly means "zero assigned rooms" (empty filter result) rather than
+  // "not loaded yet" (formerly fell through to show all rooms).
   const visibleRooms = useMemo(() => {
-    if (clinicianRoomIds.length > 0 && (role === "clinician")) {
+    if (role === "clinician") {
       return rooms.filter((r) => clinicianRoomIds.includes(r.id));
     }
     return rooms;
@@ -264,6 +324,39 @@ export function RunsheetShell() {
   const processingSession = processingSessionId
     ? enriched.find((s) => s.session_id === processingSessionId) ?? null
     : null;
+
+  // Show skeleton until all three slices have loaded *for the currently
+  // selected location*. `storeLocationId !== locationId` covers the window
+  // after the user picks a new location but before ClinicDataProvider has
+  // reset the store and refetched — without it, we'd briefly render the
+  // previous location's data under the new location's selected context.
+  // The three loaded flags cover the cold-load case.
+  if (
+    storeLocationId !== locationId ||
+    !sessionsLoaded ||
+    !roomsLoaded ||
+    !clinicianRoomIdsLoaded
+  ) {
+    if (fetchError) {
+      return (
+        <div className="p-6 max-w-[860px] mx-auto">
+          <div className="bg-white rounded-xl border border-gray-200 p-12 text-center space-y-4">
+            <p className="text-gray-800 font-medium">Couldn&apos;t load the run sheet</p>
+            <p className="text-sm text-gray-500">
+              Check your connection and try again.
+            </p>
+            <button
+              onClick={() => setRetryKey((k) => k + 1)}
+              className="inline-flex items-center gap-2 rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 transition-colors"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return <RunsheetSkeleton />;
+  }
 
   return (
     <PatientSlideOverProvider onOpenPatient={handleOpenPatient}>

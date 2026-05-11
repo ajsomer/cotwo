@@ -6,6 +6,7 @@ export function OnboardingCoachMark() {
   const { stage, testSessionId, coachMarkDismissed, hasSeenPatientJourney } = useClinicStore(
     (s) => s.onboarding
   );
+  const onboardingLoaded = useClinicStore((s) => s.onboardingLoaded);
   const setOnboarding = useClinicStore((s) => s.setOnboarding);
   const sessions = useClinicStore((s) => s.sessions);
 
@@ -17,6 +18,7 @@ export function OnboardingCoachMark() {
     void fetch("/api/onboarding/dismiss-welcome", { method: "POST" });
   }
 
+  if (!onboardingLoaded) return null;
   if (!testSessionId) return null;
   if (stage === "not_started") return null;
   if (stage === "call_completed" && (coachMarkDismissed["call_completed"] || hasSeenPatientJourney)) {

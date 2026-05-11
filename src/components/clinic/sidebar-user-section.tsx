@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useRole } from "@/hooks/useRole";
+import { getClinicStore } from "@/stores/clinic-store";
 
 const ROLE_LABELS: Record<string, string> = {
   clinic_owner: "Clinic Owner",
@@ -20,6 +21,12 @@ export function SidebarUserSection() {
 
   async function handleSignOut() {
     const supabase = createClient();
+    // Zustand state outlives the auth session within the SPA. Wipe user- and
+    // location-scoped state so the next sign-in doesn't briefly see this
+    // user's data before their own fetches resolve.
+    const store = getClinicStore();
+    store.resetOnboarding();
+    store.resetLocationData();
     await supabase.auth.signOut();
     router.push("/login");
     router.refresh();

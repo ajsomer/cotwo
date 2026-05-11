@@ -225,6 +225,7 @@ export interface ClinicStore {
 
   // User-scoped (does not reset on location switch)
   onboarding: OnboardingState;
+  onboardingLoaded: boolean;
 
   // Metadata
   locationId: string | null;
@@ -312,6 +313,11 @@ export interface ClinicStore {
 
   // Reset location-scoped data on location switch
   resetLocationData: () => void;
+
+  // Reset user-scoped onboarding state — call on logout / in-tab user change
+  // so the next user doesn't briefly see the previous user's onboarding stage
+  // before the /api/onboarding/state fetch resolves.
+  resetOnboarding: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -357,6 +363,7 @@ export const useClinicStore = create<ClinicStore>()(
         testSessionId: null,
         coachMarkDismissed: {},
       },
+      onboardingLoaded: false,
       locationId: null,
       orgId: null,
       roomsLoaded: false,
@@ -467,6 +474,9 @@ export const useClinicStore = create<ClinicStore>()(
           const data = await fetchJson<{ sessions: RunsheetSession[] }>(
             `/api/runsheet?locationId=${locationId}&_t=${Date.now()}`
           );
+          // Stale-response guard: if the user switched locations mid-fetch,
+          // drop this response so we don't paint location A's data over B's.
+          if (get().locationId !== locationId) return;
           set(
             { sessions: data.sessions, sessionsLoaded: true, sessionsFetchedAt: Date.now() },
             false,
@@ -482,6 +492,7 @@ export const useClinicStore = create<ClinicStore>()(
           const data = await fetchJson<{ rooms: RoomWithClinicians[] }>(
             `/api/settings/rooms?location_id=${locationId}`
           );
+          if (get().locationId !== locationId) return;
           const roomsWithClinicians = data.rooms ?? [];
           // Derive basic Room[] from the settings response
           const rooms: Room[] = roomsWithClinicians.map((r) => ({
@@ -515,6 +526,7 @@ export const useClinicStore = create<ClinicStore>()(
               counts?: ReadinessCounts;
             }>(`/api/readiness?location_id=${locationId}&direction=post_appointment`),
           ]);
+          if (get().locationId !== locationId) return;
           set(
             {
               readinessAppointmentsPre: preData.appointments ?? [],
@@ -601,6 +613,7 @@ export const useClinicStore = create<ClinicStore>()(
               `/api/settings/rooms?location_id=${locationId}`
             ),
           ]);
+          if (get().locationId !== locationId) return;
           const paymentRooms: RoomPayment[] = (roomsData.rooms ?? []).map(
             (r) => ({
               id: r.id,
@@ -624,6 +637,7 @@ export const useClinicStore = create<ClinicStore>()(
           const data = await fetchJson<{ roomIds: string[] }>(
             `/api/runsheet/clinician-rooms?location_id=${locationId}`
           );
+          if (get().locationId !== locationId) return;
           set(
             { clinicianRoomIds: data.roomIds ?? [], clinicianRoomIdsLoaded: true },
             false,
@@ -736,9 +750,27 @@ export const useClinicStore = create<ClinicStore>()(
         set({ connectedSessions: sessions }, false, "setConnectedSessions"),
       setOnboarding: (partial) =>
         set(
-          (s) => ({ onboarding: { ...s.onboarding, ...partial } }),
+          (s) => ({
+            onboarding: { ...s.onboarding, ...partial },
+            onboardingLoaded: true,
+          }),
           false,
           "setOnboarding"
+        ),
+
+      resetOnboarding: () =>
+        set(
+          {
+            onboarding: {
+              stage: 'not_started',
+              hasSeenPatientJourney: false,
+              testSessionId: null,
+              coachMarkDismissed: {},
+            },
+            onboardingLoaded: false,
+          },
+          false,
+          "resetOnboarding"
         ),
 
       // Reset location-scoped data on location switch

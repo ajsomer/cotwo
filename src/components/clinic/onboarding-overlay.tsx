@@ -7,11 +7,16 @@ import { X, Loader2, ExternalLink } from "lucide-react";
 
 export function OnboardingOverlay() {
   const stage = useClinicStore((s) => s.onboarding.stage);
+  const onboardingLoaded = useClinicStore((s) => s.onboardingLoaded);
   const setOnboarding = useClinicStore((s) => s.setOnboarding);
   const [creating, setCreating] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Don't flash the first-run modal before /api/onboarding/state resolves —
+  // a completed-onboarding user has stage !== 'not_started' but the default
+  // store value is 'not_started' until the fetch lands.
+  if (!onboardingLoaded) return null;
   if (stage !== "not_started") return null;
 
   function dismiss() {
