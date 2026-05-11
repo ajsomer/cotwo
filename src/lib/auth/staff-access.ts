@@ -36,6 +36,43 @@ export async function requireAuthenticatedUser(): Promise<
 }
 
 /**
+ * Gate for location-scoped staff API routes: authenticates the caller, then
+ * verifies a `staff_assignment` to the requested location. Returns the user +
+ * assignment role on success, or a status code on failure.
+ *
+ * Always call this before any service-role read keyed on `locationId`.
+ * Without it, anyone who can guess a location ID can read its data.
+ *
+ * 403 (not 404) is intentional: location IDs are scoped per-org and not
+ * patient-sensitive, so leaking existence is acceptable. Patient-scoped routes
+ * (see `assertStaffCanAccessPatient`) should keep returning 404 for the
+ * existence-leak reason documented there.
+ */
+export async function requireStaffLocationAccess(
+  locationId: string,
+): Promise<
+  | { ok: true; userId: string; role: UserRole }
+  | { ok: false; status: 401 | 403 }
+> {
+  const ssr = await createServerClient();
+  const {
+    data: { user },
+  } = await ssr.auth.getUser();
+  if (!user) return { ok: false, status: 401 };
+
+  const { data: assignment } = await ssr
+    .from("staff_assignments")
+    .select("role")
+    .eq("user_id", user.id)
+    .eq("location_id", locationId)
+    .maybeSingle();
+
+  if (!assignment) return { ok: false, status: 403 };
+
+  return { ok: true, userId: user.id, role: assignment.role as UserRole };
+}
+
+/**
  * Verifies the cookie-bound auth user is staff at the same org as the patient.
  *
  * Returns { ok: true, userId, orgId } on success.

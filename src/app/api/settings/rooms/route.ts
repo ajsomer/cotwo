@@ -1,6 +1,58 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchRoomsWithClinicians } from "@/lib/clinic/fetchers/rooms";
+import {
+  requireAuthenticatedUser,
+  requireStaffLocationAccess,
+} from "@/lib/auth/staff-access";
+
+// Mutation routes take a room id, not a location id. Order matters: auth
+// FIRST, then service-role lookup, then location access. Reversing those
+// steps lets unauthenticated callers distinguish a real room id (401 from
+// the location check) from a fake one (404 from the room lookup), which is
+// an existence-leak. Matches the pattern documented on
+// requireAuthenticatedUser in staff-access.ts.
+async function gateRoomMutation(
+  roomId: string,
+): Promise<
+  | { ok: true; locationId: string }
+  | { ok: false; response: NextResponse }
+> {
+  const auth = await requireAuthenticatedUser();
+  if (!auth.ok) {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    };
+  }
+
+  const service = createServiceClient();
+  const { data: room } = await service
+    .from("rooms")
+    .select("location_id")
+    .eq("id", roomId)
+    .maybeSingle();
+
+  if (!room) {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: "Room not found" }, { status: 404 }),
+    };
+  }
+
+  const access = await requireStaffLocationAccess(room.location_id);
+  if (!access.ok) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: access.status === 401 ? "Unauthorized" : "Forbidden" },
+        { status: access.status },
+      ),
+    };
+  }
+
+  return { ok: true, locationId: room.location_id };
+}
 
 // GET /api/settings/rooms?location_id=xxx
 // GET /api/settings/rooms?location_id=xxx&type=clinicians
@@ -12,6 +64,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       { error: "location_id required" },
       { status: 400 }
+    );
+  }
+
+  const access = await requireStaffLocationAccess(locationId);
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Forbidden" },
+      { status: access.status },
     );
   }
 
@@ -62,6 +122,14 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const access = await requireStaffLocationAccess(location_id);
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Forbidden" },
+      { status: access.status },
+    );
+  }
+
   const supabase = createServiceClient();
 
   const { data: room, error } = await supabase
@@ -107,6 +175,9 @@ export async function PATCH(request: NextRequest) {
   if (!id) {
     return NextResponse.json({ error: "id is required" }, { status: 400 });
   }
+
+  const gate = await gateRoomMutation(id);
+  if (!gate.ok) return gate.response;
 
   const supabase = createServiceClient();
 
@@ -163,6 +234,9 @@ export async function DELETE(request: NextRequest) {
   if (!id) {
     return NextResponse.json({ error: "id is required" }, { status: 400 });
   }
+
+  const gate = await gateRoomMutation(id);
+  if (!gate.ok) return gate.response;
 
   const supabase = createServiceClient();
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchClinicianRoomIds } from "@/lib/runsheet/queries";
-import { createClient } from "@/lib/supabase/server";
+import { requireStaffLocationAccess } from "@/lib/auth/staff-access";
 
 export async function GET(request: NextRequest) {
   const locationId = request.nextUrl.searchParams.get("location_id");
@@ -9,16 +9,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "location_id required" }, { status: 400 });
   }
 
-  // Get authenticated user
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = await requireStaffLocationAccess(locationId);
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Forbidden" },
+      { status: access.status },
+    );
   }
 
-  const roomIds = await fetchClinicianRoomIds(user.id, locationId);
+  const roomIds = await fetchClinicianRoomIds(access.userId, locationId);
   return NextResponse.json({ roomIds });
 }
