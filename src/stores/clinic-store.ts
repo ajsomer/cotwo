@@ -39,6 +39,7 @@ export interface FormRow {
   description: string | null;
   status: "draft" | "published" | "archived";
   schema: Record<string, unknown>;
+  public_token: string;
   updated_at: string;
   assignment_counts: { total: number; completed: number };
 }

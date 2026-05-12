@@ -47,12 +47,13 @@ async function main() {
   // Socket auth middleware. Patient tabs (unauthenticated phone-OTP flow)
   // connect anonymously — fine, we only gate staff-only rooms. Staff tabs
   // have a Supabase session cookie; we validate it and stash the user's
-  // allowed location IDs on `socket.data` so `join:location` can enforce
-  // membership.
+  // allowed location IDs AND org IDs on `socket.data` so `join:location` and
+  // `join:org` can both enforce membership without re-querying.
   io.use(async (socket, next) => {
     const cookieHeader = socket.handshake.headers.cookie ?? "";
     socket.data.userId = null;
     socket.data.allowedLocationIds = [] as string[];
+    socket.data.allowedOrgIds = [] as string[];
 
     if (!cookieHeader) return next();
 
@@ -81,11 +82,20 @@ async function main() {
         socket.data.userId = data.user.id;
         const { data: assignments } = await supabase
           .from("staff_assignments")
-          .select("location_id")
+          .select("location_id, locations!inner(org_id)")
           .eq("user_id", data.user.id);
+
         socket.data.allowedLocationIds = (assignments ?? []).map(
           (a: { location_id: string }) => a.location_id
         );
+
+        const orgIds = new Set<string>();
+        for (const a of assignments ?? []) {
+          const loc = (a as { locations?: { org_id?: string } | { org_id?: string }[] | null }).locations;
+          const orgId = Array.isArray(loc) ? loc[0]?.org_id : loc?.org_id;
+          if (orgId) orgIds.add(orgId);
+        }
+        socket.data.allowedOrgIds = Array.from(orgIds);
       }
     } catch (err) {
       console.warn("[socket] auth middleware error:", err);
@@ -133,6 +143,24 @@ async function main() {
       console.log(`[socket] ${socket.id} joined location:${locationId}`);
       // Send the current presence set to the newly-joined clinic client.
       broadcastPresence(locationId);
+    });
+
+    // Clinic staff only. Joins the org-wide room for events that aren't
+    // location-scoped (e.g. standalone form submissions, future org-wide
+    // notifications). Membership is resolved server-side from the
+    // staff_assignments → locations.org_id chain at connection time.
+    // Patient flows never join org rooms.
+    socket.on("join:org", (orgId: string) => {
+      if (typeof orgId !== "string" || !orgId) return;
+      const allowed: string[] = socket.data.allowedOrgIds ?? [];
+      if (!allowed.includes(orgId)) {
+        console.warn(
+          `[socket] ${socket.id} denied join:org ${orgId} (user=${socket.data.userId ?? "anon"})`
+        );
+        return;
+      }
+      socket.join(`org:${orgId}`);
+      console.log(`[socket] ${socket.id} joined org:${orgId}`);
     });
 
     // Patient-side: join a session room so server-emitted status changes

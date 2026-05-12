@@ -7,7 +7,7 @@ export const fetchForms = cache(async (orgId: string): Promise<FormRow[]> => {
 
   const { data: forms, error } = await supabase
     .from("forms")
-    .select("id, name, description, status, schema, created_at, updated_at")
+    .select("id, name, description, status, schema, public_token, created_at, updated_at")
     .eq("org_id", orgId)
     .eq("is_platform_demo", false)
     .order("updated_at", { ascending: false });

@@ -69,6 +69,25 @@ export async function broadcastSessionStatus(
   await publish(`session:${sessionId}`, "status_changed", { sessionId, status });
 }
 
+/**
+ * Notify all clinic staff connected to an org's room that a standalone form
+ * submission was created or actioned. Used by the Readiness dashboard's
+ * standalone-submissions section so reviewers see new submissions land in
+ * real-time across all locations of the org.
+ */
+export type OrgSubmissionEvent =
+  | "submission_created"
+  | "submission_reviewed"
+  | "submission_archived";
+
+export async function broadcastOrgSubmissionChange(
+  orgId: string,
+  event: OrgSubmissionEvent,
+  payload: Record<string, unknown> = {}
+): Promise<void> {
+  await publish(`org:${orgId}`, "submission_changed", { event, ...payload });
+}
+
 export type ReadinessChangeEvent =
   | "package_completed"
   | "package_transcribed"

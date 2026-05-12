@@ -128,6 +128,65 @@ export async function assertStaffCanAccessPatient(
 }
 
 /**
+ * Verifies the cookie-bound auth user is staff at the same org as the form
+ * that produced a submission. Anchors on `forms.org_id` (durable) rather than
+ * `patients.org_id` — patients can be merged/edited, the form can't drift.
+ *
+ * Returns { ok: true, userId, orgId } on success.
+ * Returns { ok: false, status: 401 } if no auth user.
+ * Returns { ok: false, status: 404 } if the submission doesn't exist or the
+ * user is not staff at the form's org. 404 (not 403) — same existence-leak
+ * rationale as `assertStaffCanAccessPatient`.
+ */
+export async function assertStaffCanAccessSubmission(
+  serviceClient: SupabaseClient,
+  submissionId: string,
+): Promise<StaffAccessResult> {
+  const ssr = await createServerClient();
+  const {
+    data: { user },
+  } = await ssr.auth.getUser();
+
+  if (!user) return { ok: false, status: 401 };
+
+  const { data: submission } = await serviceClient
+    .from("form_submissions")
+    .select("form_id, forms!inner(org_id)")
+    .eq("id", submissionId)
+    .single();
+
+  if (!submission) return { ok: false, status: 404 };
+
+  const formOrg = submission.forms as
+    | { org_id: string }
+    | { org_id: string }[]
+    | null;
+  const orgId = Array.isArray(formOrg) ? formOrg[0]?.org_id : formOrg?.org_id;
+  if (!orgId) return { ok: false, status: 404 };
+
+  const { data: assignments } = await serviceClient
+    .from("staff_assignments")
+    .select("locations!inner(org_id)")
+    .eq("user_id", user.id);
+
+  const userOrgIds = new Set(
+    (assignments ?? [])
+      .map((a) => {
+        const loc = a.locations as { org_id: string } | { org_id: string }[] | null;
+        if (Array.isArray(loc)) return loc[0]?.org_id;
+        return loc?.org_id;
+      })
+      .filter((id): id is string => !!id),
+  );
+
+  if (!userOrgIds.has(orgId)) {
+    return { ok: false, status: 404 };
+  }
+
+  return { ok: true, userId: user.id, orgId };
+}
+
+/**
  * Resolve all clinic assignments for a user, ordered deterministically.
  *
  * Used by the (clinic) layout AND by page-level server fetches that need to
