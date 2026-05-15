@@ -1,8 +1,12 @@
 "use client";
 
 import { useEffect, useState, useMemo, useCallback } from "react";
-import { useClinicStore } from "@/stores/clinic-store";
-import type { ReadinessAppointment, ReadinessDirection } from "@/stores/clinic-store";
+import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
+import type {
+  ReadinessAppointment,
+  ReadinessDirection,
+  StandaloneSubmissionRow as StandaloneSubmissionRowType,
+} from "@/stores/clinic-store";
 import type { ReadinessPriority } from "@/lib/readiness/derived-state";
 import {
   getPriorityBadgeConfig,
@@ -48,13 +52,28 @@ const IntakePackageHandoffPanel = dynamic(
   { ssr: false }
 );
 
+const StandaloneSubmissionPanel = dynamic(
+  () =>
+    import("@/components/clinic/standalone-submission-panel").then(
+      (m) => m.StandaloneSubmissionPanel
+    ),
+  { ssr: false }
+);
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 type ActivePanel =
   | { type: "add-patient" }
-  | { type: "detail"; appointment: ReadinessAppointment }
+  | {
+      type: "detail";
+      // Appointment-bound open (run-sheet / readiness): full context.
+      // Patient-only open (e.g. clicking a standalone-submission patient):
+      // appointment is null; PatientContactCard runs in patientId-only mode.
+      appointment: ReadinessAppointment | null;
+      patientId: string;
+    }
   | {
       type: "form-handoff";
       appointment: ReadinessAppointment;
@@ -69,6 +88,7 @@ type ActivePanel =
       actionId: string;
       returnTo: "detail" | "none";
     }
+  | { type: "standalone-submission"; submissionId: string }
   | null;
 
 // ---------------------------------------------------------------------------
@@ -204,6 +224,13 @@ export function ReadinessShell() {
   const orgId = useClinicStore((s) => s.orgId);
   const refreshReadiness = useClinicStore((s) => s.refreshReadiness);
 
+  // Standalone-form submissions — fold into the Form Completed slot below.
+  // Only shown on the pre-appointment view; standalone submissions are
+  // conceptually pre-appointment items by design.
+  const standaloneSubmissions = useClinicStore((s) => s.standaloneSubmissions);
+  const showStandaloneRows = direction === "pre_appointment";
+  const standaloneRows = showStandaloneRows ? standaloneSubmissions : [];
+
   // Fetch-if-empty
   useEffect(() => {
     if (!locationId) return;
@@ -214,6 +241,14 @@ export function ReadinessShell() {
     if (!store.roomsLoaded) void store.refreshRooms(locationId);
     if (orgId && !store.workflowsLoaded) {
       void store.refreshWorkflows(orgId);
+    }
+    if (orgId) {
+      // Standalone submissions live on the org room; the clinic-data
+      // provider also refreshes on socket connect, this covers the
+      // first-render-after-cold-load case.
+      if (!store.standaloneSubmissionsLoaded) {
+        void store.refreshStandaloneSubmissions(orgId);
+      }
     }
   }, [locationId, orgId]);
 
@@ -342,7 +377,11 @@ export function ReadinessShell() {
       }
 
       if (priority === "overdue") {
-        setActivePanel({ type: "detail", appointment: appt });
+        setActivePanel({
+          type: "detail",
+          appointment: appt,
+          patientId: appt.patient_id ?? "",
+        });
       } else if (priority === "form_completed_needs_transcription") {
         // Intake-package handoff takes precedence over the legacy deliver_form
         // path. Source of truth is the action's status.
@@ -464,7 +503,7 @@ export function ReadinessShell() {
       </div>
 
       {/* Priority slot cards */}
-      {totalItems === 0 ? (
+      {totalItems === 0 && standaloneRows.length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-200 p-12 text-center space-y-4">
           <p className="text-gray-500">
             All patients are on track. No outstanding workflow items.
@@ -474,7 +513,15 @@ export function ReadinessShell() {
         <div className="space-y-3">
           {PRIORITY_SLOTS.map((slot) => {
             const items = slotGroups.get(slot.key) ?? [];
-            if (items.length === 0) return null;
+            // Standalone submissions piggy-back on the Form Completed slot
+            // — the same staff action (review the contents of a submitted
+            // form). They share the slot's count and visual treatment.
+            const slotStandaloneRows =
+              slot.key === "form_completed_needs_transcription"
+                ? standaloneRows
+                : [];
+            if (items.length === 0 && slotStandaloneRows.length === 0)
+              return null;
 
             const isCollapsed = collapsedSlots.has(slot.key);
 
@@ -512,13 +559,35 @@ export function ReadinessShell() {
 
                   {/* Count badge */}
                   <Badge variant={slot.badgeVariant as "red" | "amber" | "gray" | "faded"}>
-                    {items.length}
+                    {items.length + slotStandaloneRows.length}
                   </Badge>
                 </button>
 
                 {/* Rows */}
                 {!isCollapsed && (
                   <div>
+                    {slotStandaloneRows.map((row) => (
+                      <StandaloneSubmissionRow
+                        key={row.id}
+                        row={row}
+                        onPatientClick={() =>
+                          setActivePanel({
+                            type: "detail",
+                            // Patient-only open: no appointment context.
+                            // PatientContactCard handles a null appointment
+                            // and falls back to its patientId-only mode.
+                            appointment: null,
+                            patientId: row.patient_id,
+                          })
+                        }
+                        onReview={() =>
+                          setActivePanel({
+                            type: "standalone-submission",
+                            submissionId: row.id,
+                          })
+                        }
+                      />
+                    ))}
                     {items.map((appt) => {
                       const isManuallyExpanded = expandedIds.has(appt.appointment_id);
                       const isAutoExpanded =
@@ -541,6 +610,7 @@ export function ReadinessShell() {
                             setActivePanel({
                               type: "detail",
                               appointment: appt,
+                              patientId: appt.patient_id ?? "",
                             })
                           }
                           onAction={() => handleActionButton(appt)}
@@ -567,7 +637,7 @@ export function ReadinessShell() {
       {activePanel?.type === "detail" && (
         <PatientContactCard
           open
-          patientId={activePanel.appointment.patient_id || null}
+          patientId={activePanel.patientId || null}
           appointment={activePanel.appointment}
           onClose={() => setActivePanel(null)}
           onDeleted={handleSaved}
@@ -582,7 +652,13 @@ export function ReadinessShell() {
           onClose={() => {
             const { returnTo, appointment } = activePanel;
             setActivePanel(
-              returnTo === "detail" ? { type: "detail", appointment } : null
+              returnTo === "detail"
+                ? {
+                    type: "detail",
+                    appointment,
+                    patientId: appointment.patient_id ?? "",
+                  }
+                : null
             );
           }}
           onTranscribed={handleSaved}
@@ -596,10 +672,31 @@ export function ReadinessShell() {
           onClose={() => {
             const { returnTo, appointment } = activePanel;
             setActivePanel(
-              returnTo === "detail" ? { type: "detail", appointment } : null
+              returnTo === "detail"
+                ? {
+                    type: "detail",
+                    appointment,
+                    patientId: appointment.patient_id ?? "",
+                  }
+                : null
             );
           }}
           onTranscribed={handleSaved}
+        />
+      )}
+
+      {activePanel?.type === "standalone-submission" && orgId && (
+        <StandaloneSubmissionPanel
+          submissionId={activePanel.submissionId}
+          onClose={() => setActivePanel(null)}
+          onActioned={() => {
+            // Submission was marked reviewed or archived. Close the panel
+            // and refresh the standalone list — the clinic-data-provider's
+            // socket listener will also fire `submission_changed`, but
+            // doing it locally avoids a network round-trip flicker.
+            setActivePanel(null);
+            void getClinicStore().refreshStandaloneSubmissions(orgId);
+          }}
         />
       )}
 
@@ -910,6 +1007,110 @@ function PatientRow({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Standalone submission row — folded into the Form Completed slot. Matches
+// the PatientRow's visual treatment (left border, row tint, time column)
+// but rendered without an appointment context since standalone submissions
+// don't have one.
+// ---------------------------------------------------------------------------
+
+const STANDALONE_SOURCE_LABEL: Record<string, string> = {
+  standalone_public: "Public link",
+  standalone_sms: "SMS",
+  standalone_qr: "QR",
+};
+
+function timeAgoShort(iso: string): string {
+  const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `${days}d`;
+}
+
+function StandaloneSubmissionRow({
+  row,
+  onPatientClick,
+  onReview,
+}: {
+  row: StandaloneSubmissionRowType;
+  onPatientClick: () => void;
+  onReview: () => void;
+}) {
+  const sourceLabel =
+    STANDALONE_SOURCE_LABEL[row.submission_source] ?? row.submission_source;
+
+  return (
+    <div className="border-b border-gray-200 last:border-b-0">
+      <div className="flex items-stretch border-l-[3px] border-l-amber-500 bg-amber-500/[0.03] transition-colors">
+        {/* Time column — submission age instead of a scheduled time */}
+        <span className="flex items-center justify-center w-[94px] flex-shrink-0 text-[13px] font-medium whitespace-nowrap bg-[#FAF9F7] text-[#5F5E5A]">
+          {timeAgoShort(row.created_at)}
+        </span>
+
+        {/* Content */}
+        <div className="flex items-center flex-1 min-w-0 px-5 h-12">
+          {/* Patient name — clickable, opens the patient contact card */}
+          <button
+            onClick={onPatientClick}
+            className="text-[14px] font-semibold text-gray-800 truncate leading-none hover:underline hover:text-teal-600 transition-colors"
+          >
+            {row.patient_name}
+          </button>
+          <span className="mx-2 text-gray-300 leading-none flex-shrink-0">
+            &middot;
+          </span>
+          <span className="text-xs text-gray-500 truncate min-w-0 leading-none">
+            {row.form_name}
+          </span>
+          <span className="mx-2 text-gray-300 leading-none flex-shrink-0">
+            &middot;
+          </span>
+          <span className="text-xs text-gray-400 truncate flex-shrink-0 leading-none">
+            Standalone submission · {sourceLabel}
+          </span>
+          {row.duplicate?.possible_duplicate_patient_name && (
+            <>
+              <span className="mx-2 text-gray-300 leading-none flex-shrink-0">
+                &middot;
+              </span>
+              <span className="text-xs text-amber-600 truncate flex-shrink-0 leading-none">
+                Possible duplicate of {row.duplicate.possible_duplicate_patient_name}
+              </span>
+            </>
+          )}
+
+          {/* Spacer */}
+          <div className="flex-1" />
+
+          {/* Status badge — matches the Form Completed appointment treatment */}
+          <Badge variant="amber" className="flex-shrink-0">
+            Form completed
+          </Badge>
+
+          {/* Review action — opens the standalone submission detail panel,
+              same affordance as the appointment-bound Form Completed row */}
+          <div className="ml-2 flex-shrink-0">
+            <Button
+              variant="accent"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onReview();
+              }}
+            >
+              Review
+            </Button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

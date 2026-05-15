@@ -111,6 +111,39 @@ export function ClinicDataProvider({ children }: ClinicDataProviderProps) {
     };
   }, [locationId]);
 
+  // Org-wide socket room. Used for events that don't belong to a single
+  // location — currently `submission_changed` fired by the standalone form
+  // submit route. The server's join:org handler authorises against the
+  // user's staff_assignments → locations.org_id chain, so anonymous /
+  // foreign-org clients can't subscribe.
+  useEffect(() => {
+    if (!orgId) return;
+    const socket = getSocket();
+
+    const onConnect = () => {
+      socket.emit("join:org", orgId);
+      const store = getClinicStore();
+      if (store.orgId === orgId) {
+        void store.refreshStandaloneSubmissions(orgId);
+      }
+    };
+    if (socket.connected) socket.emit("join:org", orgId);
+    socket.on("connect", onConnect);
+
+    const onSubmissionChanged = () => {
+      const currentOrgId = getClinicStore().orgId;
+      if (currentOrgId) {
+        void getClinicStore().refreshStandaloneSubmissions(currentOrgId);
+      }
+    };
+    socket.on("submission_changed", onSubmissionChanged);
+
+    return () => {
+      socket.off("connect", onConnect);
+      socket.off("submission_changed", onSubmissionChanged);
+    };
+  }, [orgId]);
+
   // Location switch handler — only fires when the user actually changes
   // location (multi-location switcher). Resets location-scoped slices and
   // re-fetches via the store's refresh* actions. First render is a no-op

@@ -55,6 +55,25 @@ export interface FileRow {
   created_at: string;
 }
 
+export interface StandaloneSubmissionRow {
+  id: string;
+  form_id: string;
+  form_name: string;
+  patient_id: string;
+  patient_name: string;
+  submission_source:
+    | "standalone_public"
+    | "standalone_sms"
+    | "standalone_qr"
+    | string;
+  review_status: "pending" | "reviewed" | "archived" | string;
+  duplicate: {
+    possible_duplicate_patient_id: string | null;
+    possible_duplicate_patient_name: string | null;
+  } | null;
+  created_at: string;
+}
+
 export interface WorkflowAction {
   action_id: string;
   action_type: string;
@@ -170,6 +189,7 @@ export interface ClinicInitialData {
   readinessAppointmentsPost: ReadinessAppointment[];
   forms: FormRow[];
   files: FileRow[];
+  standaloneSubmissions: StandaloneSubmissionRow[];
   appointmentTypes: AppointmentTypeRow[];
   outcomePathways: OutcomePathwayRow[];
   preWorkflowTemplates: Record<string, DbWorkflowTemplate>;
@@ -206,6 +226,7 @@ export interface ClinicStore {
   clinicianRoomIds: string[];
   forms: FormRow[];
   files: FileRow[];
+  standaloneSubmissions: StandaloneSubmissionRow[];
   preWorkflowTemplates: Record<string, DbWorkflowTemplate>;
   preWorkflowBlocks: Record<string, DbWorkflowActionBlock[]>;
   postWorkflowTemplates: Record<string, DbWorkflowTemplate>;
@@ -239,6 +260,7 @@ export interface ClinicStore {
   readinessLoadedPost: boolean;
   formsLoaded: boolean;
   filesLoaded: boolean;
+  standaloneSubmissionsLoaded: boolean;
   workflowsLoaded: boolean;
   paymentConfigLoaded: boolean;
   clinicianRoomIdsLoaded: boolean;
@@ -280,6 +302,7 @@ export interface ClinicStore {
   refreshReadiness: (locationId: string) => Promise<void>;
   refreshForms: (orgId: string) => Promise<void>;
   refreshFiles: (orgId: string) => Promise<void>;
+  refreshStandaloneSubmissions: (orgId: string) => Promise<void>;
   refreshWorkflows: (orgId: string) => Promise<void>;
   refreshPaymentConfig: (locationId: string) => Promise<void>;
   refreshClinicianRoomIds: (locationId: string) => Promise<void>;
@@ -300,6 +323,7 @@ export interface ClinicStore {
   setReadinessCounts: (counts: ReadinessCounts) => void;
   setForms: (forms: FormRow[]) => void;
   setFiles: (files: FileRow[]) => void;
+  setStandaloneSubmissions: (rows: StandaloneSubmissionRow[]) => void;
   setAppointmentTypes: (types: AppointmentTypeRow[]) => void;
   setOutcomePathways: (pathways: OutcomePathwayRow[]) => void;
   setPreWorkflowTemplates: (templates: Record<string, DbWorkflowTemplate>) => void;
@@ -345,6 +369,7 @@ export const useClinicStore = create<ClinicStore>()(
       clinicianRoomIds: [],
       forms: [],
       files: [],
+      standaloneSubmissions: [],
       preWorkflowTemplates: {},
       preWorkflowBlocks: {},
       postWorkflowTemplates: {},
@@ -373,6 +398,7 @@ export const useClinicStore = create<ClinicStore>()(
       readinessLoadedPost: false,
       formsLoaded: false,
       filesLoaded: false,
+      standaloneSubmissionsLoaded: false,
       workflowsLoaded: false,
       paymentConfigLoaded: false,
       clinicianRoomIdsLoaded: false,
@@ -570,6 +596,24 @@ export const useClinicStore = create<ClinicStore>()(
         }
       },
 
+      refreshStandaloneSubmissions: async (orgId) => {
+        try {
+          const data = await fetchJson<{
+            submissions: StandaloneSubmissionRow[];
+          }>(`/api/forms/standalone/submissions?org_id=${orgId}&status=pending`);
+          set(
+            {
+              standaloneSubmissions: data.submissions ?? [],
+              standaloneSubmissionsLoaded: true,
+            },
+            false,
+            "refreshStandaloneSubmissions"
+          );
+        } catch (e) {
+          console.error("Failed to refresh standalone submissions:", e);
+        }
+      },
+
       refreshWorkflows: async (orgId) => {
         try {
           const [preData, postData] = await Promise.all([
@@ -725,6 +769,12 @@ export const useClinicStore = create<ClinicStore>()(
         set({ readinessCounts: counts }, false, "setReadinessCounts"),
       setForms: (forms) => set({ forms, formsLoaded: true }, false, "setForms"),
       setFiles: (files) => set({ files, filesLoaded: true }, false, "setFiles"),
+      setStandaloneSubmissions: (rows) =>
+        set(
+          { standaloneSubmissions: rows, standaloneSubmissionsLoaded: true },
+          false,
+          "setStandaloneSubmissions"
+        ),
       setAppointmentTypes: (types) =>
         set({ appointmentTypes: types }, false, "setAppointmentTypes"),
       setOutcomePathways: (pathways) =>
