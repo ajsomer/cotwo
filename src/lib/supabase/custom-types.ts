@@ -1,15 +1,12 @@
 /**
  * Custom type aliases and interfaces for the Coviu platform.
  *
- * These are maintained manually and live in a separate file from the
- * Supabase-generated types.ts so that `supabase gen types` can safely
- * overwrite types.ts without losing these definitions.
- *
- * All consumers should import from '@/lib/supabase/types' — the generated
- * file re-exports everything from this file.
+ * Maintained manually. The generated Database type lives in
+ * database.generated.ts (overwritten wholesale by `npm run supabase:gen`).
+ * Consumers import from '@/lib/supabase/types', which re-exports both.
  */
 
-import type { Database } from './types';
+import type { Database } from './database.generated';
 
 // ============================================================================
 // Enum Aliases
