@@ -14,7 +14,6 @@ import { PatientSlideOverProvider } from "./patient-slide-over-context";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import { useLocation } from "@/hooks/useLocation";
 import { useRole } from "@/hooks/useRole";
-import { useOrg } from "@/hooks/useOrg";
 import { OnboardingOverlay } from "./onboarding-overlay";
 import { OnboardingCoachMark } from "./onboarding-coach-mark";
 import { RunsheetSkeleton } from "./runsheet-skeleton";
@@ -53,9 +52,7 @@ export function RunsheetShell() {
   // Context (persists across navigations)
   const { selectedLocation } = useLocation();
   const { role } = useRole();
-  const { org } = useOrg();
   const locationId = selectedLocation?.id ?? "";
-  const orgId = org?.id ?? "";
   const timezone = selectedLocation?.timezone ?? "Australia/Sydney";
 
   // Refetch helper — delegates to store
@@ -69,9 +66,11 @@ export function RunsheetShell() {
   // Bumping this triggers the fetch effect to re-run on user retry.
   const [retryKey, setRetryKey] = useState(0);
 
-  // Fetch-if-empty: populate slices on first visit (once per tab lifetime).
-  // Workflows/forms/files are needed by the Process flow's outcome-pathway
-  // step, so we hydrate them here rather than waiting for the Workflows tab.
+  // Fetch-if-empty: populate critical slices on first visit (once per tab
+  // lifetime). Only rooms, clinician scope, and sessions are pulled here —
+  // workflows/forms/files are owned by their consumers (Process flow,
+  // Workflows tab, Readiness) so cold-load isn't blocked by config data
+  // the user may not need this session.
   useEffect(() => {
     if (!locationId) return;
     const store = getClinicStore();
@@ -105,15 +104,10 @@ export function RunsheetShell() {
         if (failed) setFetchError(true);
       });
     }
-    if (orgId) {
-      if (!store.workflowsLoaded) void store.refreshWorkflows(orgId);
-      if (!store.formsLoaded) void store.refreshForms(orgId);
-      if (!store.filesLoaded) void store.refreshFiles(orgId);
-    }
     return () => {
       cancelled = true;
     };
-  }, [locationId, orgId, retryKey]);
+  }, [locationId, retryKey]);
 
   // Onboarding fetch — replaces the SSR call that used to live in page.tsx.
   // setOnboarding flips onboardingLoaded → true, which un-suppresses the
@@ -325,19 +319,24 @@ export function RunsheetShell() {
     ? enriched.find((s) => s.session_id === processingSessionId) ?? null
     : null;
 
-  // Show skeleton until all three slices have loaded *for the currently
-  // selected location*. `storeLocationId !== locationId` covers the window
-  // after the user picks a new location but before ClinicDataProvider has
-  // reset the store and refetched — without it, we'd briefly render the
-  // previous location's data under the new location's selected context.
-  // The three loaded flags cover the cold-load case.
-  if (
+  // Show full-page skeleton until room structure and clinician scope are
+  // known. Sessions are allowed to render later — rooms paint with skeleton
+  // rows inside them until sessionsLoaded flips. `storeLocationId !== locationId`
+  // covers the window after the user picks a new location but before
+  // ClinicDataProvider has reset the store and refetched, so we don't
+  // briefly render the previous location's rooms under the new context.
+  //
+  // Cold-load failure UX: if rooms or clinician scope failed, the full-page
+  // retry is correct — we can't draw structure. If only sessions failed,
+  // we fall through and render rooms with an inline sessions-failed banner.
+  const structuralLoading =
     storeLocationId !== locationId ||
-    !sessionsLoaded ||
     !roomsLoaded ||
-    !clinicianRoomIdsLoaded
-  ) {
-    if (fetchError) {
+    !clinicianRoomIdsLoaded;
+  const structuralError =
+    fetchError && (!roomsLoaded || !clinicianRoomIdsLoaded);
+  if (structuralLoading) {
+    if (structuralError) {
       return (
         <div className="p-6 max-w-[860px] mx-auto">
           <div className="bg-white rounded-xl border border-gray-200 p-12 text-center space-y-4">
@@ -357,6 +356,12 @@ export function RunsheetShell() {
     }
     return <RunsheetSkeleton />;
   }
+
+  // Sessions-only failure: rooms are drawn, but session fetch didn't land.
+  // Surface an inline retry banner above the rooms instead of replacing
+  // the page.
+  const sessionsFailed = fetchError && !sessionsLoaded;
+  const sessionsLoading = !sessionsLoaded;
 
   return (
     <PatientSlideOverProvider onOpenPatient={handleOpenPatient}>
@@ -379,6 +384,20 @@ export function RunsheetShell() {
         />
       </div>
 
+      {sessionsFailed && (
+        <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+          <p className="text-sm text-red-700">
+            Couldn&apos;t load sessions. Rooms are shown without session data.
+          </p>
+          <button
+            onClick={() => setRetryKey((k) => k + 1)}
+            className="inline-flex items-center gap-2 rounded-lg bg-white border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       <div className="space-y-3">
         {groups.map((group, index) => (
           <RoomContainer
@@ -390,6 +409,7 @@ export function RunsheetShell() {
             onPatientClick={handlePatientClick}
             singleRoom={singleRoom}
             totalRooms={groups.length}
+            sessionsLoading={sessionsLoading}
           />
         ))}
 

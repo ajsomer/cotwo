@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { selectOutcomePathway, skipOutcomePathway } from "@/lib/runsheet/actions";
-import { useClinicStore } from "@/stores/clinic-store";
+import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import {
   getActionTypeMeta,
   formatFireTime,
@@ -132,14 +132,30 @@ export function ProcessFlowOutcome({
   const formNameMap = new Map(forms.map((f) => [f.id, f.name]));
   const fileNameMap = new Map(files.map((f) => [f.id, f.name]));
   const locationId = useClinicStore((s) => s.locationId);
+  const orgId = useClinicStore((s) => s.orgId);
   const refreshReadiness = useClinicStore((s) => s.refreshReadiness);
   const refreshSessions = useClinicStore((s) => s.refreshSessions);
+
+  // Fetch-if-empty: outcome pathways, workflow templates/blocks, form names,
+  // and file names are all needed to render this step's summary lines and
+  // customisation panel. The run sheet no longer prewarms these on cold load,
+  // so the Process flow owns its own dependencies.
+  useEffect(() => {
+    if (!orgId) return;
+    const store = getClinicStore();
+    if (!store.workflowsLoaded) void store.refreshWorkflows(orgId);
+    if (!store.formsLoaded) void store.refreshForms(orgId);
+    if (!store.filesLoaded) void store.refreshFiles(orgId);
+  }, [orgId]);
 
   const patientName = [session.patient_first_name, session.patient_last_name]
     .filter(Boolean)
     .join(" ");
 
-  // Derive pathways from the Zustand store (already hydrated on mount)
+  // Outcome pathways come from the workflows store slice (populated by
+  // refreshWorkflows above). Pathway list renders empty until the fetch
+  // lands; selection is gated by user action so an empty initial state
+  // simply shows no pathways for a moment, not a broken flow.
   const storePathways = useClinicStore((s) => s.outcomePathways);
   const pathways: PathwayWithBlocks[] = storePathways
     .filter((p) => !p.archived_at)

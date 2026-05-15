@@ -178,30 +178,6 @@ export interface RoomPayment {
 }
 
 // ---------------------------------------------------------------------------
-// Initial data shape — passed from server component to hydrate the store
-// ---------------------------------------------------------------------------
-
-export interface ClinicInitialData {
-  sessions: RunsheetSession[];
-  rooms: Room[];
-  clinicianRoomIds: string[];
-  readinessAppointments: ReadinessAppointment[];
-  readinessAppointmentsPost: ReadinessAppointment[];
-  forms: FormRow[];
-  files: FileRow[];
-  standaloneSubmissions: StandaloneSubmissionRow[];
-  appointmentTypes: AppointmentTypeRow[];
-  outcomePathways: OutcomePathwayRow[];
-  preWorkflowTemplates: Record<string, DbWorkflowTemplate>;
-  preWorkflowBlocks: Record<string, DbWorkflowActionBlock[]>;
-  postWorkflowTemplates: Record<string, DbWorkflowTemplate>;
-  postWorkflowBlocks: Record<string, DbWorkflowActionBlock[]>;
-  paymentConfig: PaymentsData | null;
-  paymentRooms: RoomPayment[];
-  roomsWithClinicians: RoomWithClinicians[];
-}
-
-// ---------------------------------------------------------------------------
 // Onboarding
 // ---------------------------------------------------------------------------
 
@@ -273,25 +249,6 @@ export interface ClinicStore {
   roomsFetchedAt: number | null;
 
   // --- Actions ---
-
-  // Hydrate the entire store from server-side initial data
-  hydrateFromInitialData: (
-    locationId: string,
-    orgId: string,
-    data: ClinicInitialData
-  ) => void;
-
-  // Hydrate just the slices needed for the runsheet's first frame.
-  // Called from src/components/clinic/runsheet-hydrator.tsx on cold load.
-  hydrateRunsheetSlices: (
-    locationId: string,
-    orgId: string,
-    data: {
-      sessions: RunsheetSession[];
-      rooms: RoomWithClinicians[];
-      clinicianRoomIds: string[];
-    }
-  ) => void;
 
   // Refresh all location-scoped data (client-side fetches)
   refreshLocationData: (locationId: string) => Promise<void>;
@@ -405,83 +362,6 @@ export const useClinicStore = create<ClinicStore>()(
       sessionsFetchedAt: null,
       readinessFetchedAt: null,
       roomsFetchedAt: null,
-
-      // Hydrate from server-side initial data (synchronous, no fetch)
-      hydrateFromInitialData: (locationId, orgId, data) => {
-        set(
-          {
-            locationId,
-            orgId,
-            sessions: data.sessions,
-            rooms: data.rooms,
-            clinicianRoomIds: data.clinicianRoomIds,
-            readinessAppointmentsPre: data.readinessAppointments,
-            readinessAppointmentsPost: data.readinessAppointmentsPost,
-            readinessCounts: {
-              pre: data.readinessAppointments.length,
-              post: data.readinessAppointmentsPost.length,
-            },
-            forms: data.forms,
-            files: data.files,
-            appointmentTypes: data.appointmentTypes,
-            outcomePathways: data.outcomePathways,
-            preWorkflowTemplates: data.preWorkflowTemplates,
-            preWorkflowBlocks: data.preWorkflowBlocks,
-            postWorkflowTemplates: data.postWorkflowTemplates,
-            postWorkflowBlocks: data.postWorkflowBlocks,
-            paymentConfig: data.paymentConfig,
-            paymentRooms: data.paymentRooms,
-            roomsWithClinicians: data.roomsWithClinicians,
-            roomsLoaded: true,
-            sessionsLoaded: true,
-            readinessLoadedPre: true,
-            readinessLoadedPost: true,
-            formsLoaded: true,
-            filesLoaded: true,
-            workflowsLoaded: true,
-            paymentConfigLoaded: true,
-            clinicianRoomIdsLoaded: true,
-            sessionsFetchedAt: Date.now(),
-            readinessFetchedAt: Date.now(),
-            roomsFetchedAt: Date.now(),
-          },
-          false,
-          "hydrateFromInitialData"
-        );
-      },
-
-      // Hydrate just the slices needed for the runsheet's first frame.
-      // Sets per-slice loaded flags and fetched-at timestamps so the
-      // socket connect handler can skip the cold-load resync race.
-      hydrateRunsheetSlices: (locationId, orgId, data) => {
-        const now = Date.now();
-        const rooms: Room[] = data.rooms.map((r) => ({
-          id: r.id,
-          location_id: r.location_id,
-          name: r.name,
-          room_type: r.room_type,
-          link_token: r.link_token,
-          sort_order: r.sort_order,
-          payments_enabled: r.payments_enabled ?? false,
-        }));
-        set(
-          {
-            locationId,
-            orgId,
-            sessions: data.sessions,
-            rooms,
-            roomsWithClinicians: data.rooms,
-            clinicianRoomIds: data.clinicianRoomIds,
-            sessionsLoaded: true,
-            roomsLoaded: true,
-            clinicianRoomIdsLoaded: true,
-            sessionsFetchedAt: now,
-            roomsFetchedAt: now,
-          },
-          false,
-          "hydrateRunsheetSlices"
-        );
-      },
 
       // Refresh all location-scoped data
       refreshLocationData: async (locationId) => {

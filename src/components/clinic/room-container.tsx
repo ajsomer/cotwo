@@ -10,6 +10,7 @@ import {
   type RoomExpansionState,
 } from "@/lib/runsheet/grouping";
 import type { RoomGroup } from "@/lib/supabase/types";
+import { SessionRowSkeleton } from "./session-row-skeleton";
 
 // Distinct background colours for room avatars from the Coviu palette
 const AVATAR_COLORS = [
@@ -42,6 +43,7 @@ interface RoomContainerProps {
   onPatientClick?: (sessionId: string) => void;
   singleRoom?: boolean;
   totalRooms?: number;
+  sessionsLoading?: boolean;
 }
 
 export function RoomContainer({
@@ -52,9 +54,17 @@ export function RoomContainer({
   onPatientClick,
   singleRoom = false,
   totalRooms = 1,
+  sessionsLoading = false,
 }: RoomContainerProps) {
   const isOnlyRoom = totalRooms === 1;
-  const autoState = isOnlyRoom ? "fully-expanded" : getRoomExpansionState(group.sessions);
+  // Force fully-expanded while sessions are still loading so skeleton rows
+  // are visible. Deriving expansion from an intentionally empty sessions
+  // array would render rooms as if they had no attention, which is wrong.
+  const autoState = sessionsLoading
+    ? "fully-expanded"
+    : isOnlyRoom
+      ? "fully-expanded"
+      : getRoomExpansionState(group.sessions);
   const [expansion, setExpansion] = useState<RoomExpansionState>(autoState);
   const [manualOverride, setManualOverride] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -154,19 +164,29 @@ export function RoomContainer({
   if (singleRoom) {
     return (
       <div className="bg-white rounded-xl border border-gray-200">
-        {group.sessions.map((session) => (
-          <SessionRow
-            key={session.session_id}
-            session={session}
-            onAction={onAction}
-            onClick={onSessionClick}
-            onPatientClick={onPatientClick}
-          />
-        ))}
-        {group.sessions.length === 0 && (
-          <p className="p-6 text-center text-sm text-gray-500">
-            No sessions today
-          </p>
+        {sessionsLoading ? (
+          <>
+            <SessionRowSkeleton />
+            <SessionRowSkeleton />
+            <SessionRowSkeleton />
+          </>
+        ) : (
+          <>
+            {group.sessions.map((session) => (
+              <SessionRow
+                key={session.session_id}
+                session={session}
+                onAction={onAction}
+                onClick={onSessionClick}
+                onPatientClick={onPatientClick}
+              />
+            ))}
+            {group.sessions.length === 0 && (
+              <p className="p-6 text-center text-sm text-gray-500">
+                No sessions today
+              </p>
+            )}
+          </>
         )}
       </div>
     );
@@ -282,23 +302,31 @@ export function RoomContainer({
         </div>
       </div>
 
-      {/* Session rows */}
-      {visibleSessions.length > 0 && (
+      {/* Session rows — skeletons while loading, real rows once loaded */}
+      {sessionsLoading ? (
         <div>
-          {visibleSessions.map((session) => (
-            <SessionRow
-              key={session.session_id}
-              session={session}
-              onAction={onAction}
-              onClick={onSessionClick}
-              onPatientClick={onPatientClick}
-            />
-          ))}
+          <SessionRowSkeleton />
+          <SessionRowSkeleton />
+          <SessionRowSkeleton />
         </div>
+      ) : (
+        visibleSessions.length > 0 && (
+          <div>
+            {visibleSessions.map((session) => (
+              <SessionRow
+                key={session.session_id}
+                session={session}
+                onAction={onAction}
+                onClick={onSessionClick}
+                onPatientClick={onPatientClick}
+              />
+            ))}
+          </div>
+        )
       )}
 
       {/* Expand / collapse toggle */}
-      {expansion === "auto-expanded" && hiddenCount > 0 && (
+      {!sessionsLoading && expansion === "auto-expanded" && hiddenCount > 0 && (
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -310,7 +338,7 @@ export function RoomContainer({
           show all
         </button>
       )}
-      {expansion === "fully-expanded" && attentionSessions.length > 0 && attentionSessions.length < group.sessions.length && (
+      {!sessionsLoading && expansion === "fully-expanded" && attentionSessions.length > 0 && attentionSessions.length < group.sessions.length && (
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -323,8 +351,8 @@ export function RoomContainer({
         </button>
       )}
 
-      {/* Empty state */}
-      {expansion !== "collapsed" && group.sessions.length === 0 && (
+      {/* Empty state — suppressed while sessions are loading */}
+      {!sessionsLoading && expansion !== "collapsed" && group.sessions.length === 0 && (
         <div className="p-8 text-center border-t border-gray-200">
           <svg
             width="32"

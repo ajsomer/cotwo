@@ -3,7 +3,7 @@ import { SkeletonLine, SkeletonBadge } from "@/components/ui/skeleton";
 
 export function RunsheetSkeleton() {
   return (
-    <div className="p-6 space-y-4 max-w-7xl mx-auto">
+    <div className="p-6 space-y-4 max-w-[860px] mx-auto">
       {/* Header skeleton */}
       <div>
         <SkeletonLine className="w-40 h-7" />
