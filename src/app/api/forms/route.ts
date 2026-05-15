@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchForms } from "@/lib/clinic/fetchers/forms";
+import { defaultFormSchema, ensureIdentityPage } from "@/lib/survey/identity-page";
 
 // GET /api/forms?org_id=xxx
 export async function GET(request: NextRequest) {
@@ -33,13 +34,21 @@ export async function POST(request: NextRequest) {
 
   const supabase = createServiceClient();
 
+  // Every form gets a locked identity page at the top. If the caller
+  // supplies a schema, defensively ensure it contains the identity page
+  // anyway — the builder can't author its own identity, and the runtime
+  // depends on those reserved field names being present.
+  const finalSchema = schema
+    ? ensureIdentityPage(schema)
+    : defaultFormSchema();
+
   const { data: form, error } = await supabase
     .from("forms")
     .insert({
       org_id,
       name,
       description: description ?? null,
-      schema: schema ?? { pages: [] },
+      schema: finalSchema,
       status: "draft",
     })
     .select()
@@ -66,7 +75,10 @@ export async function PATCH(request: NextRequest) {
   const updates: Record<string, unknown> = {};
   if (name !== undefined) updates.name = name;
   if (description !== undefined) updates.description = description;
-  if (schema !== undefined) updates.schema = schema;
+  // Defensive: any schema write must contain the locked identity page.
+  // The builder UI prevents deleting it, but a tampered client or a
+  // direct API call could submit a schema without it.
+  if (schema !== undefined) updates.schema = ensureIdentityPage(schema);
   if (status !== undefined) updates.status = status;
 
   if (Object.keys(updates).length === 0) {

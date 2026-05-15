@@ -37,6 +37,18 @@ export function FormsShell() {
   }, [org]);
   const [sendingForm, setSendingForm] = useState<FormRow | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("forms");
+  const [copiedFormId, setCopiedFormId] = useState<string | null>(null);
+
+  const copyStandaloneLink = async (form: FormRow) => {
+    const url = `${window.location.origin}/f/${form.public_token}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedFormId(form.id);
+      setTimeout(() => setCopiedFormId((id) => (id === form.id ? null : id)), 2000);
+    } catch {
+      window.prompt("Copy this link:", url);
+    }
+  };
 
   const refetchForms = () => {
     if (org) getClinicStore().refreshForms(org.id);
@@ -207,6 +219,19 @@ export function FormsShell() {
                             >
                               Edit
                             </button>
+                            {form.status !== "archived" && (
+                              <button
+                                onClick={() => copyStandaloneLink(form)}
+                                title={
+                                  form.status === "draft"
+                                    ? "Publish the form before sharing — the link won't resolve until then."
+                                    : "Copy the standalone form link"
+                                }
+                                className="rounded px-2 py-1 text-xs text-teal-600 hover:bg-teal-50"
+                              >
+                                {copiedFormId === form.id ? "Copied!" : "Copy link"}
+                              </button>
+                            )}
                             {form.status === "published" && (
                               <button
                                 onClick={() => setSendingForm(form)}

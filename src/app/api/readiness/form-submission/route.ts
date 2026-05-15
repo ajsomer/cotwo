@@ -54,6 +54,7 @@ export async function GET(request: NextRequest) {
           submission.responses as Record<string, unknown>
         );
         return NextResponse.json({
+          submission_id: submission.id,
           fields,
           submitted_at: submission.created_at,
         });
@@ -73,6 +74,7 @@ export async function GET(request: NextRequest) {
         submission.responses as Record<string, unknown>
       );
       return NextResponse.json({
+        submission_id: submission.id,
         fields,
         submitted_at: submission.created_at,
       });
@@ -87,6 +89,7 @@ export async function GET(request: NextRequest) {
     );
 
     return NextResponse.json({
+      submission_id: submission.id,
       fields,
       submitted_at: submission.created_at,
     });

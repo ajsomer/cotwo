@@ -53,6 +53,7 @@ export function FormHandoffPanel({
   const [marking, setMarking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submittedAt, setSubmittedAt] = useState<string | null>(null);
+  const [submissionId, setSubmissionId] = useState<string | null>(null);
 
   useEffect(() => {
     loadFormData();
@@ -69,6 +70,7 @@ export function FormHandoffPanel({
         const data = await res.json();
         setFields(data.fields ?? []);
         setSubmittedAt(data.submitted_at ?? null);
+        setSubmissionId(data.submission_id ?? null);
       } else {
         // If no dedicated endpoint exists, show a message
         setFields([]);
@@ -197,6 +199,19 @@ export function FormHandoffPanel({
           >
             Back
           </button>
+          {submissionId && (
+            <button
+              onClick={() =>
+                window.open(
+                  `/api/forms/submissions/${submissionId}/pdf`,
+                  "_blank",
+                )
+              }
+              className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"
+            >
+              Download form
+            </button>
+          )}
           <button
             onClick={handleMarkTranscribed}
             disabled={marking}

@@ -10,9 +10,26 @@ import { FormFillClient } from "@/components/patient/form-fill-client";
 import { useOrg } from "@/hooks/useOrg";
 import type { FormStatus } from "@/lib/supabase/types";
 import { coviuTheme } from "@/lib/survey/theme";
+import {
+  IDENTITY_PAGE_NAME,
+  IDENTITY_FIELD_NAMES,
+} from "@/lib/survey/identity-page";
 
 import "survey-core/survey-core.min.css";
 import "survey-creator-core/survey-creator-core.min.css";
+
+// Field/page names that belong to the locked identity page. The builder
+// refuses delete/move/edit on any of these so authors can't break standalone
+// forms. Includes the intro html element too.
+const LOCKED_NAMES = new Set<string>([
+  IDENTITY_PAGE_NAME,
+  "__identity_intro",
+  IDENTITY_FIELD_NAMES.existing,
+  IDENTITY_FIELD_NAMES.firstName,
+  IDENTITY_FIELD_NAMES.lastName,
+  IDENTITY_FIELD_NAMES.dateOfBirth,
+  IDENTITY_FIELD_NAMES.email,
+]);
 
 interface FormBuilderShellProps {
   formId: string;
@@ -83,6 +100,21 @@ export function FormBuilderShell({ formId }: FormBuilderShellProps) {
 
         // Apply Coviu theme to the preview
         c.theme = coviuTheme;
+
+        // Lock the identity page in the builder. Disable delete/drag/copy/
+        // type-change/required-toggle on any element whose name is part of
+        // the platform-owned identity contract. Authors can still see the
+        // page in the builder but can't break it.
+        c.onElementAllowOperations.add((_creator, options) => {
+          const el = options.element as { name?: string };
+          if (el && el.name && LOCKED_NAMES.has(el.name)) {
+            options.allowDelete = false;
+            options.allowDrag = false;
+            options.allowCopy = false;
+            options.allowChangeType = false;
+            options.allowChangeRequired = false;
+          }
+        });
 
         // Load existing schema
         const schema = form.schema;
