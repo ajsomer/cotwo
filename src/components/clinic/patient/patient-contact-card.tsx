@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { SlideOver } from "@/components/ui/slide-over";
 import { Badge } from "@/components/ui/badge";
-import { StatusBadge } from "./status-badge";
-import { ActionTypeIcon } from "./action-type-icon";
+import { StatusBadge } from "@/components/clinic/shared/status-badge";
+import { ActionTypeIcon } from "@/components/clinic/shared/action-type-icon";
 import { formatPhoneNumber } from "@/lib/runsheet/format";
 import type { EnrichedSession } from "@/lib/supabase/types";
 import type { ReadinessAppointment } from "@/stores/clinic-store";

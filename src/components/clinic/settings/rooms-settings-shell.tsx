@@ -9,8 +9,6 @@ import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import type { RoomWithClinicians } from "@/stores/clinic-store";
 import type { RoomType } from "@/lib/supabase/types";
 
-export type { RoomWithClinicians };
-
 const ROOM_TYPE_BADGE: Record<
   RoomType,
   { label: string; variant: "teal" | "blue" | "amber" | "gray" }

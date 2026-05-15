@@ -1,4 +1,4 @@
-import { PaymentsSettingsShell } from "@/components/clinic/payments-settings-shell";
+import { PaymentsSettingsShell } from "@/components/clinic/settings/payments-settings-shell";
 
 export default function PaymentSettingsPage() {
   return <PaymentsSettingsShell />;

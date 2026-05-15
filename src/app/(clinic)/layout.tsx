@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { ClinicProviders } from "@/components/clinic/providers";
+import { ClinicProviders } from "@/components/clinic/shared/providers";
 import { fetchUserClinicAssignments } from "@/lib/auth/staff-access";
 import { redirect } from "next/navigation";
 

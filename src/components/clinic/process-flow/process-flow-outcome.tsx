@@ -10,7 +10,7 @@ import {
   type ActionType,
 } from "@/lib/workflows/types";
 import type { EnrichedSession } from "@/lib/supabase/types";
-import { ActionTypeIcon } from "./action-type-icon";
+import { ActionTypeIcon } from "@/components/clinic/shared/action-type-icon";
 import { ChevronDown, ChevronUp, ArrowLeft } from "lucide-react";
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import { FormBuilderWrapper } from "@/components/clinic/form-builder-wrapper";
+import { FormBuilderWrapper } from "@/components/clinic/forms/form-builder-wrapper";
 
 export default async function FormDetailPage({
   params,

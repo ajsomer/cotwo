@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { SlideOver } from "@/components/ui/slide-over";
 import { Button } from "@/components/ui/button";
 import type { RoomType } from "@/lib/supabase/types";
-import type { RoomWithClinicians } from "./rooms-settings-shell";
+import type { RoomWithClinicians } from "@/stores/clinic-store";
 
 interface Clinician {
   staff_assignment_id: string;

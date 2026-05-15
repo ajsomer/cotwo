@@ -9,18 +9,18 @@ import { groupSessionsByRoom, calculateSummary } from "@/lib/runsheet/grouping";
 import { useTabNotifications } from "@/hooks/useTabNotifications";
 import { useFaviconBadge } from "@/hooks/useFaviconBadge";
 import { seedDemoData, nukeSessions } from "@/lib/runsheet/seed";
-import { PatientContactCard } from "./patient-contact-card";
-import { PatientSlideOverProvider } from "./patient-slide-over-context";
+import { PatientContactCard } from "@/components/clinic/patient/patient-contact-card";
+import { PatientSlideOverProvider } from "@/components/clinic/patient/patient-slide-over-context";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import { useLocation } from "@/hooks/useLocation";
 import { useRole } from "@/hooks/useRole";
-import { OnboardingOverlay } from "./onboarding-overlay";
-import { OnboardingCoachMark } from "./onboarding-coach-mark";
+import { OnboardingOverlay } from "@/components/clinic/onboarding/onboarding-overlay";
+import { OnboardingCoachMark } from "@/components/clinic/onboarding/onboarding-coach-mark";
 import { RunsheetSkeleton } from "./runsheet-skeleton";
 
 // Lazy-load heavy modals — only downloaded when first opened
 const ProcessFlowDynamic = dynamic(
-  () => import("./process-flow").then((mod) => mod.ProcessFlow),
+  () => import("@/components/clinic/process-flow/process-flow").then((mod) => mod.ProcessFlow),
   { ssr: false }
 );
 const AddSessionPanelDynamic = dynamic(

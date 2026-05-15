@@ -1,7 +1,7 @@
 "use client";
 
 import { WifiOff } from "lucide-react";
-import { StatusBadge } from "./status-badge";
+import { StatusBadge } from "@/components/clinic/shared/status-badge";
 import { ActionButton } from "./action-button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { getRowBorderColor } from "@/lib/runsheet/derived-state";

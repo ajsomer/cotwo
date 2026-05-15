@@ -16,29 +16,29 @@ import {
 } from "@/lib/readiness/derived-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ActionTypeIcon } from "@/components/clinic/action-type-icon";
+import { ActionTypeIcon } from "@/components/clinic/shared/action-type-icon";
 import type { ActionType } from "@/lib/workflows/types";
-import { ReadinessModeToggle } from "@/components/clinic/readiness-mode-toggle";
+import { ReadinessModeToggle } from "@/components/clinic/readiness/readiness-mode-toggle";
 import {
   ReadinessFilterBar,
   type ReadinessFilters,
-} from "@/components/clinic/readiness-filter-bar";
+} from "@/components/clinic/readiness/readiness-filter-bar";
 import { resolveTask, cancelAction } from "@/lib/runsheet/actions";
 import dynamic from "next/dynamic";
 
 const AddPatientPanel = dynamic(
   () =>
-    import("@/components/clinic/add-patient-panel").then(
+    import("@/components/clinic/patient/add-patient-panel").then(
       (m) => m.AddPatientPanel
     ),
   { ssr: false }
 );
 
-import { PatientContactCard } from "@/components/clinic/patient-contact-card";
+import { PatientContactCard } from "@/components/clinic/patient/patient-contact-card";
 
 const FormHandoffPanel = dynamic(
   () =>
-    import("@/components/clinic/form-handoff-panel").then(
+    import("@/components/clinic/forms/form-handoff-panel").then(
       (m) => m.FormHandoffPanel
     ),
   { ssr: false }
@@ -46,7 +46,7 @@ const FormHandoffPanel = dynamic(
 
 const IntakePackageHandoffPanel = dynamic(
   () =>
-    import("@/components/clinic/intake-package-handoff-panel").then(
+    import("@/components/clinic/forms/intake-package-handoff-panel").then(
       (m) => m.IntakePackageHandoffPanel
     ),
   { ssr: false }
@@ -54,7 +54,7 @@ const IntakePackageHandoffPanel = dynamic(
 
 const StandaloneSubmissionPanel = dynamic(
   () =>
-    import("@/components/clinic/standalone-submission-panel").then(
+    import("@/components/clinic/forms/standalone-submission-panel").then(
       (m) => m.StandaloneSubmissionPanel
     ),
   { ssr: false }
