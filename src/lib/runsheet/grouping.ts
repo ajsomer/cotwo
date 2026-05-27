@@ -21,15 +21,27 @@ export const PRIORITY_ORDER: Record<DerivedDisplayState, number> = {
   done: 8,
 };
 
-/** Sort sessions by priority, then by scheduled time. */
+/**
+ * Sort key for a session within its priority band: the scheduled time for
+ * appointments, or the join time for on-demand sessions (which have no
+ * scheduled_at). Guard against NaN — a NaN return from the comparator silently
+ * corrupts the sort rather than throwing. session_created_at is NOT NULL so this
+ * can't fire in practice, but the guard keeps a malformed timestamp from
+ * scrambling order.
+ */
+function sortTime(s: EnrichedSession): number {
+  const raw = s.scheduled_at ?? s.patient_arrived_at ?? s.session_created_at;
+  const t = raw ? new Date(raw).getTime() : 0;
+  return Number.isNaN(t) ? 0 : t;
+}
+
+/** Sort sessions by priority, then by scheduled time (or join time for on-demand). */
 function sortSessions(sessions: EnrichedSession[]): EnrichedSession[] {
   return [...sessions].sort((a, b) => {
     const priorityDiff = PRIORITY_ORDER[a.derived_state] - PRIORITY_ORDER[b.derived_state];
     if (priorityDiff !== 0) return priorityDiff;
-    // Within same priority, sort by scheduled time
-    const aTime = a.scheduled_at ? new Date(a.scheduled_at).getTime() : 0;
-    const bTime = b.scheduled_at ? new Date(b.scheduled_at).getTime() : 0;
-    return aTime - bTime;
+    // Within same priority, sort by time
+    return sortTime(a) - sortTime(b);
   });
 }
 

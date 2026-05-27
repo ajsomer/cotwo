@@ -66,9 +66,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to send code' }, { status: 500 });
   }
 
+  // PROTOTYPE: always return the OTP so the patient entry flow can auto-fill it.
+  // This is a demo build shown to customers, not a production app — there is no
+  // real SMS delivery to rely on. REMOVE this (gate behind NODE_ENV/PROTOTYPE_MODE)
+  // before any production deployment so the code is never exposed to the client.
   return NextResponse.json({
     verification_id: verification.id,
     expires_at: expiresAt,
-    ...(process.env.NODE_ENV === 'development' && { dev_code: code }),
+    dev_code: code,
   });
 }
