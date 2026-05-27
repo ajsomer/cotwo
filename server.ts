@@ -18,7 +18,7 @@ import { createServerClient } from "@supabase/ssr";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 
 const dev = process.env.NODE_ENV !== "production";
-const hostname = process.env.HOSTNAME ?? "0.0.0.0";
+const hostname = "0.0.0.0";
 const port = Number(process.env.PORT ?? 3000);
 
 const app = next({ dev, hostname, port });

@@ -141,10 +141,9 @@ export function getActionConfig(
   modality: 'telehealth' | 'in_person' | null
 ): ActionConfig {
   switch (state) {
-    case 'late':
-      return { label: 'Call', variant: 'red', action: 'call' };
-    case 'upcoming':
-      return { label: 'Nudge', variant: 'amber', action: 'nudge' };
+    // 'late' (Call) and 'upcoming' (Nudge) intentionally have no action button —
+    // they fall through to `return null`. The status pills still render via
+    // getStatusConfig; only the CTA was removed.
     case 'waiting':
       // `waiting` is a telehealth-only state (in-person arrive → `checked_in`),
       // so the Admit button always applies here regardless of modality.

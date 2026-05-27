@@ -96,7 +96,8 @@ src/components/clinic/
 │   ├── form-builder-wrapper.tsx
 │   ├── form-assignments-panel.tsx
 │   ├── form-handoff-panel.tsx
-│   ├── intake-package-handoff-panel.tsx
+│   ├── intake-packa
+ge-handoff-panel.tsx
 │   ├── standalone-submission-panel.tsx
 │   └── files-panel.tsx                # sole caller is forms-shell
 ├── settings/

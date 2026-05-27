@@ -9,6 +9,35 @@ export function formatSessionTime(scheduledAt: string | null): string {
   });
 }
 
+export type SessionTimeSource = 'scheduled' | 'joined' | 'none';
+
+export interface SessionTimeDisplay {
+  /** Formatted time string, e.g. "9:30 AM". null when no time is known. */
+  text: string | null;
+  source: SessionTimeSource;
+}
+
+/**
+ * Resolve which time to show in the run sheet time column and what it means.
+ * - Scheduled appointment      -> the scheduled time.
+ * - On-demand (no appointment) -> the time the patient joined the waiting room
+ *   (patient_arrived_at, falling back to session_created_at).
+ */
+export function resolveSessionTime(session: {
+  scheduled_at: string | null;
+  patient_arrived_at: string | null;
+  session_created_at: string;
+}): SessionTimeDisplay {
+  if (session.scheduled_at) {
+    return { text: formatSessionTime(session.scheduled_at), source: 'scheduled' };
+  }
+  const joined = session.patient_arrived_at ?? session.session_created_at;
+  if (joined) {
+    return { text: formatSessionTime(joined), source: 'joined' };
+  }
+  return { text: null, source: 'none' };
+}
+
 /** Format cents as currency. e.g. 15000 -> "$150.00" */
 export function formatCurrency(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;

@@ -1,4 +1,4 @@
-import { RoomContainerSkeleton } from "@/components/clinic/room-container-skeleton";
+import { RoomContainerSkeleton } from "@/components/clinic/runsheet/room-container-skeleton";
 import { SkeletonLine, SkeletonBadge } from "@/components/ui/skeleton";
 
 export function RunsheetSkeleton() {

@@ -43,6 +43,11 @@ export function PhoneVerification({
   const [loading, setLoading] = useState(false);
   const [resendTimer, setResendTimer] = useState(0);
   const [attempts, setAttempts] = useState(0);
+  // Prototype-only: the OTP returned by the send endpoint when running in
+  // dev/prototype mode. Used to auto-fill the code inputs so demo audiences
+  // don't need a real SMS. Never populated in production (the server only
+  // returns dev_code when NODE_ENV=development or PROTOTYPE_MODE=true).
+  const [autoFilledCode, setAutoFilledCode] = useState<string | null>(null);
 
   const codeInputsRef = useRef<(HTMLInputElement | null)[]>([]);
 
@@ -55,44 +60,12 @@ export function PhoneVerification({
     return () => clearInterval(interval);
   }, [resendTimer]);
 
-  const sendCode = useCallback(async () => {
-    setError(null);
-    setLoading(true);
-
-    try {
-      const res = await fetch('/api/patient/otp/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone_number: phoneNumber, session_id: sessionId }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.error || 'Failed to send code');
-        return;
-      }
-
-      if (data.dev_code) {
-        console.log(`📱 [DEV] OTP code for ${phoneNumber}: ${data.dev_code}`);
-      }
-
-      setVerificationId(data.verification_id);
-      setPhase('enter_code');
-      setResendTimer(30);
-      setCode(['', '', '', '', '', '']);
-      setAttempts(0);
-
-      // Auto-focus first code input
-      setTimeout(() => codeInputsRef.current[0]?.focus(), 100);
-    } catch {
-      setError('Something went wrong. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  }, [phoneNumber, sessionId]);
-
-  const verifyCode = useCallback(async (fullCode: string) => {
+  // `overrideVerificationId` lets the auto-fill path pass the id straight from
+  // the send response, avoiding a race where the captured closure still sees
+  // the pre-setState `verificationId` (null) and the verify route rejects with
+  // "Verification ID and code are required".
+  const verifyCode = useCallback(async (fullCode: string, overrideVerificationId?: string) => {
+    const activeVerificationId = overrideVerificationId ?? verificationId;
     setError(null);
     setLoading(true);
 
@@ -101,7 +74,7 @@ export function PhoneVerification({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          verification_id: verificationId,
+          verification_id: activeVerificationId,
           code: fullCode,
           org_id: orgId,
         }),
@@ -121,13 +94,67 @@ export function PhoneVerification({
         return;
       }
 
-      onVerified(data.phone_number, verificationId!, data.patients);
+      onVerified(data.phone_number, activeVerificationId!, data.patients);
     } catch {
       setError('Something went wrong. Please try again.');
     } finally {
       setLoading(false);
     }
   }, [verificationId, orgId, attempts, onVerified]);
+
+  const sendCode = useCallback(async () => {
+    setError(null);
+    setLoading(true);
+
+    try {
+      const res = await fetch('/api/patient/otp/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone_number: phoneNumber, session_id: sessionId }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || 'Failed to send code');
+        return;
+      }
+
+      // PROTOTYPE auto-fill. The send route hard-codes dev_code in the response
+      // for this demo build (see api/patient/otp/send/route.ts). In a production
+      // build dev_code is absent and the patient enters the SMS code manually.
+      const devCode: string | null =
+        typeof data.dev_code === 'string' ? data.dev_code : null;
+      if (devCode) {
+        console.log(`📱 [DEV] OTP code for ${phoneNumber}: ${devCode}`);
+      }
+      setAutoFilledCode(devCode);
+
+      setVerificationId(data.verification_id);
+      setPhase('enter_code');
+      setResendTimer(30);
+      setCode(['', '', '', '', '', '']);
+      setAttempts(0);
+
+      if (devCode) {
+        // Wait for the code inputs to mount (phase just switched), then fill
+        // and submit. Pass verification_id straight from the response — the
+        // `verificationId` state hasn't committed yet, so verifyCode's closure
+        // would otherwise send null.
+        setTimeout(() => {
+          setCode(devCode.split(''));
+          verifyCode(devCode, data.verification_id);
+        }, 150);
+      } else {
+        // Auto-focus first code input
+        setTimeout(() => codeInputsRef.current[0]?.focus(), 100);
+      }
+    } catch {
+      setError('Something went wrong. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }, [phoneNumber, sessionId, verifyCode]);
 
   const handleCodeChange = (index: number, value: string) => {
     if (!/^\d*$/.test(value)) return;
@@ -244,6 +271,12 @@ export function PhoneVerification({
             {phoneNumber.replace(/^\+61(\d{3})(\d{3})(\d{3,4})$/, '0$1 $2 $3')}
           </span>
         </p>
+
+        {autoFilledCode && (
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-center text-xs text-amber-600">
+            Demo mode — code auto-filled for you
+          </p>
+        )}
 
         {/* 6-digit code input */}
         <div className="flex justify-center gap-2" onPaste={handleCodePaste}>

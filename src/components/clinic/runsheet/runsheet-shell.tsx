@@ -9,18 +9,24 @@ import { groupSessionsByRoom, calculateSummary } from "@/lib/runsheet/grouping";
 import { useTabNotifications } from "@/hooks/useTabNotifications";
 import { useFaviconBadge } from "@/hooks/useFaviconBadge";
 import { seedDemoData, nukeSessions } from "@/lib/runsheet/seed";
-import { PatientContactCard } from "./patient-contact-card";
-import { PatientSlideOverProvider } from "./patient-slide-over-context";
+import { PatientContactCard } from "@/components/clinic/patient/patient-contact-card";
+import { PatientSlideOverProvider } from "@/components/clinic/patient/patient-slide-over-context";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import { useLocation } from "@/hooks/useLocation";
 import { useRole } from "@/hooks/useRole";
-import { OnboardingOverlay } from "./onboarding-overlay";
-import { OnboardingCoachMark } from "./onboarding-coach-mark";
+// ONBOARDING DISABLED — the first-login walkthrough is currently turned off.
+// To re-enable: uncomment the two mounts in the JSX below (search "ONBOARDING DISABLED")
+// and remove the eslint-disable comments on these two imports.
+// See docs/plans/remove-runsheet-ctas-and-onboarding.md
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { OnboardingOverlay } from "@/components/clinic/onboarding/onboarding-overlay";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { OnboardingCoachMark } from "@/components/clinic/onboarding/onboarding-coach-mark";
 import { RunsheetSkeleton } from "./runsheet-skeleton";
 
 // Lazy-load heavy modals — only downloaded when first opened
 const ProcessFlowDynamic = dynamic(
-  () => import("./process-flow").then((mod) => mod.ProcessFlow),
+  () => import("@/components/clinic/process-flow/process-flow").then((mod) => mod.ProcessFlow),
   { ssr: false }
 );
 const AddSessionPanelDynamic = dynamic(
@@ -254,17 +260,11 @@ export function RunsheetShell() {
       }
 
       // Import and call server actions dynamically
-      const { callPatient, nudgePatient, admitPatient } = await import(
+      const { admitPatient } = await import(
         "@/lib/runsheet/actions"
       );
 
       switch (action) {
-        case "call":
-          await callPatient(sessionId);
-          break;
-        case "nudge":
-          await nudgePatient(sessionId);
-          break;
         case "admit": {
           const result = await admitPatient(sessionId);
           if (result.success) {
@@ -277,7 +277,6 @@ export function RunsheetShell() {
         }
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [onboarding.testSessionId, onboarding.stage]
   );
 
@@ -365,8 +364,11 @@ export function RunsheetShell() {
 
   return (
     <PatientSlideOverProvider onOpenPatient={handleOpenPatient}>
-      <OnboardingOverlay />
-      <OnboardingCoachMark />
+      {/* ONBOARDING DISABLED — uncomment these two mounts to re-enable the
+          first-login walkthrough (also remove the eslint-disable on the imports).
+          See docs/plans/remove-runsheet-ctas-and-onboarding.md */}
+      {/* <OnboardingOverlay /> */}
+      {/* <OnboardingCoachMark /> */}
     <div className="p-6 max-w-[860px] mx-auto">
       <div className="mb-4">
         <RunsheetHeader

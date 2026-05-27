@@ -10,8 +10,8 @@ import type {
 // Post-appointment components — retained for upcoming post-appointment spec
 // import { WorkflowSidebar, type SidebarItem } from "./workflow-sidebar";
 // import { WorkflowMiddlePane } from "./workflow-middle-pane";
-// import { MidFlightWarningModal } from "./mid-flight-warning-modal";
-import { AppointmentTypesSettingsShell } from "./appointment-types-settings-shell";
+// import { MidFlightWarningModal } from "@/components/clinic/shared/mid-flight-warning-modal";
+import { AppointmentTypesSettingsShell } from "@/components/clinic/settings/appointment-types-settings-shell";
 import { OutcomePathwaysPanel } from "./outcome-pathways-panel";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import type {

@@ -1,4 +1,4 @@
-import { RunsheetShell } from "@/components/clinic/runsheet-shell";
+import { RunsheetShell } from "@/components/clinic/runsheet/runsheet-shell";
 
 export default function RunSheetPage() {
   return <RunsheetShell />;

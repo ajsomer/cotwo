@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import type { ActionType, WorkflowDirection } from "@/lib/workflows/types";
 import { getActionTypesForDirection } from "@/lib/workflows/types";
-import { ActionTypeIcon } from "./action-type-icon";
+import { ActionTypeIcon } from "@/components/clinic/shared/action-type-icon";
 
 interface AddActionPopoverProps {
   direction: WorkflowDirection;

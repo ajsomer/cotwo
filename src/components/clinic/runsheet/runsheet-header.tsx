@@ -12,8 +12,6 @@ interface RunsheetHeaderProps {
   isSeeding?: boolean;
   onNuke?: () => void;
   isNuking?: boolean;
-  onBulkCall?: () => void;
-  onBulkNudge?: () => void;
   onBulkProcess?: () => void;
 }
 
@@ -25,14 +23,17 @@ export function RunsheetHeader({
   isSeeding,
   onNuke,
   isNuking,
-  onBulkCall,
-  onBulkNudge,
   onBulkProcess,
 }: RunsheetHeaderProps) {
   const hasLate = summary.late > 0;
   const hasUpcoming = summary.upcoming > 0;
   const hasComplete = summary.complete > 0;
-  const hasActions = hasLate || hasUpcoming || hasComplete;
+  // `hasAttention` drives the Zap fill/colour — late/upcoming still count as
+  // "attention" even though they no longer have a CTA button.
+  const hasAttention = hasLate || hasUpcoming || hasComplete;
+  // `hasBulkActions` drives the add-session divider — only Bulk process remains
+  // as a bulk button, so the divider only shows when there are complete sessions.
+  const hasBulkActions = hasComplete;
 
   const boltColor = hasLate
     ? "text-red-500"
@@ -55,7 +56,7 @@ export function RunsheetHeader({
           <Zap
             size={16}
             className={`flex-shrink-0 transition-colors ${isNuking ? "text-red-500 animate-pulse" : boltColor} hover:text-red-500`}
-            fill={hasActions ? "currentColor" : "none"}
+            fill={hasAttention ? "currentColor" : "none"}
             strokeWidth={2}
           />
         </button>
@@ -84,17 +85,7 @@ export function RunsheetHeader({
             Bulk process ({summary.complete})
           </Button>
         )}
-        {hasUpcoming && (
-          <Button variant="accent" size="sm" onClick={onBulkNudge}>
-            Nudge ({summary.upcoming})
-          </Button>
-        )}
-        {hasLate && (
-          <Button variant="danger" size="sm" onClick={onBulkCall}>
-            Call now ({summary.late})
-          </Button>
-        )}
-        {showAddButton && hasActions && (
+        {showAddButton && hasBulkActions && (
           <div className="w-px h-5 bg-gray-200" />
         )}
         {showAddButton && (

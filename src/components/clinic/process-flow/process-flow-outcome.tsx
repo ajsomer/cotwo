@@ -10,15 +10,8 @@ import {
   type ActionType,
 } from "@/lib/workflows/types";
 import type { EnrichedSession } from "@/lib/supabase/types";
-import {
-  MessageSquare,
-  FileText,
-  ClipboardCheck,
-  FileUp,
-  ChevronDown,
-  ChevronUp,
-  ArrowLeft,
-} from "lucide-react";
+import { ActionTypeIcon } from "@/components/clinic/shared/action-type-icon";
+import { ChevronDown, ChevronUp, ArrowLeft } from "lucide-react";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -53,25 +46,6 @@ interface CustomisedBlock extends ActionBlock {
 interface ProcessFlowOutcomeProps {
   session: EnrichedSession;
   onNext: () => void;
-}
-
-// ---------------------------------------------------------------------------
-// Icon helper
-// ---------------------------------------------------------------------------
-
-function ActionTypeIcon({ type }: { type: string }) {
-  switch (type) {
-    case "send_sms":
-      return <MessageSquare className="h-4 w-4 text-teal-600" />;
-    case "deliver_form":
-      return <FileText className="h-4 w-4 text-blue-500" />;
-    case "send_file":
-      return <FileUp className="h-4 w-4 text-violet-500" />;
-    case "task":
-      return <ClipboardCheck className="h-4 w-4 text-amber-600" />;
-    default:
-      return <MessageSquare className="h-4 w-4 text-gray-400" />;
-  }
 }
 
 function actionTypeLabel(type: string): string {
@@ -391,7 +365,7 @@ export function ProcessFlowOutcome({
                     setExpandedBlockId(isExpanded ? null : block.id)
                   }
                 >
-                  <ActionTypeIcon type={block.action_type} />
+                  <ActionTypeIcon actionType={block.action_type} size={16} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-medium text-gray-400">

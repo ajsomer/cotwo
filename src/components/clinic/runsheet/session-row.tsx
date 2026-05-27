@@ -1,11 +1,11 @@
 "use client";
 
-import { WifiOff } from "lucide-react";
-import { StatusBadge } from "./status-badge";
+import { WifiOff, CalendarClock, LogIn } from "lucide-react";
+import { StatusBadge } from "@/components/clinic/shared/status-badge";
 import { ActionButton } from "./action-button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { getRowBorderColor } from "@/lib/runsheet/derived-state";
-import { formatSessionTime, formatPatientName } from "@/lib/runsheet/format";
+import { resolveSessionTime, formatPatientName } from "@/lib/runsheet/format";
 import type { EnrichedSession } from "@/lib/supabase/types";
 
 interface SessionRowProps {
@@ -29,7 +29,7 @@ export function SessionRow({ session, onAction, onClick, onPatientClick }: Sessi
     session.patient_last_name,
     session.phone_number
   );
-  const time = formatSessionTime(session.scheduled_at);
+  const { text: time, source: timeSource } = resolveSessionTime(session);
 
   return (
     <div
@@ -44,9 +44,20 @@ export function SessionRow({ session, onAction, onClick, onPatientClick }: Sessi
         }
       }}
     >
-      {/* Time column — full height, flush against left border */}
-      <span className="flex items-center justify-center w-[94px] flex-shrink-0 text-[13px] font-medium whitespace-nowrap bg-[#FAF9F7] text-[#5F5E5A]">
-        {time}
+      {/* Time column — full height, flush against left border. Icon signals
+          whether the time is a scheduled appointment or an on-demand join. */}
+      <span className="flex items-center justify-center gap-1 w-[100px] flex-shrink-0 text-[13px] font-medium whitespace-nowrap bg-[#FAF9F7] text-[#5F5E5A]">
+        {timeSource === "scheduled" && (
+          <Tooltip content="Scheduled appointment">
+            <CalendarClock size={12} className="text-gray-400 flex-shrink-0" />
+          </Tooltip>
+        )}
+        {timeSource === "joined" && (
+          <Tooltip content="On-demand — joined the waiting room at this time">
+            <LogIn size={12} className="text-teal-500 flex-shrink-0" />
+          </Tooltip>
+        )}
+        {time ?? "--:--"}
       </span>
 
       {/* Single-line content area — fixed height for consistency */}

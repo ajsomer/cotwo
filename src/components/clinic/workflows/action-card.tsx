@@ -13,7 +13,7 @@ import {
   getPreconditionLabel,
   MESSAGE_VARIABLES,
 } from "@/lib/workflows/types";
-import { ActionTypeIcon } from "./action-type-icon";
+import { ActionTypeIcon } from "@/components/clinic/shared/action-type-icon";
 import { FireTimePicker, FireTimePill } from "./fire-time-picker";
 import { PreconditionPicker } from "./precondition-picker";
 import { Button } from "@/components/ui/button";
