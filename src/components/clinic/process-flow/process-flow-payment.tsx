@@ -153,7 +153,6 @@ export function ProcessFlowPayment({ session, onNext }: ProcessFlowPaymentProps)
             variant="secondary"
             className="w-full"
             onClick={() => {
-              console.log("[PAYMENT] Would send payment request SMS");
               onNext();
             }}
           >

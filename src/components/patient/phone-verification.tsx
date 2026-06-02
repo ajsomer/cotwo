@@ -125,9 +125,6 @@ export function PhoneVerification({
       // build dev_code is absent and the patient enters the SMS code manually.
       const devCode: string | null =
         typeof data.dev_code === 'string' ? data.dev_code : null;
-      if (devCode) {
-        console.log(`📱 [DEV] OTP code for ${phoneNumber}: ${devCode}`);
-      }
       setAutoFilledCode(devCode);
 
       setVerificationId(data.verification_id);

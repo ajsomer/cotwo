@@ -7,14 +7,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  console.log("[DAILY SCAN] Starting...");
-
   try {
     const result = await executeScheduledActions();
-
-    console.log(
-      `[DAILY SCAN] Complete. Fired: ${result.fired}, Skipped: ${result.skipped}, Failed: ${result.failed}`
-    );
 
     return NextResponse.json({
       scanned: true,

@@ -131,22 +131,8 @@ export function PatientContactCard({
         <div className="p-5 space-y-5">
           <DemographicsSection
             details={details}
-            onTakePayment={() => {
-              console.log(
-                "[ContactCard] Take payment stub — patient:",
-                details.patient.id,
-                "session:",
-                session?.session_id
-              );
-            }}
-            onSendSms={() => {
-              console.log(
-                "[ContactCard] Send SMS stub — patient:",
-                details.patient.id,
-                "phone:",
-                details.phone_numbers[0]?.phone_number
-              );
-            }}
+            onTakePayment={() => {}}
+            onSendSms={() => {}}
             readinessActions={
               isReadinessMode && appointment && onDeleted ? (
                 <ReadinessActions

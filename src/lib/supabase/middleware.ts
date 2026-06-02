@@ -48,8 +48,6 @@ async function getSetupState(userId: string): Promise<SetupState> {
     | { id: string; location_id: string; locations: { org_id: string } }
     | undefined;
 
-  console.log("[middleware] getSetupState userId:", userId, "assignments:", assignments?.length ?? 0);
-
   if (!assignment) return "no_org";
 
   const orgId = assignment.locations.org_id;

@@ -48,9 +48,6 @@ export async function scheduleWorkflowForAppointment(
     .order("sort_order");
 
   if (!blocks || blocks.length === 0) {
-    console.log(
-      `[WORKFLOW SCANNER] Template ${link.workflow_template_id} has no action blocks. Skipping.`
-    );
     return;
   }
 
@@ -125,9 +122,6 @@ export async function scheduleWorkflowForAppointment(
 
     // 5. Drop actions that fall after appointment time (for run_sheet workflows)
     if (apptTime && block.action_type !== "add_to_runsheet" && scheduledFor > apptTime) {
-      console.log(
-        `[WORKFLOW SCANNER] Action block ${block.id} (${block.action_type}) scheduled after appointment. Dropping.`
-      );
       actionRows.push({
         appointment_id: appointmentId,
         action_block_id: block.id,
@@ -161,12 +155,6 @@ export async function scheduleWorkflowForAppointment(
       return;
     }
   }
-
-  const scheduled = actionRows.filter((a) => a.status === "scheduled").length;
-  const dropped = actionRows.filter((a) => a.status === "dropped").length;
-  console.log(
-    `[WORKFLOW SCANNER] Scheduled ${scheduled} actions (${dropped} dropped) for appointment ${appointmentId} (run ${run.id})`
-  );
 
   // Fire immediately-due actions (e.g. intake_package) synchronously so the
   // patient gets their SMS the moment the clinic adds them, without waiting

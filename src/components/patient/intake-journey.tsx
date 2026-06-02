@@ -9,23 +9,6 @@ import { PersistentHeader } from './persistent-header';
 import { PhoneVerification } from './phone-verification';
 import type { PatientContact } from '@/lib/supabase/types';
 
-/**
- * TESTING ONLY: if /api/intake/[token]/complete-item returned a
- * session_join_url (because add_to_runsheet fired early), print it to the
- * devtools console so we can walk the end-to-end flow without waiting for
- * the real scheduled offset. See TODO.md — remove once test fixtures land.
- */
-function logJoinUrlIfPresent(payload: unknown): void {
-  const url = (payload as { session_join_url?: string | null } | null)?.session_join_url;
-  if (url) {
-    console.log(
-      '%c[intake] Session join URL (testing hook):',
-      'color: teal; font-weight: bold',
-      url
-    );
-  }
-}
-
 export interface IntakeJourneyContext {
   org: {
     id: string;
@@ -714,7 +697,6 @@ function ConsentStep({
         setError(data.error || 'Failed to record consent');
         return;
       }
-      logJoinUrlIfPresent(await res.json());
       onComplete();
     } catch {
       setError('Something went wrong. Please try again.');
@@ -852,7 +834,6 @@ function FormStep({
           setError(data.error || 'Failed to submit form');
           return;
         }
-        logJoinUrlIfPresent(await res.json());
         onComplete();
       } catch {
         setError('Something went wrong. Please try again.');

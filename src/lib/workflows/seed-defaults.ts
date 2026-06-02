@@ -162,8 +162,6 @@ export async function seedDefaultWorkflows(orgId: string): Promise<void> {
       });
     }
   }
-
-  console.log(`[WORKFLOW SEED] Default workflows seeded for org ${orgId}`);
 }
 
 type SupabaseClient = ReturnType<typeof createServiceClient>;

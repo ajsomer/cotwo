@@ -52,9 +52,6 @@ export async function executeHandler(
       return handleTask(ctx);
     default:
       // Action types that don't execute in v1 (send_rebooking_nudge, etc.)
-      console.log(
-        `[WORKFLOW] Action type '${actionType}' not yet implemented. Skipping action ${ctx.actionId}.`
-      );
       return { status: "sent", resultData: { note: "stub — not implemented in v1" } };
   }
 }
@@ -107,10 +104,6 @@ async function handleDeliverForm(ctx: HandlerContext): Promise<ActionHandlerResu
     return { status: "failed", error: result.error ?? "SMS delivery failed" };
   }
 
-  console.log(
-    `[WORKFLOW] deliver_form: sent form '${form.name}' to ${ctx.phoneNumber} (assignment ${assignment.id})`
-  );
-
   return {
     status: "sent",
     resultData: { form_assignment_id: assignment.id, form_name: form.name },
@@ -156,10 +149,6 @@ async function handleSendSms(ctx: HandlerContext): Promise<ActionHandlerResult> 
     return { status: "failed", error: result.error ?? "SMS delivery failed" };
   }
 
-  console.log(
-    `[WORKFLOW] send_sms: sent to ${ctx.phoneNumber} for action ${ctx.actionId}`
-  );
-
   return { status: "sent" };
 }
 
@@ -189,10 +178,6 @@ async function handleCaptureCard(ctx: HandlerContext): Promise<ActionHandlerResu
   if (!result.success) {
     return { status: "failed", error: result.error ?? "SMS delivery failed" };
   }
-
-  console.log(
-    `[WORKFLOW] capture_card: sent to ${ctx.phoneNumber} for action ${ctx.actionId}`
-  );
 
   return { status: "sent" };
 }
@@ -253,10 +238,6 @@ async function handleIntakePackage(ctx: HandlerContext): Promise<ActionHandlerRe
     return { status: "failed", error: result.error ?? "SMS delivery failed" };
   }
 
-  console.log(
-    `[WORKFLOW] intake_package: Journey ${journey.id} created. SMS to ${ctx.phoneNumber}: ${url}`
-  );
-
   return {
     status: "sent",
     resultData: { journey_id: journey.id, journey_token: journeyToken },
@@ -282,9 +263,6 @@ async function handleIntakeReminder(ctx: HandlerContext): Promise<ActionHandlerR
       .single();
 
     if (parentAction?.status === "completed") {
-      console.log(
-        `[WORKFLOW] intake_reminder: Parent intake package already completed for appointment ${ctx.appointmentId}. Skipping.`
-      );
       return { status: "sent", resultData: { note: "skipped — package already completed" } };
     }
   }
@@ -323,10 +301,6 @@ async function handleIntakeReminder(ctx: HandlerContext): Promise<ActionHandlerR
   if (!result.success) {
     return { status: "failed", error: result.error ?? "SMS delivery failed" };
   }
-
-  console.log(
-    `[WORKFLOW] intake_reminder: Sent reminder to ${ctx.phoneNumber} for appointment ${ctx.appointmentId}`
-  );
 
   return { status: "sent" };
 }
@@ -391,10 +365,6 @@ async function handleAddToRunsheet(ctx: HandlerContext): Promise<ActionHandlerRe
     );
   }
 
-  console.log(
-    `[WORKFLOW] add_to_runsheet: Session ${session.id} created. SMS to ${phoneNumber}: ${sessionLink}`
-  );
-
   return {
     status: "sent",
     resultData: { session_id: session.id, entry_token: entryToken },
@@ -424,10 +394,6 @@ async function handleVerifyContact(ctx: HandlerContext): Promise<ActionHandlerRe
   if (!result.success) {
     return { status: "failed", error: result.error ?? "SMS delivery failed" };
   }
-
-  console.log(
-    `[WORKFLOW] verify_contact: sent to ${ctx.phoneNumber} for action ${ctx.actionId}`
-  );
 
   return { status: "sent" };
 }
@@ -493,10 +459,6 @@ async function handleSendFile(ctx: HandlerContext): Promise<ActionHandlerResult>
     return { status: "failed", error: result.error ?? "SMS delivery failed" };
   }
 
-  console.log(
-    `[WORKFLOW] send_file: sent file '${file.name}' to ${ctx.phoneNumber} (delivery ${delivery.id})`
-  );
-
   return {
     status: "sent",
     resultData: { file_delivery_id: delivery.id, file_name: file.name },
@@ -510,9 +472,5 @@ async function handleSendFile(ctx: HandlerContext): Promise<ActionHandlerResult>
  * manually via the Resolve button.
  */
 async function handleTask(ctx: HandlerContext): Promise<ActionHandlerResult> {
-  const taskTitle = (ctx.config.task_title as string) ?? "Task";
-  console.log(
-    `[WORKFLOW] task: fired "${taskTitle}" for action ${ctx.actionId}`
-  );
   return { status: "fired" };
 }

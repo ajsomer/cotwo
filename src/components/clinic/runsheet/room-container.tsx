@@ -136,7 +136,6 @@ export function RoomContainer({
   const handleSendLink = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      console.log("Send session link for room:", group.room_name);
     },
     [group.room_name]
   );

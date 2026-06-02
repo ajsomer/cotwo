@@ -1,6 +1,6 @@
 import { cache } from "react";
 import { createServiceClient } from "@/lib/supabase/service";
-import type { PaymentsData, RoomPayment } from "@/stores/clinic-store";
+import type { PaymentsData } from "@/stores/clinic-store";
 
 export const fetchPaymentConfig = cache(async (
   locationId: string
@@ -41,28 +41,4 @@ export const fetchPaymentConfig = cache(async (
     location_stripe_account_id: location.stripe_account_id,
     clinicians,
   };
-});
-
-export const fetchPaymentRooms = cache(async (
-  locationId: string
-): Promise<RoomPayment[]> => {
-  const supabase = createServiceClient();
-
-  const { data: rooms, error } = await supabase
-    .from("rooms")
-    .select("id, name, room_type, payments_enabled")
-    .eq("location_id", locationId)
-    .order("sort_order", { ascending: true });
-
-  if (error) {
-    console.error("fetchPaymentRooms error:", error);
-    return [];
-  }
-
-  return (rooms ?? []).map((r) => ({
-    id: r.id,
-    name: r.name,
-    room_type: r.room_type,
-    payments_enabled: r.payments_enabled ?? false,
-  }));
 });

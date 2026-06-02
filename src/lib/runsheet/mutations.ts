@@ -43,7 +43,6 @@ function shouldSendPrepNow(scheduledAt: string): boolean {
   const hour = now.getHours();
   if (hour < 18) {
     // Before 6pm — ideally queue for 6pm. For prototype, send now.
-    console.log("[SMS] Prep SMS would be queued for 6pm in production");
     return true;
   }
 
@@ -133,7 +132,6 @@ export async function createSessions(
     // Send SMS based on timing
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
     const entryLink = `${appUrl}/entry/${session.entry_token}`;
-    console.log(`[SESSION] Patient entry link: ${entryLink}`);
     const scheduledTime = new Date(input.scheduled_at).toLocaleTimeString(
       "en-AU",
       { hour: "numeric", minute: "2-digit", hour12: true }
@@ -185,12 +183,6 @@ export async function updateSession(
 
   if (error) {
     return { success: false, error: error.message };
-  }
-
-  if (updates.scheduled_at) {
-    console.log(
-      `[SMS] Would send updated time notification for session ${sessionId}`
-    );
   }
 
   return { success: true };
@@ -254,6 +246,5 @@ export async function markNoShow(sessionId: string) {
       .eq("id", session.appointment_id);
   }
 
-  console.log(`[NO-SHOW] Session ${sessionId} marked as no-show`);
   return { success: true };
 }

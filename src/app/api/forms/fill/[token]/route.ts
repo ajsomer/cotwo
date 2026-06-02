@@ -137,8 +137,6 @@ export async function POST(
       })
       .eq("id", assignment.id);
 
-    console.log(`[Forms] Submission ${submission.id} created for assignment ${assignment.id}`);
-
     return NextResponse.json({ success: true, submission_id: submission.id });
   } catch (err) {
     console.error("[Forms] POST fill/[token] error:", err);

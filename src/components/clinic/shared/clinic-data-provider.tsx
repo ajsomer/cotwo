@@ -49,10 +49,6 @@ export function ClinicDataProvider({ children }: ClinicDataProviderProps) {
       // Location must match too — a recent timestamp for a different
       // location must not suppress a real refresh.
       const locationMatches = store.locationId === locationId;
-      const sessionsAge =
-        store.sessionsFetchedAt != null ? now - store.sessionsFetchedAt : null;
-      const readinessAge =
-        store.readinessFetchedAt != null ? now - store.readinessFetchedAt : null;
       const sessionsFresh =
         locationMatches &&
         store.sessionsLoaded &&
@@ -63,19 +59,6 @@ export function ClinicDataProvider({ children }: ClinicDataProviderProps) {
         store.readinessLoadedPre &&
         store.readinessFetchedAt != null &&
         now - store.readinessFetchedAt < FRESH_WINDOW_MS;
-      console.log("[onConnect]", {
-        locationId,
-        storeLocationId: store.locationId,
-        locationMatches,
-        sessionsLoaded: store.sessionsLoaded,
-        sessionsFetchedAt: store.sessionsFetchedAt,
-        sessionsAge,
-        sessionsFresh,
-        readinessLoadedPre: store.readinessLoadedPre,
-        readinessFetchedAt: store.readinessFetchedAt,
-        readinessAge,
-        readinessFresh,
-      });
       if (!sessionsFresh) void store.refreshSessions(locationId);
       if (!readinessFresh) void store.refreshReadiness(locationId);
     };

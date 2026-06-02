@@ -45,10 +45,6 @@ export async function callPatient(sessionId: string) {
   const appointment = session.appointments as unknown as Record<string, unknown> | null;
   const phone = appointment?.phone_number as string | null;
 
-  console.log(
-    `[CALL] Would call patient for session ${sessionId} at ${phone ?? "unknown number"}`
-  );
-
   return { success: true, phone };
 }
 
@@ -108,8 +104,6 @@ export async function admitPatient(sessionId: string) {
     console.error("[ADMIT] Failed:", error);
     return { success: false, error: error.message };
   }
-
-  console.log(`[ADMIT] Session ${sessionId} admitted, video session started`);
 
   await broadcastSessionStatus(sessionId, "in_session");
   if (updated?.location_id) {
@@ -210,10 +204,6 @@ export async function chargePayment(
 
   if (!session) return { success: false, error: "Session not found" };
 
-  console.log(
-    `[PAYMENT] Would charge $${(amountCents / 100).toFixed(2)} for session ${sessionId}`
-  );
-
   // Create payment record
   const participants = session.session_participants as unknown as Array<Record<string, unknown>> | null;
   const patientId = participants?.[0]?.patient_id as string | null;
@@ -275,9 +265,6 @@ export async function selectOutcomePathway(
   }
 
   const result = data as { workflow_run_id: string; action_count: number } | null;
-  console.log(
-    `[OUTCOME] Session ${sessionId} confirmed pathway ${pathwayId}: ${result?.action_count ?? 0} actions scheduled`
-  );
 
   await broadcastSessionStatus(sessionId, "done");
   const { data: session } = await supabase
@@ -316,7 +303,6 @@ export async function skipOutcomePathway(
     return { success: false, error: error.message };
   }
 
-  console.log(`[OUTCOME] Session ${sessionId} marked done with no pathway`);
   return { success: true };
 }
 
@@ -385,7 +371,6 @@ export async function resolveTask(
     }
   }
 
-  console.log(`[TASK] Resolved action ${actionId}`);
   return { success: true };
 }
 
@@ -432,6 +417,5 @@ export async function cancelAction(
     }
   }
 
-  console.log(`[ACTION] Cancelled action ${actionId}`);
   return { success: true };
 }

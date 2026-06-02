@@ -34,12 +34,6 @@ export async function executeScheduledActions(
   const supabase = createServiceClient();
   const result: ScanResult = { fired: 0, skipped: 0, failed: 0 };
 
-  console.log(
-    options.appointmentId
-      ? `[WORKFLOW ENGINE] Scan starting for appointment ${options.appointmentId}...`
-      : "[WORKFLOW ENGINE] Scan starting..."
-  );
-
   // Step 1: Claim — atomically move scheduled → firing
   let claimQuery = supabase
     .from("appointment_actions")
@@ -61,8 +55,6 @@ export async function executeScheduledActions(
   }
 
   const actions = claimed ?? [];
-  console.log(`[WORKFLOW ENGINE] Claimed ${actions.length} actions to process`);
-
   if (actions.length === 0) return result;
 
   // Fetch action block details for all claimed actions
@@ -185,9 +177,6 @@ export async function executeScheduledActions(
 
     const patientId = appt.patient_id;
     if (!patientId) {
-      console.log(
-        `[WORKFLOW ENGINE] No patient on appointment ${appt.id} for action ${action.id}. Marking failed.`
-      );
       await supabase
         .from("appointment_actions")
         .update({
@@ -205,9 +194,6 @@ export async function executeScheduledActions(
 
     // Task actions don't need a phone number (staff-facing, no SMS sent)
     if (!isTaskAction && !patient?.phone_number) {
-      console.log(
-        `[WORKFLOW ENGINE] No phone number for patient ${patientId} on action ${action.id}. Marking failed.`
-      );
       await supabase
         .from("appointment_actions")
         .update({
@@ -229,9 +215,6 @@ export async function executeScheduledActions(
     );
 
     if (!shouldFire) {
-      console.log(
-        `[WORKFLOW ENGINE] Precondition not met for action ${action.id} (${block.action_type}). Skipping.`
-      );
       await supabase
         .from("appointment_actions")
         .update({
@@ -289,9 +272,6 @@ export async function executeScheduledActions(
         .eq("id", action.id);
       result.failed++;
     } else {
-      console.log(
-        `[WORKFLOW ENGINE] Action ${action.id} (${block.action_type}) → ${handlerResult.status}`
-      );
       await supabase
         .from("appointment_actions")
         .update({
@@ -326,13 +306,8 @@ export async function executeScheduledActions(
           completed_at: new Date().toISOString(),
         })
         .eq("id", runId);
-      console.log(`[WORKFLOW ENGINE] Run ${runId} complete — all actions terminal`);
     }
   }
-
-  console.log(
-    `[WORKFLOW ENGINE] Scan complete. Fired: ${result.fired}, Skipped: ${result.skipped}, Failed: ${result.failed}`
-  );
 
   return result;
 }

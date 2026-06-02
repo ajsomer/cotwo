@@ -43,12 +43,6 @@ export function OnboardingOverlay() {
     const data = await res.json();
     setOnboarding({ stage: "test_session_sent", testSessionId: data.session_id });
 
-    console.log(
-      "%c[onboarding] Intake URL:",
-      "color: teal; font-weight: bold",
-      data.journey_url
-    );
-
     // Open the patient journey in a new tab so the user can experience it side-by-side
     window.open(data.journey_url, "_blank", "noopener,noreferrer");
 

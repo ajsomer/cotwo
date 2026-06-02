@@ -60,8 +60,6 @@ export async function POST(request: NextRequest) {
     .eq('phone_number', verification.phone_number)
     .eq('patients.org_id', org_id);
 
-  console.log('[OTP VERIFY] phone:', verification.phone_number, 'org_id:', org_id, 'contacts:', JSON.stringify(contacts), 'error:', contactsError);
-
   const patients = (contacts || []).map((c: any) => ({
     id: c.patients.id,
     first_name: c.patients.first_name,

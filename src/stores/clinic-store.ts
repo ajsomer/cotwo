@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
-import type { RunsheetSession, Room, SessionStatus } from "@/lib/supabase/types";
+import type { RunsheetSession, Room } from "@/lib/supabase/types";
 import type { DbWorkflowTemplate, DbWorkflowActionBlock } from "@/lib/workflows/types";
 import type {
   AppointmentTypeRow,
@@ -106,9 +106,6 @@ export interface ClinicStore {
 
   // --- Actions ---
 
-  // Refresh all location-scoped data (client-side fetches)
-  refreshLocationData: (locationId: string) => Promise<void>;
-
   // Refresh individual slices (client-side fetches)
   refreshSessions: (locationId: string) => Promise<void>;
   refreshRooms: (locationId: string) => Promise<void>;
@@ -119,13 +116,6 @@ export interface ClinicStore {
   refreshWorkflows: (orgId: string) => Promise<void>;
   refreshPaymentConfig: (locationId: string) => Promise<void>;
   refreshClinicianRoomIds: (locationId: string) => Promise<void>;
-
-  // Merge a realtime session update (partial update, no full refetch)
-  mergeSessionUpdate: (payload: {
-    eventType: string;
-    new: Record<string, unknown>;
-    old: Record<string, unknown>;
-  }) => void;
 
   // Direct setters (for optimistic updates and Realtime handlers)
   setRooms: (rooms: Room[]) => void;
@@ -219,23 +209,11 @@ export const useClinicStore = create<ClinicStore>()(
       readinessFetchedAt: null,
       roomsFetchedAt: null,
 
-      // Refresh all location-scoped data
-      refreshLocationData: async (locationId) => {
-        const state = get();
-        await Promise.all([
-          state.refreshSessions(locationId),
-          state.refreshRooms(locationId),
-          state.refreshReadiness(locationId),
-          state.refreshPaymentConfig(locationId),
-          state.refreshClinicianRoomIds(locationId),
-        ]);
-      },
-
       // Individual refresh actions
       refreshSessions: async (locationId) => {
         try {
           const data = await fetchJson<{ sessions: RunsheetSession[] }>(
-            `/api/runsheet?locationId=${locationId}&_t=${Date.now()}`
+            `/api/runsheet?locationId=${locationId}`
           );
           // Stale-response guard: if the user switched locations mid-fetch,
           // drop this response so we don't paint location A's data over B's.
@@ -420,60 +398,6 @@ export const useClinicStore = create<ClinicStore>()(
         } catch (e) {
           console.error("Failed to refresh clinician room IDs:", e);
         }
-      },
-
-      // Merge a realtime session update
-      mergeSessionUpdate: (payload) => {
-        const updated = payload.new;
-        const sessionId = updated.id as string;
-        const locationId = get().locationId;
-
-        if (updated.location_id !== locationId) return;
-
-        if (payload.eventType === "INSERT") {
-          // New session — need full joined data, trigger refetch
-          if (locationId) get().refreshSessions(locationId);
-          return;
-        }
-
-        if (payload.eventType === "DELETE") {
-          set(
-            (state) => ({
-              sessions: state.sessions.filter(
-                (s) => s.session_id !== (payload.old.id as string)
-              ),
-            }),
-            false,
-            "mergeSessionUpdate:delete"
-          );
-          return;
-        }
-
-        // UPDATE — merge specific fields in place
-        set(
-          (state) => ({
-            sessions: state.sessions.map((s) =>
-              s.session_id === sessionId
-                ? {
-                    ...s,
-                    status: updated.status as SessionStatus,
-                    notification_sent: updated.notification_sent as boolean,
-                    notification_sent_at:
-                      updated.notification_sent_at as string | null,
-                    patient_arrived: updated.patient_arrived as boolean,
-                    patient_arrived_at:
-                      updated.patient_arrived_at as string | null,
-                    session_started_at:
-                      updated.session_started_at as string | null,
-                    session_ended_at: updated.session_ended_at as string | null,
-                    video_call_id: updated.video_call_id as string | null,
-                  }
-                : s
-            ),
-          }),
-          false,
-          "mergeSessionUpdate:update"
-        );
       },
 
       // Direct setters

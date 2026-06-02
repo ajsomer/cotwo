@@ -166,10 +166,6 @@ export async function DELETE(
         .from("appointment_workflow_runs")
         .update({ status: "cancelled", completed_at: new Date().toISOString() })
         .in("id", runIds);
-
-      console.log(
-        `[WORKFLOWS] Force-deleted template ${id}: cancelled ${inFlightCount} in-flight runs`
-      );
     }
 
     // Delete the template (cascades to workflow_action_blocks and type_workflow_links)

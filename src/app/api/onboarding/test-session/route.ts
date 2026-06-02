@@ -123,7 +123,6 @@ export async function POST(request: NextRequest) {
         await service.from("forms").update({ schema: DEMO_SCHEMA }).eq("id", existing.id);
       }
     } else {
-      console.log("[onboarding/test-session] No demo form for org", orgId, "— seeding");
       const { data: seeded, error: seedErr } = await service
         .from("forms")
         .insert({
@@ -249,8 +248,6 @@ export async function POST(request: NextRequest) {
     process.env.NEXT_PUBLIC_APP_URL ??
     (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
   const journeyUrl = `${appUrl}/intake/${journey.journey_token}`;
-
-  console.log("[onboarding/test-session] Created session:", session.id, "URL:", journeyUrl);
 
   // 7. Advance onboarding stage
   await service

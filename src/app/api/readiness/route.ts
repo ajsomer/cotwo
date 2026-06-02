@@ -30,7 +30,9 @@ export async function GET(request: NextRequest) {
 
   try {
     const slice = await fetchReadinessSlice(locationId, direction);
-    return NextResponse.json(slice);
+    return NextResponse.json(slice, {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (err) {
     console.error("[Readiness] GET error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

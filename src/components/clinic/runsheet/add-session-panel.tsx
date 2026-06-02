@@ -226,14 +226,7 @@ export function AddSessionPanel({
 
     // Create new sessions
     if (newInputs.length > 0 && org) {
-      const result = await createSessions(locationId, org.id, org.name, newInputs);
-      if (result.links?.length) {
-        console.log(
-          `%c[Patient Entry Links]`,
-          "color: #2ABFBF; font-weight: bold",
-          ...result.links.flatMap((link) => ["\n  →", link])
-        );
-      }
+      await createSessions(locationId, org.id, org.name, newInputs);
     }
 
     // Update changed existing sessions

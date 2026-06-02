@@ -93,10 +93,6 @@ export async function PATCH(
       in_flight_recalculated?: number;
     };
 
-    console.log(
-      `[WORKFLOWS] Saved template ${templateId}: ${summary.retimed ?? 0} retimed, ${summary.deleted ?? 0} deleted, ${summary.inserted ?? 0} inserted. ${summary.in_flight_recalculated ?? 0} in-flight runs recalculated.`
-    );
-
     // Return full updated block set for UI reconciliation
     const { data: allBlocks } = await service
       .from("workflow_action_blocks")

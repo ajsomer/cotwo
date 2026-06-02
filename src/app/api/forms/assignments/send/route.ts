@@ -103,8 +103,6 @@ export async function POST(request: NextRequest) {
       .update(updates)
       .eq("id", assignment_id);
 
-    console.log(`[Forms] SMS sent for assignment ${assignment_id} to ${phoneRecord.phone_number}`);
-
     return NextResponse.json({ success: true });
   } catch (err) {
     console.error("[Forms] Send SMS error:", err);

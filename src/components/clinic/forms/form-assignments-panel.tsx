@@ -109,10 +109,6 @@ export function FormAssignmentsPanel({
 
       const { assignment } = await createRes.json();
 
-      // Log patient form link for dev testing
-      const formUrl = `${window.location.origin}/form/${assignment.token}`;
-      console.log(`[Forms] Patient form link: ${formUrl}`);
-
       // Send SMS
       const sendRes = await fetch("/api/forms/assignments/send", {
         method: "POST",

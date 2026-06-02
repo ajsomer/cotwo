@@ -35,8 +35,6 @@ export async function POST(request: NextRequest) {
     slug = generateSlug(name);
   }
 
-  console.log("[setup/clinic] Creating org for user:", user.id, "slug:", slug);
-
   const { data: org, error: orgError } = await service
     .from("organisations")
     .insert({ name: name.trim(), slug, logo_url: logo_url ?? null, tier: "complete" })
@@ -44,13 +42,11 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (orgError || !org) {
-    console.log("[setup/clinic] org error:", orgError?.message);
     return NextResponse.json(
       { error: "Failed to create organisation: " + orgError?.message },
       { status: 500 }
     );
   }
-  console.log("[setup/clinic] org created:", org.id);
 
   const { data: location, error: locError } = await service
     .from("locations")
@@ -59,13 +55,11 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (locError || !location) {
-    console.log("[setup/clinic] location error:", locError?.message);
     return NextResponse.json(
       { error: "Failed to create location: " + locError?.message },
       { status: 500 }
     );
   }
-  console.log("[setup/clinic] location created:", location.id);
 
   const { error: saError } = await service.from("staff_assignments").insert({
     user_id: user.id,
@@ -75,7 +69,6 @@ export async function POST(request: NextRequest) {
   });
 
   if (saError) {
-    console.log("[setup/clinic] staff_assignment error:", saError.message);
     return NextResponse.json({ error: "Failed to create staff assignment." }, { status: 500 });
   }
 
@@ -92,7 +85,6 @@ export async function POST(request: NextRequest) {
     console.error("[setup/clinic] Workflow seed failed (non-blocking):", err);
   }
 
-  console.log("[setup/clinic] Success. org:", org.id, "location:", location.id);
   return NextResponse.json({ org_id: org.id, location_id: location.id });
 }
 

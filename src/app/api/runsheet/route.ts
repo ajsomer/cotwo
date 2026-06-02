@@ -18,5 +18,10 @@ export async function GET(request: NextRequest) {
   }
 
   const sessions = await fetchRunsheetSessions(locationId);
-  return NextResponse.json({ sessions });
+  // Run-sheet data is volatile and must never be served stale from the browser
+  // or a CDN — state the intent explicitly instead of cache-busting the URL.
+  return NextResponse.json(
+    { sessions },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
