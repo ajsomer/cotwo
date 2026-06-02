@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { createClient } from "@/lib/supabase/server";
+import { requireStaffCanAccessWorkflowTemplate } from "@/lib/auth/staff-access";
 
 interface BlockInput {
   id?: string;
@@ -20,7 +20,11 @@ interface BulkSaveInput {
 
 // PATCH /api/workflows/[id]/blocks
 // Bulk save action blocks with transactional in-flight recalculation.
-// See plan pseudocode for full algorithm.
+//
+// The delete → update → insert → recalculate sequence runs inside the
+// `save_workflow_blocks` Postgres RPC (migration 022) so it's a single
+// transaction — a failure partway rolls the whole save back, rather than
+// leaving blocks/actions half-applied.
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -30,43 +34,16 @@ export async function PATCH(
   try {
     const service = createServiceClient();
 
-    // AUTH: verify org ownership (service role bypasses RLS)
-    const authSupabase = await createClient();
-    const {
-      data: { user },
-    } = await authSupabase.auth.getUser();
-
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Get the template and verify it exists
-    const { data: template } = await service
-      .from("workflow_templates")
-      .select("id, org_id, direction")
-      .eq("id", templateId)
-      .single();
-
-    if (!template) {
-      return NextResponse.json(
-        { error: "Workflow template not found" },
-        { status: 404 }
-      );
-    }
-
-    // Verify the user belongs to the template's org
-    const { data: staffAssignment } = await service
-      .from("staff_assignments")
-      .select("id, locations!inner(org_id)")
-      .eq("user_id", user.id)
-      .limit(10);
-
-    const userOrgIds = (staffAssignment ?? []).map(
-      (sa) => (sa.locations as unknown as { org_id: string }).org_id
+    // AUTH: authenticate the caller and verify they staff the template's org.
+    const access = await requireStaffCanAccessWorkflowTemplate(
+      service,
+      templateId
     );
-
-    if (!userOrgIds.includes(template.org_id)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    if (!access.ok) {
+      return NextResponse.json(
+        { error: access.status === 401 ? "Unauthorized" : "Not found" },
+        { status: access.status }
+      );
     }
 
     // Parse and validate input
@@ -95,175 +72,29 @@ export async function PATCH(
       }
     }
 
-    // Fetch current state
-    const { data: existingBlocks } = await service
-      .from("workflow_action_blocks")
-      .select("*")
-      .eq("template_id", templateId);
-
-    const existingBlockIds = new Set(
-      (existingBlocks ?? []).map((b) => b.id)
+    // Atomic save + in-flight recalculation (single transaction).
+    const { data: result, error: rpcError } = await service.rpc(
+      "save_workflow_blocks",
+      {
+        p_template_id: templateId,
+        p_blocks: blocks,
+        p_deleted_ids: deleted_ids,
+      }
     );
 
-    // Categorise changes
-    const blocksToDelete = deleted_ids.filter((id) =>
-      existingBlockIds.has(id)
-    );
-    const blocksToUpdate = blocks.filter(
-      (b) => b.id && existingBlockIds.has(b.id)
-    );
-    const blocksToInsert = blocks.filter((b) => !b.id);
-    const blocksRetimed = blocksToUpdate.filter((b) => {
-      const existing = (existingBlocks ?? []).find((e) => e.id === b.id);
-      return existing && existing.offset_minutes !== b.offset_minutes;
-    });
-
-    // --- BEGIN TRANSACTION (sequential operations via service client) ---
-
-    // 1. Delete removed blocks
-    if (blocksToDelete.length > 0) {
-      const { error: delError } = await service
-        .from("workflow_action_blocks")
-        .delete()
-        .in("id", blocksToDelete)
-        .eq("template_id", templateId);
-
-      if (delError) {
-        return NextResponse.json({ error: delError.message }, { status: 500 });
-      }
+    if (rpcError) {
+      return NextResponse.json({ error: rpcError.message }, { status: 500 });
     }
 
-    // 2. Update existing blocks
-    for (const block of blocksToUpdate) {
-      const { error: updError } = await service
-        .from("workflow_action_blocks")
-        .update({
-          action_type: block.action_type as Database["public"]["Enums"]["action_type"],
-          offset_minutes: block.offset_minutes,
-          offset_direction: block.offset_direction,
-          config: block.config,
-          precondition: block.precondition,
-          form_id: block.form_id ?? null,
-          sort_order: block.sort_order,
-        })
-        .eq("id", block.id!)
-        .eq("template_id", templateId);
-
-      if (updError) {
-        return NextResponse.json({ error: updError.message }, { status: 500 });
-      }
-    }
-
-    // 3. Insert new blocks — capture returned IDs
-    const insertedBlocks: Array<{ id: string; offset_minutes: number }> = [];
-    for (const block of blocksToInsert) {
-      const { data: inserted, error: insError } = await service
-        .from("workflow_action_blocks")
-        .insert({
-          template_id: templateId,
-          action_type: block.action_type as Database["public"]["Enums"]["action_type"],
-          offset_minutes: block.offset_minutes,
-          offset_direction: block.offset_direction,
-          config: block.config,
-          precondition: block.precondition,
-          form_id: block.form_id ?? null,
-          sort_order: block.sort_order,
-        })
-        .select("id, offset_minutes")
-        .single();
-
-      if (insError) {
-        return NextResponse.json({ error: insError.message }, { status: 500 });
-      }
-
-      insertedBlocks.push(inserted);
-    }
-
-    // 4. Recalculate in-flight runs
-    const { data: activeRuns } = await service
-      .from("appointment_workflow_runs")
-      .select("id, appointment_id, direction")
-      .eq("workflow_template_id", templateId)
-      .eq("status", "active");
-
-    // Fetch appointment scheduled_at for active runs
-    let runDetails: Array<{
-      runId: string;
-      appointmentId: string;
-      direction: string;
-      scheduledAt: string;
-    }> = [];
-
-    if (activeRuns && activeRuns.length > 0) {
-      const appointmentIds = activeRuns.map((r) => r.appointment_id);
-      const { data: appointments } = await service
-        .from("appointments")
-        .select("id, scheduled_at")
-        .in("id", appointmentIds);
-
-      const apptMap = new Map(
-        (appointments ?? []).map((a) => [a.id, a.scheduled_at])
-      );
-
-      runDetails = activeRuns.map((r) => ({
-        runId: r.id,
-        appointmentId: r.appointment_id,
-        direction: r.direction,
-        scheduledAt: apptMap.get(r.appointment_id) ?? "",
-      }));
-    }
-
-    if (runDetails.length > 0) {
-      for (const run of runDetails) {
-        // 4a. Cancel actions for deleted blocks
-        if (blocksToDelete.length > 0) {
-          await service
-            .from("appointment_actions")
-            .update({ status: "cancelled" })
-            .eq("workflow_run_id", run.runId)
-            .in("action_block_id", blocksToDelete)
-            .eq("status", "scheduled");
-        }
-
-        // 4b. Add actions for newly inserted blocks
-        for (const newBlock of insertedBlocks) {
-          const scheduledFor = calculateScheduledFor(
-            run.scheduledAt,
-            newBlock.offset_minutes,
-            run.direction
-          );
-
-          await service.from("appointment_actions").insert({
-            appointment_id: run.appointmentId,
-            action_block_id: newBlock.id,
-            workflow_run_id: run.runId,
-            status: "scheduled",
-            scheduled_for: scheduledFor,
-          });
-        }
-
-        // 4c. Retime actions for retimed blocks
-        for (const retimed of blocksRetimed) {
-          const newScheduledFor = calculateScheduledFor(
-            run.scheduledAt,
-            retimed.offset_minutes,
-            run.direction
-          );
-
-          await service
-            .from("appointment_actions")
-            .update({ scheduled_for: newScheduledFor })
-            .eq("workflow_run_id", run.runId)
-            .eq("action_block_id", retimed.id!)
-            .eq("status", "scheduled");
-        }
-      }
-    }
-
-    // --- END TRANSACTION ---
+    const summary = (result ?? {}) as {
+      deleted?: number;
+      inserted?: number;
+      retimed?: number;
+      in_flight_recalculated?: number;
+    };
 
     console.log(
-      `[WORKFLOWS] Saved template ${templateId}: ${blocksToUpdate.length} updated, ${blocksToDelete.length} deleted, ${insertedBlocks.length} inserted. ${runDetails.length} in-flight runs recalculated.`
+      `[WORKFLOWS] Saved template ${templateId}: ${summary.retimed ?? 0} retimed, ${summary.deleted ?? 0} deleted, ${summary.inserted ?? 0} inserted. ${summary.in_flight_recalculated ?? 0} in-flight runs recalculated.`
     );
 
     // Return full updated block set for UI reconciliation
@@ -276,7 +107,7 @@ export async function PATCH(
     return NextResponse.json({
       success: true,
       blocks: allBlocks ?? [],
-      in_flight_recalculated: runDetails.length,
+      in_flight_recalculated: summary.in_flight_recalculated ?? 0,
     });
   } catch (err) {
     console.error("[WORKFLOWS] PATCH blocks error:", err);
@@ -286,23 +117,3 @@ export async function PATCH(
     );
   }
 }
-
-// Calculate scheduled_for from appointment time and action offset.
-// Pre-appointment: subtract offset. Post-appointment: add offset.
-function calculateScheduledFor(
-  appointmentScheduledAt: string,
-  offsetMinutes: number,
-  direction: string
-): string {
-  const apptTime = new Date(appointmentScheduledAt);
-  const offsetMs = offsetMinutes * 60 * 1000;
-
-  if (direction === "pre_appointment") {
-    return new Date(apptTime.getTime() - offsetMs).toISOString();
-  }
-  // post_appointment
-  return new Date(apptTime.getTime() + offsetMs).toISOString();
-}
-
-// Type import needed for cast in update calls
-import type { Database } from "@/lib/supabase/types";
