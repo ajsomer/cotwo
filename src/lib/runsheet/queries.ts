@@ -17,6 +17,7 @@ import {
 } from '@/lib/db/schema';
 import { and, eq, gte, lte, inArray, isNull, or } from 'drizzle-orm';
 import type { RunsheetSession, Room } from '@/lib/supabase/types';
+import { dayBoundsInTimeZone } from '@/lib/runsheet/format';
 
 /**
  * Fetch today's sessions for a location with all required joins.
@@ -28,11 +29,18 @@ export const fetchRunsheetSessions = cache(async (
 ): Promise<RunsheetSession[]> => {
   const targetDate = date ?? new Date();
 
-  // Start and end of the target day in UTC
-  const startOfDay = new Date(targetDate);
-  startOfDay.setHours(0, 0, 0, 0);
-  const endOfDay = new Date(targetDate);
-  endOfDay.setHours(23, 59, 59, 999);
+  // Day bounds must be the clinic's LOCAL day (Australia/Sydney), resolved to
+  // UTC instants — not the server's local day. Otherwise on-demand sessions,
+  // matched purely on created_at, fall outside a UTC-built window depending on
+  // the time of day and silently vanish from the run sheet. See
+  // dayBoundsInTimeZone for the full reasoning.
+  const [locationRow] = await db
+    .select({ timezone: locationsT.timezone })
+    .from(locationsT)
+    .where(eq(locationsT.id, locationId))
+    .limit(1);
+  const timezone = locationRow?.timezone ?? 'Australia/Sydney';
+  const { startOfDay, endOfDay } = dayBoundsInTimeZone(targetDate, timezone);
 
   // A session belongs to a day by its SCHEDULED date, not its creation date.
   // "Plan tomorrow" creates the session today but the appointment is scheduled

@@ -1,0 +1,26 @@
+[     229ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_115brz8._.js:2431
+[     289ms] [LOG] [HMR] connected @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_115brz8._.js:2431
+[     397ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_115brz8._.js:2431
+[     425ms] [LOG] [Fast Refresh] done in 129ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_115brz8._.js:2431
+[  144155ms] [ERROR] WebSocket connection to 'ws://localhost:3000/_next/webpack-hmr?id=NnUz8FYDJ6Y73brl83GZE' failed:  @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_0fhqo1d._.js:13299
+[  144155ms] [ERROR] WebSocket connection to 'ws://localhost:3000/socket.io/?EIO=4&transport=websocket' failed:  @ http://localhost:3000/_next/static/chunks/node_modules_03byru2._.js:2818
+[  145166ms] [ERROR] WebSocket connection to 'ws://localhost:3000/_next/webpack-hmr?id=NnUz8FYDJ6Y73brl83GZE' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_0fhqo1d._.js:13299
+[  145352ms] [ERROR] WebSocket connection to 'ws://localhost:3000/socket.io/?EIO=4&transport=websocket' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/_next/static/chunks/node_modules_03byru2._.js:2818
+[  145353ms] [WARNING] [socket] connect_error: websocket error @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_115brz8._.js:2431
+[  145354ms] [ERROR] WebSocket is already in CLOSING or CLOSED state. @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_115brz8._.js:2790
+[  146177ms] [ERROR] WebSocket connection to 'ws://localhost:3000/_next/webpack-hmr?id=NnUz8FYDJ6Y73brl83GZE' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_0fhqo1d._.js:13299
+[  147183ms] [ERROR] WebSocket connection to 'ws://localhost:3000/_next/webpack-hmr?id=NnUz8FYDJ6Y73brl83GZE' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_0fhqo1d._.js:13299
+[  147737ms] [ERROR] WebSocket connection to 'ws://localhost:3000/socket.io/?EIO=4&transport=websocket' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/_next/static/chunks/node_modules_03byru2._.js:2818
+[  147737ms] [WARNING] [socket] connect_error: websocket error @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_115brz8._.js:2431
+[  147738ms] [ERROR] WebSocket is already in CLOSING or CLOSED state. @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_115brz8._.js:2790
+[  148187ms] [ERROR] WebSocket connection to 'ws://localhost:3000/_next/webpack-hmr?id=NnUz8FYDJ6Y73brl83GZE' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_0fhqo1d._.js:13299
+[  149198ms] [ERROR] WebSocket connection to 'ws://localhost:3000/_next/webpack-hmr?id=NnUz8FYDJ6Y73brl83GZE' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_0fhqo1d._.js:13299
+[  150941ms] [ERROR] WebSocket connection to 'ws://localhost:3000/socket.io/?EIO=4&transport=websocket' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/_next/static/chunks/node_modules_03byru2._.js:2818
+[  150941ms] [WARNING] [socket] connect_error: websocket error @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_115brz8._.js:2431
+[  150942ms] [ERROR] WebSocket is already in CLOSING or CLOSED state. @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_115brz8._.js:2790
+[  155212ms] [ERROR] WebSocket connection to 'ws://localhost:3000/_next/webpack-hmr?id=NnUz8FYDJ6Y73brl83GZE' failed: Connection closed before receiving a handshake response @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_0fhqo1d._.js:13299
+[  160218ms] [LOG] [HMR] connected @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_115brz8._.js:2431
+[  160552ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_115brz8._.js:2431
+[  160562ms] [LOG] [HMR] connected @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_115brz8._.js:2431
+[  160952ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_115brz8._.js:2431
+[  160962ms] [LOG] [Fast Refresh] done in 111ms @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_115brz8._.js:2431

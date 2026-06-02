@@ -1,0 +1,13 @@
+- generic [active] [ref=e1]:
+  - main [ref=e3]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e8]: S
+        - heading "Sunrise Allied Health" [level=2] [ref=e9]
+        - paragraph [ref=e10]: Kate Murray
+      - generic [ref=e11]:
+        - heading "Welcome to Sunrise Allied Health" [level=1] [ref=e12]
+        - paragraph [ref=e13]: Before your appointment, we'll ask you to verify your phone number, confirm your details, and store a payment method. This takes about 2 minutes.
+        - button "Get started" [ref=e14]
+  - button "Open Next.js Dev Tools" [ref=e20] [cursor=pointer]:
+    - img [ref=e21]

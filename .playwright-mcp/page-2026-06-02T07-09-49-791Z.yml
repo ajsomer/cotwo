@@ -1,0 +1,22 @@
+- generic [ref=e1]:
+  - main [ref=e3]:
+    - generic [ref=e42]:
+      - generic [ref=e43]:
+        - generic [ref=e45]: S
+        - heading "Sunrise Allied Health" [level=2] [ref=e46]
+        - paragraph [ref=e47]: Kate Murray
+      - generic [ref=e50]:
+        - heading "Your details" [level=1] [ref=e51]
+        - generic [ref=e52]:
+          - generic [ref=e53]: First name
+          - textbox "First name" [active] [ref=e54]
+        - generic [ref=e55]:
+          - generic [ref=e56]: Last name
+          - textbox "Last name" [ref=e57]
+        - generic [ref=e58]:
+          - generic [ref=e59]: Date of birth
+          - textbox "Date of birth" [ref=e60]
+        - button "Continue" [disabled] [ref=e61]
+  - button "Open Next.js Dev Tools" [ref=e20] [cursor=pointer]:
+    - img [ref=e21]
+  - alert [ref=e24]

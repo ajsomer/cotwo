@@ -83,6 +83,81 @@ export function formatPhoneNumber(phone: string | null): string | null {
   return phone;
 }
 
+/**
+ * Compute the UTC instants bounding a calendar day *in a given timezone*.
+ *
+ * The run sheet's "today" is the clinic's local day (Australia/Sydney), but
+ * `created_at` / `scheduled_at` are stored as UTC `timestamptz`. Building the
+ * window with `setHours(0,0,0,0)` uses the Node server's local time (UTC on
+ * Vercel), so a Sydney on-demand session created before ~10am local — whose
+ * UTC date is still "yesterday" — falls before the UTC start-of-day and gets
+ * filtered out of the run sheet. We instead find the local civil date for the
+ * instant, then resolve that local midnight / end-of-day back to UTC using the
+ * zone's offset at each boundary.
+ */
+export function dayBoundsInTimeZone(
+  instant: Date,
+  timeZone: string
+): { startOfDay: Date; endOfDay: Date } {
+  // The civil Y-M-D in the target zone for this instant.
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(instant);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  const y = Number(get('year'));
+  const m = Number(get('month'));
+  const d = Number(get('day'));
+
+  // Resolve a local wall-clock time in `timeZone` to its UTC instant. We seed
+  // with the UTC interpretation, measure how far that instant's zone rendering
+  // is from the wall time we wanted, and correct by that offset. Two passes
+  // settle DST/edge cases where the first correction lands in a different
+  // offset.
+  const localWallToUtc = (
+    hour: number,
+    minute: number,
+    second: number,
+    ms: number
+  ): Date => {
+    let utc = new Date(Date.UTC(y, m - 1, d, hour, minute, second, ms));
+    for (let i = 0; i < 2; i++) {
+      const seen = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        hourCycle: 'h23',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      }).formatToParts(utc);
+      const sv = (t: string) => Number(seen.find((p) => p.type === t)?.value ?? '0');
+      const seenAsUtc = Date.UTC(
+        sv('year'),
+        sv('month') - 1,
+        sv('day'),
+        sv('hour'),
+        sv('minute'),
+        sv('second'),
+        ms
+      );
+      const wantedAsUtc = Date.UTC(y, m - 1, d, hour, minute, second, ms);
+      const drift = seenAsUtc - wantedAsUtc;
+      if (drift === 0) break;
+      utc = new Date(utc.getTime() - drift);
+    }
+    return utc;
+  };
+
+  return {
+    startOfDay: localWallToUtc(0, 0, 0, 0),
+    endOfDay: localWallToUtc(23, 59, 59, 999),
+  };
+}
+
 /** Format today's date. e.g. "Monday 30 March 2026" */
 export function formatRunsheetDate(date: Date): string {
   return date.toLocaleDateString('en-AU', {

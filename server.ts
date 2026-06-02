@@ -11,11 +11,21 @@
  * Next.js's worker isolation.
  */
 
+// MUST be first: loads .env.local into process.env before any env-dependent
+// module (neon-auth, db) is evaluated. See src/lib/load-env.ts.
+import "@/lib/load-env";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import next from "next";
 import { Server as SocketIOServer } from "socket.io";
-import { createServerClient } from "@supabase/ssr";
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import { eq } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { resolveSocketUserId } from "@/lib/auth/socket-session";
+import {
+  sessions as sessionsT,
+  sessionParticipants,
+  staffAssignments,
+  locations as locationsT,
+} from "@/lib/db/schema";
 
 const dev = process.env.NODE_ENV !== "production";
 const hostname = "0.0.0.0";
@@ -46,7 +56,7 @@ async function main() {
 
   // Socket auth middleware. Patient tabs (unauthenticated phone-OTP flow)
   // connect anonymously — fine, we only gate staff-only rooms. Staff tabs
-  // have a Supabase session cookie; we validate it and stash the user's
+  // have a Neon Auth session cookie; we validate it and stash the user's
   // allowed location IDs AND org IDs on `socket.data` so `join:location` and
   // `join:org` can both enforce membership without re-querying.
   io.use(async (socket, next) => {
@@ -58,42 +68,34 @@ async function main() {
     if (!cookieHeader) return next();
 
     try {
-      const cookieMap = parseCookieHeader(cookieHeader);
-      const supabase = createServerClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-        {
-          cookies: {
-            getAll: () =>
-              Object.entries(cookieMap).map(([name, value]) => ({
-                name,
-                value,
-              })),
-            // Socket middleware has no response to set cookies on. The auth
-            // library only reads during getUser(); writes (token refresh)
-            // happen over regular HTTP request paths, not here.
-            setAll: () => {},
-          },
-        }
-      );
+      // Validate the Neon Auth session from the handshake cookie. We're outside
+      // a Next request scope here (the socket server runs under tsx, not the
+      // App Router), so we can't use auth.getSession() — its local path reads
+      // cookies via next/headers, which throws outside a request. resolveSocket-
+      // UserId forwards the cookie to the auth server's /get-session endpoint
+      // instead. Mirrors getAuthenticatedUserId() in staff-access.ts.
+      const userId = await resolveSocketUserId(cookieHeader);
 
-      const { data, error } = await supabase.auth.getUser();
-      if (!error && data.user) {
-        socket.data.userId = data.user.id;
-        const { data: assignments } = await supabase
-          .from("staff_assignments")
-          .select("location_id, locations!inner(org_id)")
-          .eq("user_id", data.user.id);
+      if (userId) {
+        socket.data.userId = userId;
 
-        socket.data.allowedLocationIds = (assignments ?? []).map(
-          (a: { location_id: string }) => a.location_id
-        );
+        // Resolve allowed locations + orgs from staff_assignments → locations.
+        // Same membership rule the HTTP staff gates enforce (staff-access.ts),
+        // kept identical so socket-room access can't drift from route access.
+        const assignments = await db
+          .select({
+            location_id: staffAssignments.locationId,
+            org_id: locationsT.orgId,
+          })
+          .from(staffAssignments)
+          .innerJoin(locationsT, eq(locationsT.id, staffAssignments.locationId))
+          .where(eq(staffAssignments.userId, userId));
+
+        socket.data.allowedLocationIds = assignments.map((a) => a.location_id);
 
         const orgIds = new Set<string>();
-        for (const a of assignments ?? []) {
-          const loc = (a as { locations?: { org_id?: string } | { org_id?: string }[] | null }).locations;
-          const orgId = Array.isArray(loc) ? loc[0]?.org_id : loc?.org_id;
-          if (orgId) orgIds.add(orgId);
+        for (const a of assignments) {
+          if (a.org_id) orgIds.add(a.org_id);
         }
         socket.data.allowedOrgIds = Array.from(orgIds);
       }
@@ -142,17 +144,13 @@ async function main() {
     token: string
   ): Promise<{ sessionId: string; locationId: string } | null> {
     try {
-      const supabase = createSupabaseClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!
-      );
-      const { data } = await supabase
-        .from("sessions")
-        .select("id, location_id")
-        .eq("entry_token", token)
-        .maybeSingle();
-      if (!data) return null;
-      return { sessionId: data.id, locationId: data.location_id };
+      const [row] = await db
+        .select({ id: sessionsT.id, location_id: sessionsT.locationId })
+        .from(sessionsT)
+        .where(eq(sessionsT.entryToken, token))
+        .limit(1);
+      if (!row) return null;
+      return { sessionId: row.id, locationId: row.location_id };
     } catch (err) {
       console.warn("[socket] entry token resolve error:", err);
       return null;
@@ -292,37 +290,27 @@ async function main() {
    */
   async function cleanUpOnDemandSession(sessionId: string, locationId: string) {
     try {
-      const supabase = createSupabaseClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!
-      );
-
       // Only delete if the session is on-demand (no appointment) and still waiting.
-      const { data: session } = await supabase
-        .from("sessions")
-        .select("id, appointment_id, status")
-        .eq("id", sessionId)
-        .single();
+      const [session] = await db
+        .select({
+          id: sessionsT.id,
+          appointment_id: sessionsT.appointmentId,
+          status: sessionsT.status,
+        })
+        .from(sessionsT)
+        .where(eq(sessionsT.id, sessionId))
+        .limit(1);
 
       if (!session) return;
       if (session.appointment_id !== null) return; // scheduled session — keep it
       if (session.status !== "waiting") return;    // already admitted/completed — keep it
 
       // Clean up participant links first, then delete the session.
-      await supabase
-        .from("session_participants")
-        .delete()
-        .eq("session_id", sessionId);
+      await db
+        .delete(sessionParticipants)
+        .where(eq(sessionParticipants.sessionId, sessionId));
 
-      const { error } = await supabase
-        .from("sessions")
-        .delete()
-        .eq("id", sessionId);
-
-      if (error) {
-        console.error(`[cleanup] Failed to delete on-demand session ${sessionId}:`, error);
-        return;
-      }
+      await db.delete(sessionsT).where(eq(sessionsT.id, sessionId));
 
       console.log(`[cleanup] Deleted on-demand session ${sessionId} (patient disconnected)`);
 
@@ -375,18 +363,6 @@ async function main() {
 function isLoopback(req: IncomingMessage): boolean {
   const addr = req.socket.remoteAddress ?? "";
   return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
-}
-
-function parseCookieHeader(header: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const piece of header.split(";")) {
-    const eq = piece.indexOf("=");
-    if (eq < 0) continue;
-    const name = piece.slice(0, eq).trim();
-    const value = piece.slice(eq + 1).trim();
-    if (name) out[name] = decodeURIComponent(value);
-  }
-  return out;
 }
 
 main().catch((err) => {

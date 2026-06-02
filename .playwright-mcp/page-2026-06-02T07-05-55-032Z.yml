@@ -1,0 +1,23 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - img "Coviu" [ref=e3]
+    - generic [ref=e5]:
+      - heading "Log in to Coviu" [level=1] [ref=e6]
+      - generic [ref=e7]:
+        - generic [ref=e8]: Email address
+        - textbox "Email address" [active] [ref=e10]
+      - generic [ref=e11]:
+        - generic [ref=e12]: Password
+        - generic [ref=e13]:
+          - textbox "Password" [ref=e14]
+          - button "Show password" [ref=e15]:
+            - img [ref=e16]
+      - button "Forgot password?" [ref=e20]
+      - button "Log in" [ref=e21]
+      - paragraph [ref=e22]:
+        - text: Need an account?
+        - link "Sign up" [ref=e23] [cursor=pointer]:
+          - /url: /signup
+  - button "Open Next.js Dev Tools" [ref=e29] [cursor=pointer]:
+    - img [ref=e30]
+  - alert [ref=e33]

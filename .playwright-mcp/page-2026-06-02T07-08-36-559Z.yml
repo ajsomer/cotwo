@@ -1,0 +1,44 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e3]:
+      - img "Coviu" [ref=e5]
+      - navigation [ref=e6]:
+        - link "Run Sheet" [ref=e7] [cursor=pointer]:
+          - /url: /runsheet
+          - img [ref=e9]
+          - text: Run Sheet
+        - link "Tasks" [ref=e12] [cursor=pointer]:
+          - /url: /tasks
+          - img [ref=e14]
+          - text: Tasks
+        - link "Workflows" [ref=e17] [cursor=pointer]:
+          - /url: /workflows
+          - img [ref=e19]
+          - text: Workflows
+        - link "Forms & Files" [ref=e24] [cursor=pointer]:
+          - /url: /forms
+          - img [ref=e26]
+          - text: Forms & Files
+        - link "Settings" [ref=e29] [cursor=pointer]:
+          - /url: /settings
+          - img [ref=e31]
+          - text: Settings
+      - generic [ref=e34]:
+        - generic [ref=e35]: Dev Switcher
+        - generic [ref=e36]:
+          - button "Owner" [ref=e37]
+          - button "Receptionist" [ref=e38]
+          - button "Clinician" [ref=e39]
+          - button "PM" [ref=e40]
+      - generic [ref=e41]:
+        - generic [ref=e42]:
+          - generic [ref=e43]: Aiden Somerville
+          - generic [ref=e44]: Clinic Owner
+        - button "Sign out" [ref=e45]
+    - generic [ref=e46]:
+      - generic [ref=e48]:
+        - generic [ref=e49]: S
+        - generic [ref=e50]: Sunrise Allied Health
+      - main [ref=e51]
+  - button "Open Next.js Dev Tools" [ref=e138] [cursor=pointer]:
+    - img [ref=e139]

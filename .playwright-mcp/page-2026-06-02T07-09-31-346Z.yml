@@ -1,0 +1,20 @@
+- generic [ref=e1]:
+  - main [ref=e3]:
+    - generic [ref=e25]:
+      - generic [ref=e26]:
+        - generic [ref=e28]: S
+        - heading "Sunrise Allied Health" [level=2] [ref=e29]
+        - paragraph [ref=e30]: Kate Murray
+      - generic [ref=e33]:
+        - heading "Verify your phone number" [level=1] [ref=e34]
+        - paragraph [ref=e35]: We'll send you a code to confirm your identity.
+        - generic [ref=e36]:
+          - generic [ref=e37]: Phone number
+          - generic [ref=e38]:
+            - generic [ref=e39]: "+61"
+            - textbox "Phone number" [active] [ref=e40]:
+              - /placeholder: 450 336 880
+        - button "Send code" [disabled] [ref=e41]
+  - button "Open Next.js Dev Tools" [ref=e20] [cursor=pointer]:
+    - img [ref=e21]
+  - alert [ref=e24]
