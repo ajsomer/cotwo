@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireStaffOrgAccess } from "@/lib/auth/staff-access";
 
 /**
  * POST /api/appointment-types/configure
@@ -36,6 +37,16 @@ export async function POST(request: NextRequest) {
     if (!org_id) {
       return NextResponse.json({ error: "org_id is required" }, { status: 400 });
     }
+
+    const supabase = createServiceClient();
+    const access = await requireStaffOrgAccess(supabase, org_id);
+    if (!access.ok) {
+      return NextResponse.json(
+        { error: access.status === 401 ? "Unauthorized" : "Not found" },
+        { status: access.status }
+      );
+    }
+
     if (!name?.trim()) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
     }
@@ -78,8 +89,7 @@ export async function POST(request: NextRequest) {
     // Form IDs validation
     const formIdList = Array.isArray(form_ids) ? form_ids : [];
     if (formIdList.length > 0) {
-      const supabaseCheck = createServiceClient();
-      const { data: existingForms } = await supabaseCheck
+      const { data: existingForms } = await supabase
         .from("forms")
         .select("id")
         .in("id", formIdList)
@@ -95,7 +105,6 @@ export async function POST(request: NextRequest) {
 
     // --- Call RPC ---
 
-    const supabase = createServiceClient();
     const { data, error } = await supabase.rpc("configure_appointment_type", {
       p_org_id: org_id,
       p_appointment_type_id: appointment_type_id ?? null,

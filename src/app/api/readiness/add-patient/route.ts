@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { scheduleWorkflowForAppointment } from "@/lib/workflows/scanner";
+import { requireStaffLocationAccess } from "@/lib/auth/staff-access";
 
 /**
  * POST /api/readiness/add-patient
@@ -48,6 +49,14 @@ export async function POST(request: NextRequest) {
     const normalised = normalisePhone(mobile);
     if (!normalised) {
       return NextResponse.json({ error: "Invalid mobile number" }, { status: 400 });
+    }
+
+    const access = await requireStaffLocationAccess(location_id);
+    if (!access.ok) {
+      return NextResponse.json(
+        { error: access.status === 401 ? "Unauthorized" : "Forbidden" },
+        { status: access.status },
+      );
     }
 
     const supabase = createServiceClient();

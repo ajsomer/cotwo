@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { getSmsProvider } from "@/lib/sms";
 import { getBaseUrl } from "@/lib/utils/url";
+import { requireStaffCanAccessFormAssignment } from "@/lib/auth/staff-access";
 
 // POST /api/forms/assignments/send
 export async function POST(request: NextRequest) {
@@ -15,9 +16,20 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  try {
-    const supabase = createServiceClient();
+  const supabase = createServiceClient();
 
+  const access = await requireStaffCanAccessFormAssignment(
+    supabase,
+    assignment_id
+  );
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Not found" },
+      { status: access.status }
+    );
+  }
+
+  try {
     // Fetch assignment with form name and patient details
     const { data: assignment, error: assignError } = await supabase
       .from("form_assignments")

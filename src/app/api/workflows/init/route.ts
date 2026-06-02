@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchWorkflowsInit } from "@/lib/clinic/fetchers/workflows";
+import { requireStaffOrgAccess } from "@/lib/auth/staff-access";
 
 // GET /api/workflows/init?org_id=xxx&direction=pre_appointment|post_appointment
 // Returns data the workflows page needs for the requested direction.
@@ -12,10 +13,19 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "org_id required" }, { status: 400 });
   }
 
+  const service = createServiceClient();
+  const access = await requireStaffOrgAccess(service, orgId);
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Not found" },
+      { status: access.status },
+    );
+  }
+
   try {
     const [workflows, formsRes] = await Promise.all([
       fetchWorkflowsInit(orgId),
-      createServiceClient()
+      service
         .from("forms")
         .select("id, name, status")
         .eq("org_id", orgId)

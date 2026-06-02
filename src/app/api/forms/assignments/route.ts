@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireStaffCanAccessForm } from "@/lib/auth/staff-access";
 
 // GET /api/forms/assignments?form_id=xxx
 export async function GET(request: NextRequest) {
@@ -9,9 +10,17 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "form_id required" }, { status: 400 });
   }
 
-  try {
-    const supabase = createServiceClient();
+  const supabase = createServiceClient();
 
+  const access = await requireStaffCanAccessForm(supabase, formId);
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Not found" },
+      { status: access.status }
+    );
+  }
+
+  try {
     const { data: assignments, error } = await supabase
       .from("form_assignments")
       .select("*")
@@ -77,9 +86,17 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  try {
-    const supabase = createServiceClient();
+  const supabase = createServiceClient();
 
+  const access = await requireStaffCanAccessForm(supabase, form_id);
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Not found" },
+      { status: access.status }
+    );
+  }
+
+  try {
     // Fetch the form to snapshot its schema
     const { data: form, error: formError } = await supabase
       .from("forms")

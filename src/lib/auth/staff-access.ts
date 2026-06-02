@@ -187,6 +187,263 @@ export async function assertStaffCanAccessSubmission(
 }
 
 /**
+ * Collect the set of org IDs the authenticated user is staff at, via their
+ * `staff_assignments → locations.org_id`. Shared by the org/resource gates
+ * below so the membership rule lives in one place.
+ */
+async function fetchUserOrgIds(
+  serviceClient: SupabaseClient,
+  userId: string,
+): Promise<Set<string>> {
+  const { data: assignments } = await serviceClient
+    .from("staff_assignments")
+    .select("locations!inner(org_id)")
+    .eq("user_id", userId);
+
+  return new Set(
+    (assignments ?? [])
+      .map((a) => {
+        const loc = a.locations as
+          | { org_id: string }
+          | { org_id: string }[]
+          | null;
+        if (Array.isArray(loc)) return loc[0]?.org_id;
+        return loc?.org_id;
+      })
+      .filter((id): id is string => !!id),
+  );
+}
+
+/**
+ * Gate for org-scoped staff API routes (forms, appointment-types,
+ * outcome-pathways, workflows config). Authenticates the caller, then proves
+ * the user is staff at the SPECIFIC `orgId` named in the request.
+ *
+ * The client-supplied `org_id` is *validated against* the user's assignments —
+ * never trusted on its own. This is the fix for the unauthenticated cross-org
+ * exposure on the service-role config routes.
+ *
+ * Do NOT replace this with a "current org" helper that picks `assignments[0]`:
+ * multi-org users have several assignments, and authorization must check
+ * membership of the org named in the request, not a default.
+ *
+ * Returns { ok: true, userId, orgId } on success.
+ * 401 if no auth user. 404 (not 403) if the user is not staff at that org —
+ * matching the existence-leak convention of `assertStaffCanAccess*`.
+ */
+export async function requireStaffOrgAccess(
+  serviceClient: SupabaseClient,
+  orgId: string,
+): Promise<StaffAccessResult> {
+  const ssr = await createServerClient();
+  const {
+    data: { user },
+  } = await ssr.auth.getUser();
+  if (!user) return { ok: false, status: 401 };
+
+  const orgIds = await fetchUserOrgIds(serviceClient, user.id);
+  if (!orgIds.has(orgId)) return { ok: false, status: 404 };
+
+  return { ok: true, userId: user.id, orgId };
+}
+
+/**
+ * Resource-scoped gate: resolves a resource's `org_id` from a parent table,
+ * then verifies the authenticated user is staff at that org. The backbone of
+ * the `requireStaffCanAccess*` family below.
+ *
+ * `table`/`idColumn` locate the resource; `orgColumn` is the column on that
+ * table carrying the org. 404 on missing resource OR non-membership (no
+ * existence leak).
+ */
+async function requireStaffCanAccessResource(
+  serviceClient: SupabaseClient,
+  table: string,
+  resourceId: string,
+  orgColumn: string,
+): Promise<StaffAccessResult> {
+  const ssr = await createServerClient();
+  const {
+    data: { user },
+  } = await ssr.auth.getUser();
+  if (!user) return { ok: false, status: 401 };
+
+  const { data: row } = await serviceClient
+    .from(table)
+    .select(orgColumn)
+    .eq("id", resourceId)
+    .single();
+
+  const orgId = (row as Record<string, string> | null)?.[orgColumn];
+  if (!orgId) return { ok: false, status: 404 };
+
+  const orgIds = await fetchUserOrgIds(serviceClient, user.id);
+  if (!orgIds.has(orgId)) return { ok: false, status: 404 };
+
+  return { ok: true, userId: user.id, orgId };
+}
+
+/** Verify staff access to a form, anchored on `forms.org_id`. */
+export function requireStaffCanAccessForm(
+  serviceClient: SupabaseClient,
+  formId: string,
+): Promise<StaffAccessResult> {
+  return requireStaffCanAccessResource(serviceClient, "forms", formId, "org_id");
+}
+
+/** Verify staff access to a workflow template, anchored on `workflow_templates.org_id`. */
+export function requireStaffCanAccessWorkflowTemplate(
+  serviceClient: SupabaseClient,
+  templateId: string,
+): Promise<StaffAccessResult> {
+  return requireStaffCanAccessResource(
+    serviceClient,
+    "workflow_templates",
+    templateId,
+    "org_id",
+  );
+}
+
+/** Verify staff access to an appointment type, anchored on `appointment_types.org_id`. */
+export function requireStaffCanAccessAppointmentType(
+  serviceClient: SupabaseClient,
+  appointmentTypeId: string,
+): Promise<StaffAccessResult> {
+  return requireStaffCanAccessResource(
+    serviceClient,
+    "appointment_types",
+    appointmentTypeId,
+    "org_id",
+  );
+}
+
+/** Verify staff access to an uploaded file, anchored on `files.org_id`. */
+export function requireStaffCanAccessFile(
+  serviceClient: SupabaseClient,
+  fileId: string,
+): Promise<StaffAccessResult> {
+  return requireStaffCanAccessResource(serviceClient, "files", fileId, "org_id");
+}
+
+/** Verify staff access to an outcome pathway, anchored on `outcome_pathways.org_id`. */
+export function requireStaffCanAccessOutcomePathway(
+  serviceClient: SupabaseClient,
+  pathwayId: string,
+): Promise<StaffAccessResult> {
+  return requireStaffCanAccessResource(
+    serviceClient,
+    "outcome_pathways",
+    pathwayId,
+    "org_id",
+  );
+}
+
+/**
+ * Verify staff access to an appointment. Appointments carry both `org_id` and
+ * `location_id`; we anchor on `org_id` for the membership check and also return
+ * the `location_id` so location-scoped readiness routes can use it.
+ *
+ * Returns { ok: true, userId, orgId, locationId } on success.
+ */
+export async function requireStaffCanAccessAppointment(
+  serviceClient: SupabaseClient,
+  appointmentId: string,
+): Promise<
+  | { ok: true; userId: string; orgId: string; locationId: string }
+  | { ok: false; status: 401 | 404 }
+> {
+  const ssr = await createServerClient();
+  const {
+    data: { user },
+  } = await ssr.auth.getUser();
+  if (!user) return { ok: false, status: 401 };
+
+  const { data: appt } = await serviceClient
+    .from("appointments")
+    .select("org_id, location_id")
+    .eq("id", appointmentId)
+    .single();
+
+  if (!appt?.org_id) return { ok: false, status: 404 };
+
+  const orgIds = await fetchUserOrgIds(serviceClient, user.id);
+  if (!orgIds.has(appt.org_id)) return { ok: false, status: 404 };
+
+  return {
+    ok: true,
+    userId: user.id,
+    orgId: appt.org_id,
+    locationId: appt.location_id,
+  };
+}
+
+/**
+ * Verify staff access to a form assignment, resolved via its form's org.
+ */
+export async function requireStaffCanAccessFormAssignment(
+  serviceClient: SupabaseClient,
+  assignmentId: string,
+): Promise<StaffAccessResult> {
+  const ssr = await createServerClient();
+  const {
+    data: { user },
+  } = await ssr.auth.getUser();
+  if (!user) return { ok: false, status: 401 };
+
+  const { data: assignment } = await serviceClient
+    .from("form_assignments")
+    .select("form_id, forms!inner(org_id)")
+    .eq("id", assignmentId)
+    .single();
+
+  if (!assignment) return { ok: false, status: 404 };
+  const formOrg = assignment.forms as
+    | { org_id: string }
+    | { org_id: string }[]
+    | null;
+  const orgId = Array.isArray(formOrg) ? formOrg[0]?.org_id : formOrg?.org_id;
+  if (!orgId) return { ok: false, status: 404 };
+
+  const orgIds = await fetchUserOrgIds(serviceClient, user.id);
+  if (!orgIds.has(orgId)) return { ok: false, status: 404 };
+
+  return { ok: true, userId: user.id, orgId };
+}
+
+/**
+ * Default-org resolution for genuinely default/setup flows where NO scope is
+ * supplied (onboarding, "land somewhere sensible on first login"). Picks the
+ * first assignment.
+ *
+ * ⚠️ This is NOT an authorization primitive. Multi-org/multi-location users
+ * have several assignments; the `.limit(1)` "first wins" choice is ambiguous.
+ * NEVER use this to authorize a request scoped to a specific org/location —
+ * use `requireStaffOrgAccess` / `requireStaffLocationAccess` for that. Keep it
+ * out of any write path that targets a caller-named scope.
+ */
+export async function resolveDefaultStaffOrg(
+  userId: string,
+): Promise<{ orgId: string; locationId: string } | null> {
+  const ssr = await createServerClient();
+  const { data: assignments } = await ssr
+    .from("staff_assignments")
+    .select("location_id, locations!inner(org_id)")
+    .eq("user_id", userId)
+    .limit(1);
+
+  const assignment = assignments?.[0];
+  if (!assignment) return null;
+  const loc = assignment.locations as
+    | { org_id: string }
+    | { org_id: string }[]
+    | null;
+  const orgId = Array.isArray(loc) ? loc[0]?.org_id : loc?.org_id;
+  if (!orgId) return null;
+
+  return { orgId, locationId: assignment.location_id };
+}
+
+/**
  * Resolve all clinic assignments for a user, ordered deterministically.
  *
  * Used by the (clinic) layout AND by page-level server fetches that need to

@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import {
+  requireStaffOrgAccess,
+  requireStaffCanAccessOutcomePathway,
+} from "@/lib/auth/staff-access";
 
 // GET /api/outcome-pathways?org_id=xxx
 // Returns outcome pathways with their linked workflow template and action blocks
@@ -10,9 +14,17 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "org_id required" }, { status: 400 });
   }
 
-  try {
-    const supabase = createServiceClient();
+  const supabase = createServiceClient();
 
+  const access = await requireStaffOrgAccess(supabase, orgId);
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Not found" },
+      { status: access.status }
+    );
+  }
+
+  try {
     const includeArchived = request.nextUrl.searchParams.get("include_archived") === "true";
 
     let query = supabase
@@ -104,6 +116,14 @@ export async function POST(request: NextRequest) {
 
     const supabase = createServiceClient();
 
+    const access = await requireStaffOrgAccess(supabase, org_id);
+    if (!access.ok) {
+      return NextResponse.json(
+        { error: access.status === 401 ? "Unauthorized" : "Not found" },
+        { status: access.status }
+      );
+    }
+
     let workflowTemplateId: string | null = null;
 
     // Optionally create a linked workflow template
@@ -175,6 +195,16 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "id required" }, { status: 400 });
     }
 
+    const supabase = createServiceClient();
+
+    const access = await requireStaffCanAccessOutcomePathway(supabase, id);
+    if (!access.ok) {
+      return NextResponse.json(
+        { error: access.status === 401 ? "Unauthorized" : "Not found" },
+        { status: access.status }
+      );
+    }
+
     const updates: Record<string, unknown> = {};
     if (name !== undefined) updates.name = name;
     if (description !== undefined) updates.description = description;
@@ -186,8 +216,6 @@ export async function PATCH(request: NextRequest) {
         { status: 400 }
       );
     }
-
-    const supabase = createServiceClient();
 
     const { error } = await supabase
       .from("outcome_pathways")
@@ -217,9 +245,17 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "id required" }, { status: 400 });
   }
 
-  try {
-    const supabase = createServiceClient();
+  const supabase = createServiceClient();
 
+  const access = await requireStaffCanAccessOutcomePathway(supabase, id);
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Not found" },
+      { status: access.status }
+    );
+  }
+
+  try {
     const { error } = await supabase
       .from("outcome_pathways")
       .update({ archived_at: new Date().toISOString() })

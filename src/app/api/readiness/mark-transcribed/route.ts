@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { broadcastReadinessChange } from "@/lib/realtime/broadcast";
+import { requireStaffCanAccessAppointment } from "@/lib/auth/staff-access";
 
 /**
  * POST /api/readiness/mark-transcribed
@@ -28,6 +29,21 @@ export async function POST(request: NextRequest) {
 
     if (fetchError || !action) {
       return NextResponse.json({ error: "Action not found" }, { status: 404 });
+    }
+
+    // Authorize via the action's appointment before any mutation.
+    if (!action.appointment_id) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    const access = await requireStaffCanAccessAppointment(
+      supabase,
+      action.appointment_id,
+    );
+    if (!access.ok) {
+      return NextResponse.json(
+        { error: access.status === 401 ? "Unauthorized" : "Not found" },
+        { status: access.status },
+      );
     }
 
     if (action.status !== "completed") {

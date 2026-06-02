@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireStaffCanAccessAppointmentType } from "@/lib/auth/staff-access";
 
 // POST /api/appointment-types/[id]/workflow
 // Creates a new pre-appointment workflow template for this appointment type
@@ -10,9 +11,20 @@ export async function POST(
 ) {
   const { id: appointmentTypeId } = await params;
 
-  try {
-    const supabase = createServiceClient();
+  const supabase = createServiceClient();
 
+  const access = await requireStaffCanAccessAppointmentType(
+    supabase,
+    appointmentTypeId
+  );
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Not found" },
+      { status: access.status }
+    );
+  }
+
+  try {
     // Verify the appointment type exists and get its org
     const { data: apptType } = await supabase
       .from("appointment_types")
@@ -97,9 +109,20 @@ export async function DELETE(
 ) {
   const { id: appointmentTypeId } = await params;
 
-  try {
-    const supabase = createServiceClient();
+  const supabase = createServiceClient();
 
+  const access = await requireStaffCanAccessAppointmentType(
+    supabase,
+    appointmentTypeId
+  );
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Not found" },
+      { status: access.status }
+    );
+  }
+
+  try {
     const { error } = await supabase
       .from("type_workflow_links")
       .delete()

@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchFiles } from "@/lib/clinic/fetchers/forms";
+import {
+  requireStaffOrgAccess,
+  requireStaffCanAccessFile,
+} from "@/lib/auth/staff-access";
 
 // GET /api/files?org_id=xxx — list active files for an org
 export async function GET(request: NextRequest) {
@@ -8,6 +12,14 @@ export async function GET(request: NextRequest) {
 
   if (!orgId) {
     return NextResponse.json({ error: "org_id required" }, { status: 400 });
+  }
+
+  const access = await requireStaffOrgAccess(createServiceClient(), orgId);
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Not found" },
+      { status: access.status },
+    );
   }
 
   try {
@@ -51,6 +63,15 @@ export async function POST(request: NextRequest) {
     }
 
     const supabase = createServiceClient();
+
+    const access = await requireStaffOrgAccess(supabase, orgId);
+    if (!access.ok) {
+      return NextResponse.json(
+        { error: access.status === 401 ? "Unauthorized" : "Not found" },
+        { status: access.status },
+      );
+    }
+
     const fileId = crypto.randomUUID();
     const storagePath = `${orgId}/${fileId}.pdf`;
 
@@ -111,6 +132,14 @@ export async function DELETE(request: NextRequest) {
 
   try {
     const supabase = createServiceClient();
+
+    const access = await requireStaffCanAccessFile(supabase, id);
+    if (!access.ok) {
+      return NextResponse.json(
+        { error: access.status === 401 ? "Unauthorized" : "Not found" },
+        { status: access.status },
+      );
+    }
 
     const { error } = await supabase
       .from("files")

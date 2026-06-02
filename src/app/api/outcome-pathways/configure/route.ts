@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireStaffOrgAccess } from "@/lib/auth/staff-access";
 
 /**
  * POST /api/outcome-pathways/configure
@@ -15,6 +16,16 @@ export async function POST(request: NextRequest) {
     if (!org_id) {
       return NextResponse.json({ error: "org_id is required" }, { status: 400 });
     }
+
+    const supabase = createServiceClient();
+    const access = await requireStaffOrgAccess(supabase, org_id);
+    if (!access.ok) {
+      return NextResponse.json(
+        { error: access.status === 401 ? "Unauthorized" : "Not found" },
+        { status: access.status }
+      );
+    }
+
     if (!name?.trim()) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
     }
@@ -27,7 +38,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const supabase = createServiceClient();
     const { data, error } = await supabase.rpc("configure_outcome_pathway", {
       p_org_id: org_id,
       p_pathway_id: pathway_id ?? null,

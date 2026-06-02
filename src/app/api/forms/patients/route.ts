@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireStaffOrgAccess } from "@/lib/auth/staff-access";
 
 // GET /api/forms/patients?org_id=xxx
 export async function GET(request: NextRequest) {
@@ -9,9 +10,17 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "org_id required" }, { status: 400 });
   }
 
-  try {
-    const supabase = createServiceClient();
+  const supabase = createServiceClient();
 
+  const access = await requireStaffOrgAccess(supabase, orgId);
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Not found" },
+      { status: access.status }
+    );
+  }
+
+  try {
     const { data: patients, error } = await supabase
       .from("patients")
       .select("id, first_name, last_name")

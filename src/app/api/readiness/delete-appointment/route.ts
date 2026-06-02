@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireStaffCanAccessAppointment } from "@/lib/auth/staff-access";
 
 /**
  * POST /api/readiness/delete-appointment
@@ -16,6 +17,13 @@ export async function POST(request: NextRequest) {
     }
 
     const supabase = createServiceClient();
+    const access = await requireStaffCanAccessAppointment(supabase, appointment_id);
+    if (!access.ok) {
+      return NextResponse.json(
+        { error: access.status === 401 ? "Unauthorized" : "Not found" },
+        { status: access.status },
+      );
+    }
 
     // Delete intake_package_journeys for this appointment
     await supabase

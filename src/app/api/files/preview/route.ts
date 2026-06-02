@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireStaffOrgAccess } from "@/lib/auth/staff-access";
 
 // GET /api/files/preview?storage_path=xxx — generate a short-lived signed URL for staff preview
 export async function GET(request: NextRequest) {
@@ -9,9 +10,24 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "storage_path required" }, { status: 400 });
   }
 
-  try {
-    const supabase = createServiceClient();
+  // storage_path is `${orgId}/${fileId}.pdf` — gate on the org prefix so a
+  // caller can only preview files in an org they staff at.
+  const orgId = storagePath.split("/")[0];
+  if (!orgId) {
+    return NextResponse.json({ error: "Invalid storage_path" }, { status: 400 });
+  }
 
+  const supabase = createServiceClient();
+
+  const access = await requireStaffOrgAccess(supabase, orgId);
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Not found" },
+      { status: access.status },
+    );
+  }
+
+  try {
     const { data, error } = await supabase.storage
       .from("clinic-files")
       .createSignedUrl(storagePath, 3600); // 60 minutes

@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import {
+  requireStaffOrgAccess,
+  requireStaffCanAccessAppointmentType,
+} from "@/lib/auth/staff-access";
 
 // GET /api/appointment-types?org_id=xxx
 // Returns appointment types with pre-workflow template IDs, action counts,
@@ -10,9 +14,17 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "org_id required" }, { status: 400 });
   }
 
-  try {
-    const supabase = createServiceClient();
+  const supabase = createServiceClient();
 
+  const access = await requireStaffOrgAccess(supabase, orgId);
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Not found" },
+      { status: access.status }
+    );
+  }
+
+  try {
     // Single parallel batch: types + links + all blocks + all runs
     const [typesRes, linksRes, blocksRes, runsRes] = await Promise.all([
       supabase
@@ -97,6 +109,14 @@ export async function POST(request: NextRequest) {
 
     const supabase = createServiceClient();
 
+    const access = await requireStaffOrgAccess(supabase, org_id);
+    if (!access.ok) {
+      return NextResponse.json(
+        { error: access.status === 401 ? "Unauthorized" : "Not found" },
+        { status: access.status }
+      );
+    }
+
     const { data, error } = await supabase
       .from("appointment_types")
       .insert({
@@ -135,6 +155,14 @@ export async function PATCH(request: NextRequest) {
     }
 
     const supabase = createServiceClient();
+
+    const access = await requireStaffCanAccessAppointmentType(supabase, id);
+    if (!access.ok) {
+      return NextResponse.json(
+        { error: access.status === 401 ? "Unauthorized" : "Not found" },
+        { status: access.status }
+      );
+    }
 
     const { data: existing } = await supabase
       .from("appointment_types")
@@ -200,9 +228,17 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "id required" }, { status: 400 });
   }
 
-  try {
-    const supabase = createServiceClient();
+  const supabase = createServiceClient();
 
+  const access = await requireStaffCanAccessAppointmentType(supabase, id);
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Not found" },
+      { status: access.status }
+    );
+  }
+
+  try {
     const { error } = await supabase
       .from("appointment_types")
       .delete()

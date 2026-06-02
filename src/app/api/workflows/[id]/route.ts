@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireStaffCanAccessWorkflowTemplate } from "@/lib/auth/staff-access";
 
 // GET /api/workflows/[id]
 // Returns a single workflow template with all its action blocks.
@@ -9,9 +10,16 @@ export async function GET(
 ) {
   const { id } = await params;
 
-  try {
-    const supabase = createServiceClient();
+  const supabase = createServiceClient();
+  const access = await requireStaffCanAccessWorkflowTemplate(supabase, id);
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Not found" },
+      { status: access.status },
+    );
+  }
 
+  try {
     const { data: template, error: templateError } = await supabase
       .from("workflow_templates")
       .select("*")
@@ -73,6 +81,13 @@ export async function PATCH(
     }
 
     const supabase = createServiceClient();
+    const access = await requireStaffCanAccessWorkflowTemplate(supabase, id);
+    if (!access.ok) {
+      return NextResponse.json(
+        { error: access.status === 401 ? "Unauthorized" : "Not found" },
+        { status: access.status },
+      );
+    }
 
     const { error } = await supabase
       .from("workflow_templates")
@@ -106,9 +121,16 @@ export async function DELETE(
   const { id } = await params;
   const force = request.nextUrl.searchParams.get("force") === "true";
 
-  try {
-    const supabase = createServiceClient();
+  const supabase = createServiceClient();
+  const access = await requireStaffCanAccessWorkflowTemplate(supabase, id);
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Not found" },
+      { status: access.status },
+    );
+  }
 
+  try {
     // Check for active in-flight runs
     const { data: activeRuns } = await supabase
       .from("appointment_workflow_runs")

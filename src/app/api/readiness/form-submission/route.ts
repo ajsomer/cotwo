@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { extractFieldsFromSchema } from "@/lib/forms/extract-fields";
+import { requireStaffCanAccessAppointment } from "@/lib/auth/staff-access";
 
 /**
  * GET /api/readiness/form-submission?appointment_id=xxx&form_name=yyy
@@ -16,9 +17,16 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "appointment_id required" }, { status: 400 });
   }
 
-  try {
-    const supabase = createServiceClient();
+  const supabase = createServiceClient();
+  const access = await requireStaffCanAccessAppointment(supabase, appointmentId);
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Not found" },
+      { status: access.status },
+    );
+  }
 
+  try {
     // Find form submissions for this appointment
     const { data: submissions } = await supabase
       .from("form_submissions")

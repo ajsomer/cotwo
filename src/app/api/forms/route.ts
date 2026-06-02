@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchForms } from "@/lib/clinic/fetchers/forms";
 import { defaultFormSchema, ensureIdentityPage } from "@/lib/survey/identity-page";
+import {
+  requireStaffOrgAccess,
+  requireStaffCanAccessForm,
+} from "@/lib/auth/staff-access";
 
 // GET /api/forms?org_id=xxx
 export async function GET(request: NextRequest) {
@@ -9,6 +13,15 @@ export async function GET(request: NextRequest) {
 
   if (!orgId) {
     return NextResponse.json({ error: "org_id required" }, { status: 400 });
+  }
+
+  const service = createServiceClient();
+  const access = await requireStaffOrgAccess(service, orgId);
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Not found" },
+      { status: access.status }
+    );
   }
 
   try {
@@ -33,6 +46,14 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = createServiceClient();
+
+  const access = await requireStaffOrgAccess(supabase, org_id);
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Not found" },
+      { status: access.status }
+    );
+  }
 
   // Every form gets a locked identity page at the top. If the caller
   // supplies a schema, defensively ensure it contains the identity page
@@ -72,6 +93,14 @@ export async function PATCH(request: NextRequest) {
 
   const supabase = createServiceClient();
 
+  const access = await requireStaffCanAccessForm(supabase, id);
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Not found" },
+      { status: access.status }
+    );
+  }
+
   const updates: Record<string, unknown> = {};
   if (name !== undefined) updates.name = name;
   if (description !== undefined) updates.description = description;
@@ -103,6 +132,14 @@ export async function DELETE(request: NextRequest) {
   }
 
   const supabase = createServiceClient();
+
+  const access = await requireStaffCanAccessForm(supabase, id);
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Not found" },
+      { status: access.status }
+    );
+  }
 
   // Check for active (non-completed) assignments
   const { data: activeAssignments } = await supabase

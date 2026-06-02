@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchPaymentConfig } from "@/lib/clinic/fetchers/payments";
+import { requireStaffLocationAccess } from "@/lib/auth/staff-access";
 
 // GET /api/settings/payments?location_id=xxx
 // Returns routing mode, location Stripe account, and clinician Stripe statuses
@@ -11,6 +12,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       { error: "location_id required" },
       { status: 400 }
+    );
+  }
+
+  const access = await requireStaffLocationAccess(locationId);
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Forbidden" },
+      { status: access.status },
     );
   }
 
@@ -54,6 +63,14 @@ export async function PATCH(request: NextRequest) {
           );
         }
 
+        const routingAccess = await requireStaffLocationAccess(location_id);
+        if (!routingAccess.ok) {
+          return NextResponse.json(
+            { error: routingAccess.status === 401 ? "Unauthorized" : "Forbidden" },
+            { status: routingAccess.status },
+          );
+        }
+
         // Get org_id from location
         const { data: loc } = await supabase
           .from("locations")
@@ -94,6 +111,14 @@ export async function PATCH(request: NextRequest) {
             );
           }
 
+          const connectAccess = await requireStaffLocationAccess(location_id);
+          if (!connectAccess.ok) {
+            return NextResponse.json(
+              { error: connectAccess.status === 401 ? "Unauthorized" : "Forbidden" },
+              { status: connectAccess.status },
+            );
+          }
+
           const { error } = await supabase
             .from("locations")
             .update({ stripe_account_id: testAccountId })
@@ -116,6 +141,12 @@ export async function PATCH(request: NextRequest) {
               { status: 400 }
             );
           }
+
+          const saAccess = await requireStaffAssignmentLocationAccess(
+            supabase,
+            staff_assignment_id,
+          );
+          if (!saAccess.ok) return saAccess.response;
 
           const { error } = await supabase
             .from("staff_assignments")
@@ -149,6 +180,14 @@ export async function PATCH(request: NextRequest) {
             );
           }
 
+          const disconnectAccess = await requireStaffLocationAccess(location_id);
+          if (!disconnectAccess.ok) {
+            return NextResponse.json(
+              { error: disconnectAccess.status === 401 ? "Unauthorized" : "Forbidden" },
+              { status: disconnectAccess.status },
+            );
+          }
+
           const { error } = await supabase
             .from("locations")
             .update({ stripe_account_id: null })
@@ -168,6 +207,12 @@ export async function PATCH(request: NextRequest) {
               { status: 400 }
             );
           }
+
+          const saAccess = await requireStaffAssignmentLocationAccess(
+            supabase,
+            staff_assignment_id,
+          );
+          if (!saAccess.ok) return saAccess.response;
 
           const { error } = await supabase
             .from("staff_assignments")
@@ -200,4 +245,44 @@ export async function PATCH(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+// Clinician-target payment actions key on staff_assignment_id, not location_id.
+// Resolve the assignment's location with the service client, then run the
+// standard location gate so the caller must be staff at that location.
+async function requireStaffAssignmentLocationAccess(
+  supabase: ReturnType<typeof createServiceClient>,
+  staffAssignmentId: string,
+): Promise<
+  | { ok: true }
+  | { ok: false; response: NextResponse }
+> {
+  const { data: assignment } = await supabase
+    .from("staff_assignments")
+    .select("location_id")
+    .eq("id", staffAssignmentId)
+    .maybeSingle();
+
+  if (!assignment) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: "Staff assignment not found" },
+        { status: 404 },
+      ),
+    };
+  }
+
+  const access = await requireStaffLocationAccess(assignment.location_id);
+  if (!access.ok) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: access.status === 401 ? "Unauthorized" : "Forbidden" },
+        { status: access.status },
+      ),
+    };
+  }
+
+  return { ok: true };
 }

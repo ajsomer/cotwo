@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireStaffCanAccessForm } from "@/lib/auth/staff-access";
 
 // GET /api/forms/[id]
 export async function GET(
@@ -8,9 +9,17 @@ export async function GET(
 ) {
   const { id } = await params;
 
-  try {
-    const supabase = createServiceClient();
+  const supabase = createServiceClient();
 
+  const access = await requireStaffCanAccessForm(supabase, id);
+  if (!access.ok) {
+    return NextResponse.json(
+      { error: access.status === 401 ? "Unauthorized" : "Not found" },
+      { status: access.status }
+    );
+  }
+
+  try {
     const { data: form, error } = await supabase
       .from("forms")
       .select("*")
