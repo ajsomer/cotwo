@@ -77,17 +77,20 @@ export async function GET(
   // ------------------------------------------------------------
   // Form assignments + form submissions (merged client-side by submission_id)
   // ------------------------------------------------------------
-  const { data: formAssignmentsData } = await supabase
-    .from("form_assignments")
-    .select("id, form_id, appointment_id, status, sent_at, completed_at, created_at, submission_id")
-    .eq("patient_id", patientId)
-    .order("created_at", { ascending: false });
-
-  const { data: formSubmissionsData } = await supabase
-    .from("form_submissions")
-    .select("id, form_id, appointment_id, created_at")
-    .eq("patient_id", patientId)
-    .order("created_at", { ascending: false });
+  const [formAssignmentsRes, formSubmissionsRes] = await Promise.all([
+    supabase
+      .from("form_assignments")
+      .select("id, form_id, appointment_id, status, sent_at, completed_at, created_at, submission_id")
+      .eq("patient_id", patientId)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("form_submissions")
+      .select("id, form_id, appointment_id, created_at")
+      .eq("patient_id", patientId)
+      .order("created_at", { ascending: false }),
+  ]);
+  const formAssignmentsData = formAssignmentsRes.data;
+  const formSubmissionsData = formSubmissionsRes.data;
 
   const formIds = new Set<string>();
   (formAssignmentsData ?? []).forEach((a) => formIds.add(a.form_id));
@@ -159,40 +162,43 @@ export async function GET(
   `;
   // Future appointments (scheduled_at >= now) — soonest first, so the cap
   // truncates far-future rows rather than near-future ones.
-  const futureRes = await supabase
-    .from("appointments")
-    .select(apptSelect)
-    .eq("patient_id", patientId)
-    .neq("status", "cancelled")
-    .gte("scheduled_at", nowIso)
-    .order("scheduled_at", { ascending: true })
-    .limit(FUTURE_LIMIT);
-  // Past appointments (scheduled_at < now) — most-recent first.
-  const pastRes = await supabase
-    .from("appointments")
-    .select(apptSelect)
-    .eq("patient_id", patientId)
-    .neq("status", "cancelled")
-    .lt("scheduled_at", nowIso)
-    .order("scheduled_at", { ascending: false })
-    .limit(PAST_LIMIT);
-  // Awaiting-scheduling rows (scheduled_at IS NULL) — most-recently created
-  // first. Separate query so they don't queue behind past rows under a
-  // shared limit.
-  const awaitingRes = await supabase
-    .from("appointments")
-    .select(apptSelect)
-    .eq("patient_id", patientId)
-    .neq("status", "cancelled")
-    .is("scheduled_at", null)
-    .order("created_at", { ascending: false })
-    .limit(AWAITING_LIMIT);
-  // Total count for the truncation footer.
-  const { count: apptsTotalCount } = await supabase
-    .from("appointments")
-    .select("id", { count: "exact", head: true })
-    .eq("patient_id", patientId)
-    .neq("status", "cancelled");
+  const [futureRes, pastRes, awaitingRes, apptsCountRes] = await Promise.all([
+    supabase
+      .from("appointments")
+      .select(apptSelect)
+      .eq("patient_id", patientId)
+      .neq("status", "cancelled")
+      .gte("scheduled_at", nowIso)
+      .order("scheduled_at", { ascending: true })
+      .limit(FUTURE_LIMIT),
+    // Past appointments (scheduled_at < now) — most-recent first.
+    supabase
+      .from("appointments")
+      .select(apptSelect)
+      .eq("patient_id", patientId)
+      .neq("status", "cancelled")
+      .lt("scheduled_at", nowIso)
+      .order("scheduled_at", { ascending: false })
+      .limit(PAST_LIMIT),
+    // Awaiting-scheduling rows (scheduled_at IS NULL) — most-recently created
+    // first. Separate query so they don't queue behind past rows under a
+    // shared limit.
+    supabase
+      .from("appointments")
+      .select(apptSelect)
+      .eq("patient_id", patientId)
+      .neq("status", "cancelled")
+      .is("scheduled_at", null)
+      .order("created_at", { ascending: false })
+      .limit(AWAITING_LIMIT),
+    // Total count for the truncation footer.
+    supabase
+      .from("appointments")
+      .select("id", { count: "exact", head: true })
+      .eq("patient_id", patientId)
+      .neq("status", "cancelled"),
+  ]);
+  const apptsTotalCount = apptsCountRes.count;
 
   const apptsData = [
     ...(futureRes.data ?? []),
@@ -204,36 +210,42 @@ export async function GET(
   // PostgREST nesting, so do a separate fetch and map).
   const apptIds = apptsData.map((a) => a.id);
   const latestSessionByAppt: Record<string, { id: string; status: string }> = {};
-  if (apptIds.length > 0) {
-    const { data: sessionsForAppts } = await supabase
-      .from("sessions")
-      .select("id, status, appointment_id, created_at")
-      .in("appointment_id", apptIds)
-      .order("created_at", { ascending: false });
-    for (const s of sessionsForAppts ?? []) {
-      if (s.appointment_id && !latestSessionByAppt[s.appointment_id]) {
-        latestSessionByAppt[s.appointment_id] = { id: s.id, status: s.status };
-      }
+
+  const [sessionsForApptsRes, onDemandRes] = await Promise.all([
+    apptIds.length > 0
+      ? supabase
+          .from("sessions")
+          .select("id, status, appointment_id, created_at")
+          .in("appointment_id", apptIds)
+          .order("created_at", { ascending: false })
+      : Promise.resolve({ data: [] }),
+    // On-demand sessions (sessions without appointments)
+    supabase
+      .from("session_participants")
+      .select(
+        `
+        sessions!inner (
+          id, status, session_started_at, session_ended_at, created_at, location_id, room_id, appointment_id,
+          locations ( timezone ),
+          rooms ( name )
+        )
+      `,
+        { count: "exact" },
+      )
+      .eq("patient_id", patientId)
+      .is("sessions.appointment_id", null)
+      .order("created_at", { ascending: false, referencedTable: "sessions" })
+      .limit(ON_DEMAND_LIMIT),
+  ]);
+
+  for (const s of sessionsForApptsRes.data ?? []) {
+    if (s.appointment_id && !latestSessionByAppt[s.appointment_id]) {
+      latestSessionByAppt[s.appointment_id] = { id: s.id, status: s.status };
     }
   }
 
-  // On-demand sessions (sessions without appointments)
-  const { data: onDemandData, count: onDemandTotalCount } = await supabase
-    .from("session_participants")
-    .select(
-      `
-      sessions!inner (
-        id, status, session_started_at, session_ended_at, created_at, location_id, room_id, appointment_id,
-        locations ( timezone ),
-        rooms ( name )
-      )
-    `,
-      { count: "exact" },
-    )
-    .eq("patient_id", patientId)
-    .is("sessions.appointment_id", null)
-    .order("created_at", { ascending: false, referencedTable: "sessions" })
-    .limit(ON_DEMAND_LIMIT);
+  const onDemandData = onDemandRes.data;
+  const onDemandTotalCount = onDemandRes.count;
 
   const now = new Date();
 

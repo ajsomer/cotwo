@@ -14,37 +14,15 @@ import { resolveTask } from "@/lib/runsheet/actions";
 import dynamic from "next/dynamic";
 import { ReadinessTable } from "./readiness-table";
 import type { ActivePanel } from "./types";
+import { FormHandoffPanel } from "@/components/clinic/forms/form-handoff-panel";
+import { IntakePackageHandoffPanel } from "@/components/clinic/forms/intake-package-handoff-panel";
+import { StandaloneSubmissionPanel } from "@/components/clinic/forms/standalone-submission-panel";
+import { PatientContactCard } from "@/components/clinic/patient/patient-contact-card";
 
 const AddPatientPanel = dynamic(
   () =>
     import("@/components/clinic/patient/add-patient-panel").then(
       (m) => m.AddPatientPanel
-    ),
-  { ssr: false }
-);
-
-import { PatientContactCard } from "@/components/clinic/patient/patient-contact-card";
-
-const FormHandoffPanel = dynamic(
-  () =>
-    import("@/components/clinic/forms/form-handoff-panel").then(
-      (m) => m.FormHandoffPanel
-    ),
-  { ssr: false }
-);
-
-const IntakePackageHandoffPanel = dynamic(
-  () =>
-    import("@/components/clinic/forms/intake-package-handoff-panel").then(
-      (m) => m.IntakePackageHandoffPanel
-    ),
-  { ssr: false }
-);
-
-const StandaloneSubmissionPanel = dynamic(
-  () =>
-    import("@/components/clinic/forms/standalone-submission-panel").then(
-      (m) => m.StandaloneSubmissionPanel
     ),
   { ssr: false }
 );
@@ -191,11 +169,18 @@ export function ReadinessShell() {
         (a) => a.action_type === "deliver_form" && a.status === "completed"
       );
       if (formAction) {
+        const completedSubmission = appt.completed_form_submissions.find(
+          (s) =>
+            s.source === "assignment" &&
+            (s.form_name === formAction.form_name ||
+              s.form_name === (formAction.form_name ?? "Unknown form"))
+        );
         setActivePanel({
           type: "form-handoff",
           appointment: appt,
           actionId: formAction.action_id,
           formName: formAction.form_name ?? "Unknown form",
+          submissionId: completedSubmission?.submission_id ?? null,
           returnTo: "none",
         });
       }
@@ -328,6 +313,7 @@ export function ReadinessShell() {
         <FormHandoffPanel
           actionId={activePanel.actionId}
           formName={activePanel.formName}
+          submissionId={activePanel.submissionId}
           patientName={`${activePanel.appointment.patient_first_name} ${activePanel.appointment.patient_last_name}`}
           appointmentId={activePanel.appointment.appointment_id}
           onClose={() => {

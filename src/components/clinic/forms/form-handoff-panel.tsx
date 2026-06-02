@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { SlideOver } from "@/components/ui/slide-over";
 
 interface FormHandoffPanelProps {
   actionId: string;
   formName: string;
+  submissionId?: string | null;
   patientName: string;
   appointmentId: string;
   onClose: () => void;
@@ -43,6 +44,7 @@ function CopyButton({ text, small }: { text: string; small?: boolean }) {
 export function FormHandoffPanel({
   actionId,
   formName,
+  submissionId: initialSubmissionId,
   patientName,
   appointmentId,
   onClose,
@@ -53,24 +55,27 @@ export function FormHandoffPanel({
   const [marking, setMarking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submittedAt, setSubmittedAt] = useState<string | null>(null);
-  const [submissionId, setSubmissionId] = useState<string | null>(null);
+  const [loadedSubmissionId, setLoadedSubmissionId] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadFormData();
-  }, [appointmentId]);
-
-  async function loadFormData() {
+  const loadFormData = useCallback(async () => {
     try {
       // Fetch form submission for this appointment
+      const params = new URLSearchParams({
+        appointment_id: appointmentId,
+        form_name: formName,
+      });
+      if (initialSubmissionId) {
+        params.set("submission_id", initialSubmissionId);
+      }
       const res = await fetch(
-        `/api/readiness/form-submission?appointment_id=${appointmentId}&form_name=${encodeURIComponent(formName)}`
+        `/api/readiness/form-submission?${params.toString()}`
       );
 
       if (res.ok) {
         const data = await res.json();
         setFields(data.fields ?? []);
         setSubmittedAt(data.submitted_at ?? null);
-        setSubmissionId(data.submission_id ?? null);
+        setLoadedSubmissionId(data.submission_id ?? null);
       } else {
         // If no dedicated endpoint exists, show a message
         setFields([]);
@@ -81,7 +86,11 @@ export function FormHandoffPanel({
     } finally {
       setLoading(false);
     }
-  }
+  }, [appointmentId, initialSubmissionId, formName]);
+
+  useEffect(() => {
+    void loadFormData();
+  }, [loadFormData]);
 
   const handleMarkTranscribed = async () => {
     setMarking(true);
@@ -199,11 +208,11 @@ export function FormHandoffPanel({
           >
             Back
           </button>
-          {submissionId && (
+          {loadedSubmissionId && (
             <button
               onClick={() =>
                 window.open(
-                  `/api/forms/submissions/${submissionId}/pdf`,
+                  `/api/forms/submissions/${loadedSubmissionId}/pdf`,
                   "_blank",
                 )
               }

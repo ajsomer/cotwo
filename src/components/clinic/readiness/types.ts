@@ -16,6 +16,7 @@ export type ActivePanel =
       appointment: ReadinessAppointment;
       actionId: string;
       formName: string;
+      submissionId: string | null;
       /** What to show on close. "detail" reopens the patient card, "none" closes everything. */
       returnTo: "detail" | "none";
     }

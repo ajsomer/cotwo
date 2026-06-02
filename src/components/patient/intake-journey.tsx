@@ -801,6 +801,10 @@ function FormStep({
         model.applyTheme(coviuTheme);
         model.showProgressBar = 'off';
         model.showTitle = false;
+        // Don't show SurveyJS's built-in "Thank you for completing the survey"
+        // page — the intake journey advances to the next step itself, and we
+        // render our own loading screen in the gap (see `submitting` below).
+        model.showCompletedPage = false;
         setSurvey(model);
       } catch {
         if (!cancelled) setError('Could not load form. Please try again.');
@@ -874,6 +878,26 @@ function FormStep({
     );
   }
 
+  // Once the survey is submitted, show a loading screen while complete-item
+  // runs and the journey advances — rather than letting the SurveyJS view
+  // (or its completion page) linger.
+  if (submitting) {
+    return (
+      <div className="flex flex-col items-center">
+        <PersistentHeader
+          clinicName={clinicName}
+          logoUrl={logoUrl}
+          currentStep={currentStep}
+          totalSteps={totalSteps}
+        />
+        <div className="flex flex-col items-center gap-3 py-12 text-center">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-teal-500 border-t-transparent" />
+          <p className="text-sm text-gray-500">Saving your answers…</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col items-center">
       <PersistentHeader
@@ -882,9 +906,7 @@ function FormStep({
         currentStep={currentStep}
         totalSteps={totalSteps}
       />
-      <div
-        className={`w-full ${submitting ? 'pointer-events-none opacity-60' : ''}`}
-      >
+      <div className="w-full">
         <h1 className="mb-3 text-xl font-semibold text-gray-800">{formName}</h1>
         {error && (
           <p className="mb-2 text-sm text-red-500" role="alert">

@@ -10,6 +10,12 @@ import { WorkflowTimeline, CompletedFormsList } from "./forms-section";
 import { ReadinessActions } from "./readiness-actions";
 import type { PatientDetails } from "./types";
 
+const PATIENT_DETAILS_CACHE_TTL_MS = 30_000;
+const patientDetailsCache = new Map<
+  string,
+  { expiresAt: number; data: PatientDetails }
+>();
+
 interface PatientContactCardProps {
   session?: EnrichedSession | null;
   patientId?: string | null;
@@ -57,6 +63,13 @@ export function PatientContactCard({
     const url = qs
       ? `/api/patient/${resolvedPatientId}?${qs}`
       : `/api/patient/${resolvedPatientId}`;
+    const cached = patientDetailsCache.get(url);
+    if (cached && cached.expiresAt > Date.now()) {
+      setDetails(cached.data);
+      setLoading(false);
+      return;
+    }
+
     let cancelled = false;
     (async () => {
       try {
@@ -75,6 +88,10 @@ export function PatientContactCard({
         }
         const data = (await res.json()) as PatientDetails;
         if (cancelled) return;
+        patientDetailsCache.set(url, {
+          data,
+          expiresAt: Date.now() + PATIENT_DETAILS_CACHE_TTL_MS,
+        });
         setDetails(data);
       } catch (err) {
         if (cancelled) return;

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { assertStaffCanAccessSubmission } from "@/lib/auth/staff-access";
+import { requireAuthenticatedUser } from "@/lib/auth/staff-access";
 import { extractFieldsFromSchema } from "@/lib/forms/extract-fields";
 
 /**
@@ -28,9 +28,9 @@ export async function GET(
   }
 
   const supabase = createServiceClient();
-  const access = await assertStaffCanAccessSubmission(supabase, id);
-  if (!access.ok) {
-    return NextResponse.json({ error: "Not found" }, { status: access.status });
+  const auth = await requireAuthenticatedUser();
+  if (!auth.ok) {
+    return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
   }
 
   const { data: submission } = await supabase
@@ -63,6 +63,28 @@ export async function GET(
   const patient = Array.isArray(submission.patients)
     ? submission.patients[0]
     : submission.patients;
+
+  const { data: assignments } = await supabase
+    .from("staff_assignments")
+    .select("locations!inner(org_id)")
+    .eq("user_id", auth.userId);
+
+  const userOrgIds = new Set(
+    (assignments ?? [])
+      .map((a) => {
+        const loc = a.locations as
+          | { org_id: string }
+          | { org_id: string }[]
+          | null;
+        if (Array.isArray(loc)) return loc[0]?.org_id;
+        return loc?.org_id;
+      })
+      .filter((orgId): orgId is string => !!orgId),
+  );
+
+  if (!form?.org_id || !userOrgIds.has(form.org_id)) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
 
   const responses = (submission.responses ?? {}) as Record<string, unknown>;
   const identity = (responses.patient_identity ?? {}) as Record<string, unknown>;

@@ -12,6 +12,7 @@ import { requireStaffCanAccessAppointment } from "@/lib/auth/staff-access";
 export async function GET(request: NextRequest) {
   const appointmentId = request.nextUrl.searchParams.get("appointment_id");
   const formName = request.nextUrl.searchParams.get("form_name");
+  const submissionId = request.nextUrl.searchParams.get("submission_id");
 
   if (!appointmentId) {
     return NextResponse.json({ error: "appointment_id required" }, { status: 400 });
@@ -27,6 +28,39 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    if (submissionId) {
+      const { data: exactSubmission } = await supabase
+        .from("form_submissions")
+        .select(
+          `
+          id,
+          form_id,
+          responses,
+          created_at,
+          forms!inner(id, name, schema)
+        `,
+        )
+        .eq("id", submissionId)
+        .eq("appointment_id", appointmentId)
+        .maybeSingle();
+
+      const form = Array.isArray(exactSubmission?.forms)
+        ? exactSubmission?.forms[0]
+        : exactSubmission?.forms;
+
+      if (exactSubmission && form?.schema) {
+        const fields = extractFieldsFromSchema(
+          form.schema as Record<string, unknown>,
+          exactSubmission.responses as Record<string, unknown>,
+        );
+        return NextResponse.json({
+          submission_id: exactSubmission.id,
+          fields,
+          submitted_at: exactSubmission.created_at,
+        });
+      }
+    }
+
     // Find form submissions for this appointment
     const { data: submissions } = await supabase
       .from("form_submissions")
