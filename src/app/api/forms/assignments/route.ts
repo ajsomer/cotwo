@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { requireStaffCanAccessForm } from "@/lib/auth/staff-access";
+import {
+  requireStaffCanAccessForm,
+  assertPatientInOrg,
+  assertAppointmentInOrg,
+} from "@/lib/auth/staff-access";
 
 // GET /api/forms/assignments?form_id=xxx
 export async function GET(request: NextRequest) {
@@ -94,6 +98,19 @@ export async function POST(request: NextRequest) {
       { error: access.status === 401 ? "Unauthorized" : "Not found" },
       { status: access.status }
     );
+  }
+
+  // The form is org-gated above, but patient_id / appointment_id are
+  // caller-supplied — prove they belong to the same org before the
+  // service-role insert, or this could create a cross-org assignment.
+  if (!(await assertPatientInOrg(supabase, patient_id, access.orgId))) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  if (
+    appointment_id &&
+    !(await assertAppointmentInOrg(supabase, appointment_id, access.orgId))
+  ) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
   try {

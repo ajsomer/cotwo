@@ -25,53 +25,56 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Single parallel batch: types + links + all blocks + all runs
-    const [typesRes, linksRes, blocksRes, runsRes] = await Promise.all([
-      supabase
-        .from("appointment_types")
-        .select("*")
-        .eq("org_id", orgId)
-        .order("name"),
-      supabase
-        .from("type_workflow_links")
-        .select("appointment_type_id, workflow_template_id")
-        .eq("direction", "pre_appointment"),
-      supabase
-        .from("workflow_action_blocks")
-        .select("template_id"),
-      supabase
-        .from("appointment_workflow_runs")
-        .select("workflow_template_id")
-        .eq("status", "active"),
-    ]);
+    // Phase 1: this org's types, and (scoped to those types) their pre links.
+    const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
+    const typesRes = await supabase
+      .from("appointment_types")
+      .select("*")
+      .eq("org_id", orgId)
+      .order("name");
 
     if (typesRes.error) {
       return NextResponse.json({ error: typesRes.error.message }, { status: 500 });
     }
 
     const types = typesRes.data ?? [];
-    const typeIds = new Set(types.map((t) => t.id));
+    const typeIdList = types.map((t) => t.id);
 
-    // Filter links to only those for our types
-    const links = (linksRes.data ?? []).filter((l) => typeIds.has(l.appointment_type_id));
+    const linksRes = await supabase
+      .from("type_workflow_links")
+      .select("appointment_type_id, workflow_template_id")
+      .eq("direction", "pre_appointment")
+      .in("appointment_type_id", typeIdList.length ? typeIdList : [ZERO_UUID]);
+
+    const links = linksRes.data ?? [];
     const linkByType = new Map(links.map((l) => [l.appointment_type_id, l.workflow_template_id]));
-    const templateIds = new Set(links.map((l) => l.workflow_template_id));
+    const templateIdList = [...new Set(links.map((l) => l.workflow_template_id))];
+
+    // Phase 2: blocks + active runs, scoped to the derived template ids
+    // instead of scanning every block/run on the platform.
+    const [blocksRes, runsRes] = await Promise.all([
+      supabase
+        .from("workflow_action_blocks")
+        .select("template_id")
+        .in("template_id", templateIdList.length ? templateIdList : [ZERO_UUID]),
+      supabase
+        .from("appointment_workflow_runs")
+        .select("workflow_template_id")
+        .eq("status", "active")
+        .in("workflow_template_id", templateIdList.length ? templateIdList : [ZERO_UUID]),
+    ]);
 
     // Count blocks per template
     const blockCounts: Record<string, number> = {};
     for (const b of blocksRes.data ?? []) {
-      if (templateIds.has(b.template_id)) {
-        blockCounts[b.template_id] = (blockCounts[b.template_id] || 0) + 1;
-      }
+      blockCounts[b.template_id] = (blockCounts[b.template_id] || 0) + 1;
     }
 
     // Count in-flight runs per template
     const inFlightCounts: Record<string, number> = {};
     for (const r of runsRes.data ?? []) {
-      if (templateIds.has(r.workflow_template_id)) {
-        inFlightCounts[r.workflow_template_id] =
-          (inFlightCounts[r.workflow_template_id] || 0) + 1;
-      }
+      inFlightCounts[r.workflow_template_id] =
+        (inFlightCounts[r.workflow_template_id] || 0) + 1;
     }
 
     const result = types.map((t) => {

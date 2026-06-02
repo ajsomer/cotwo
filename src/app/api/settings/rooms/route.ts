@@ -151,7 +151,18 @@ export async function POST(request: NextRequest) {
 
   // Insert clinician assignments if provided
   if (clinician_assignment_ids?.length > 0 && room) {
-    await updateClinicianAssignments(supabase, room.id, clinician_assignment_ids);
+    const res = await updateClinicianAssignments(
+      supabase,
+      room.id,
+      clinician_assignment_ids,
+      location_id,
+    );
+    if (!res.ok) {
+      return NextResponse.json(
+        { error: "Invalid clinician assignment for this location" },
+        { status: 400 },
+      );
+    }
   }
 
   return NextResponse.json({ room }, { status: 201 });
@@ -191,7 +202,18 @@ export async function PATCH(request: NextRequest) {
 
   // Replace clinician assignments if provided
   if (clinician_assignment_ids !== undefined) {
-    await updateClinicianAssignments(supabase, id, clinician_assignment_ids);
+    const res = await updateClinicianAssignments(
+      supabase,
+      id,
+      clinician_assignment_ids,
+      gate.locationId,
+    );
+    if (!res.ok) {
+      return NextResponse.json(
+        { error: "Invalid clinician assignment for this location" },
+        { status: 400 },
+      );
+    }
   }
 
   return NextResponse.json({ success: true });

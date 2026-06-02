@@ -283,6 +283,89 @@ async function requireStaffCanAccessResource(
   return { ok: true, userId: user.id, orgId };
 }
 
+// ---------------------------------------------------------------------------
+// Nested-foreign-key validators.
+//
+// The gates above prove the caller staffs the org/location named in the
+// request. These confirm that a *nested* id supplied alongside it (a patient,
+// appointment, form, staff assignment) actually belongs to that same scope —
+// defence in depth against a crafted request that passes the top-level gate
+// but injects a cross-org/cross-location child id with service-role privileges.
+// They take the already-resolved scope, so they don't re-authenticate; call
+// them only after the top-level gate has run.
+// ---------------------------------------------------------------------------
+
+/** True iff every id in `ids` exists in `table` with `org_id === orgId`. */
+export async function assertIdsBelongToOrg(
+  serviceClient: SupabaseClient,
+  table: string,
+  ids: string[],
+  orgId: string,
+): Promise<boolean> {
+  const unique = [...new Set(ids.filter(Boolean))];
+  if (unique.length === 0) return true;
+
+  const { data, error } = await serviceClient
+    .from(table)
+    .select("id")
+    .eq("org_id", orgId)
+    .in("id", unique);
+
+  if (error) return false;
+  return (data?.length ?? 0) === unique.length;
+}
+
+/** True iff the patient belongs to `orgId`. */
+export function assertPatientInOrg(
+  serviceClient: SupabaseClient,
+  patientId: string,
+  orgId: string,
+): Promise<boolean> {
+  return assertIdsBelongToOrg(serviceClient, "patients", [patientId], orgId);
+}
+
+/** True iff the appointment belongs to `orgId`. */
+export function assertAppointmentInOrg(
+  serviceClient: SupabaseClient,
+  appointmentId: string,
+  orgId: string,
+): Promise<boolean> {
+  return assertIdsBelongToOrg(
+    serviceClient,
+    "appointments",
+    [appointmentId],
+    orgId,
+  );
+}
+
+/** True iff every form id belongs to `orgId`. */
+export function assertFormsInOrg(
+  serviceClient: SupabaseClient,
+  formIds: string[],
+  orgId: string,
+): Promise<boolean> {
+  return assertIdsBelongToOrg(serviceClient, "forms", formIds, orgId);
+}
+
+/** True iff every staff_assignment id is attached to `locationId`. */
+export async function assertStaffAssignmentsInLocation(
+  serviceClient: SupabaseClient,
+  staffAssignmentIds: string[],
+  locationId: string,
+): Promise<boolean> {
+  const unique = [...new Set(staffAssignmentIds.filter(Boolean))];
+  if (unique.length === 0) return true;
+
+  const { data, error } = await serviceClient
+    .from("staff_assignments")
+    .select("id")
+    .eq("location_id", locationId)
+    .in("id", unique);
+
+  if (error) return false;
+  return (data?.length ?? 0) === unique.length;
+}
+
 /** Verify staff access to a form, anchored on `forms.org_id`. */
 export function requireStaffCanAccessForm(
   serviceClient: SupabaseClient,

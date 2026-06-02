@@ -1,6 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { requireStaffOrgAccess } from "@/lib/auth/staff-access";
+import {
+  requireStaffOrgAccess,
+  assertFormsInOrg,
+} from "@/lib/auth/staff-access";
+
+/** Collect every form id a pathway block references (form_id + config). */
+function collectPathwayBlockFormIds(block: Record<string, unknown>): string[] {
+  const ids: string[] = [];
+  if (typeof block.form_id === "string") ids.push(block.form_id);
+  const config = block.config as Record<string, unknown> | null;
+  if (config) {
+    if (typeof config.form_id === "string") ids.push(config.form_id);
+    if (Array.isArray(config.form_ids)) {
+      for (const f of config.form_ids) if (typeof f === "string") ids.push(f);
+    }
+  }
+  return ids;
+}
 
 /**
  * POST /api/outcome-pathways/configure
@@ -34,6 +51,18 @@ export async function POST(request: NextRequest) {
     if (blockList.length === 0) {
       return NextResponse.json(
         { error: "At least one action block is required" },
+        { status: 400 }
+      );
+    }
+
+    // Form ids in the blocks are written by the RPC with service-role
+    // privileges — prove they belong to this org first.
+    const referencedFormIds = blockList.flatMap((b: Record<string, unknown>) =>
+      collectPathwayBlockFormIds(b)
+    );
+    if (!(await assertFormsInOrg(supabase, referencedFormIds, access.orgId))) {
+      return NextResponse.json(
+        { error: "A referenced form does not belong to this organisation" },
         { status: 400 }
       );
     }

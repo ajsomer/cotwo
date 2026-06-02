@@ -1,6 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { requireStaffCanAccessWorkflowTemplate } from "@/lib/auth/staff-access";
+import {
+  requireStaffCanAccessWorkflowTemplate,
+  assertFormsInOrg,
+} from "@/lib/auth/staff-access";
+
+/**
+ * Collect every form id a block references — top-level form_id,
+ * config.form_id, config.form_ids (intake_package), and a
+ * form_not_completed precondition's form_id — so they can be org-validated
+ * before the SECURITY DEFINER RPC writes them.
+ */
+function collectBlockFormIds(block: BlockInput): string[] {
+  const ids: string[] = [];
+  if (block.form_id) ids.push(block.form_id);
+
+  const config = block.config as Record<string, unknown> | null;
+  if (config) {
+    if (typeof config.form_id === "string") ids.push(config.form_id);
+    if (Array.isArray(config.form_ids)) {
+      for (const f of config.form_ids) if (typeof f === "string") ids.push(f);
+    }
+  }
+
+  const pre = block.precondition as Record<string, unknown> | null;
+  if (pre && pre.type === "form_not_completed" && typeof pre.form_id === "string") {
+    ids.push(pre.form_id);
+  }
+
+  return ids;
+}
 
 interface BlockInput {
   id?: string;
@@ -70,6 +99,17 @@ export async function PATCH(
           { status: 400 }
         );
       }
+    }
+
+    // Every form id referenced by a block (top-level, config, or precondition)
+    // must belong to the template's org — the RPC writes them directly with
+    // service-role privileges, so a cross-org form id can't be trusted.
+    const referencedFormIds = blocks.flatMap(collectBlockFormIds);
+    if (!(await assertFormsInOrg(service, referencedFormIds, access.orgId))) {
+      return NextResponse.json(
+        { error: "A referenced form does not belong to this organisation" },
+        { status: 400 }
+      );
     }
 
     // Atomic save + in-flight recalculation (single transaction).
