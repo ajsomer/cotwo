@@ -1,6 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { EntryContext } from '@/lib/supabase/types';
+import type { OrgTier, RoomType } from '@/lib/supabase/custom-types';
+
+/**
+ * Unwrap a Supabase embedded relation that may arrive as an object or a
+ * single-element array, into the caller-declared shape. Avoids `any` casts
+ * when walking nested joins (session → room → location → org).
+ */
+function rel<T = Record<string, unknown>>(value: unknown): T {
+  if (Array.isArray(value)) return (value[0] ?? {}) as T;
+  return (value ?? {}) as T;
+}
+
+type OrgRel = { id: string; name: string; logo_url: string | null; tier: OrgTier };
+type LocationRel = {
+  id: string;
+  name: string;
+  stripe_account_id: string | null;
+  organisations: unknown;
+};
+type RoomRel = { id: string; name: string; room_type: RoomType; locations: unknown };
+type AppointmentRel = {
+  scheduled_at: string | null;
+  phone_number: string | null;
+  users: { full_name: string | null } | { full_name: string | null }[] | null;
+};
 
 /**
  * POST /api/patient/resolve
@@ -35,10 +60,11 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (session) {
-    const room = session.rooms as any;
-    const location = room.locations as any;
-    const org = location.organisations as any;
-    const appointment = session.appointments as any;
+    const room = rel<RoomRel>(session.rooms);
+    const location = rel<LocationRel>(room.locations);
+    const org = rel<OrgRel>(location.organisations);
+    const appointment = rel<AppointmentRel>(session.appointments);
+    const clinician = rel<{ full_name: string | null }>(appointment.users);
 
     const context: EntryContext = {
       entry_type: 'session',
@@ -50,9 +76,9 @@ export async function POST(request: NextRequest) {
         entry_token: session.entry_token,
         status: session.status,
         appointment_id: session.appointment_id,
-        scheduled_at: appointment?.scheduled_at || null,
-        phone_number: appointment?.phone_number || null,
-        clinician_name: appointment?.users?.full_name || null,
+        scheduled_at: appointment.scheduled_at || null,
+        phone_number: appointment.phone_number || null,
+        clinician_name: clinician.full_name || null,
       },
       payments_enabled: !!location.stripe_account_id,
     };
@@ -73,8 +99,8 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (room) {
-    const location = (room as any).locations as any;
-    const org = location.organisations as any;
+    const location = rel<LocationRel>((room as { locations: unknown }).locations);
+    const org = rel<OrgRel>(location.organisations);
 
     const context: EntryContext = {
       entry_type: 'on_demand',
@@ -99,7 +125,7 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (location) {
-    const org = (location as any).organisations as any;
+    const org = rel<OrgRel>((location as { organisations: unknown }).organisations);
 
     const context: EntryContext = {
       entry_type: 'qr_code',

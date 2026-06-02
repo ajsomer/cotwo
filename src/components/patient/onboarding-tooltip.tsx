@@ -20,21 +20,29 @@ export function OnboardingTooltip({ copy, show, children }: OnboardingTooltipPro
   const [dismissed, setDismissed] = useState(false);
   const [target, setTarget] = useState<HTMLElement | null>(null);
 
+  // Reset dismissed state whenever the active copy changes (i.e., new phase).
+  // Done during render (not an effect) per React's "adjust state during render"
+  // guidance — avoids a cascading re-render.
+  const [prevCopy, setPrevCopy] = useState(copy);
+  if (copy !== prevCopy) {
+    setPrevCopy(copy);
+    setDismissed(false);
+  }
+
   useEffect(() => {
     if (!show || dismissed) {
+      // Detaching from the DOM slot is an external-system sync, not derived
+      // state — clearing the target here is intentional.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setTarget(null);
       return;
     }
     // Find the persistent header and place the tooltip immediately after it
     // by mounting the banner into a slot below the header.
     const header = document.querySelector('[data-onboarding-tooltip-slot]') as HTMLElement | null;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTarget(header);
   }, [show, dismissed]);
-
-  // Reset dismissed state whenever the active copy changes (i.e., new phase)
-  useEffect(() => {
-    setDismissed(false);
-  }, [copy]);
 
   return (
     <>

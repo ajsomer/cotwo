@@ -54,18 +54,27 @@ export async function POST(request: NextRequest) {
     .eq('phone_number', verification.phone_number);
 
   // Look up existing patient contacts at this org under this phone number
-  const { data: contacts, error: contactsError } = await supabase
+  const { data: contacts } = await supabase
     .from('patient_phone_numbers')
     .select('patient_id, patients!inner (id, first_name, last_name, date_of_birth, org_id)')
     .eq('phone_number', verification.phone_number)
     .eq('patients.org_id', org_id);
 
-  const patients = (contacts || []).map((c: any) => ({
-    id: c.patients.id,
-    first_name: c.patients.first_name,
-    last_name: c.patients.last_name,
-    date_of_birth: c.patients.date_of_birth,
-  }));
+  type PatientRel = {
+    id: string;
+    first_name: string;
+    last_name: string;
+    date_of_birth: string | null;
+  };
+  const patients = (contacts ?? []).map((c) => {
+    const p = (Array.isArray(c.patients) ? c.patients[0] : c.patients) as PatientRel;
+    return {
+      id: p.id,
+      first_name: p.first_name,
+      last_name: p.last_name,
+      date_of_birth: p.date_of_birth,
+    };
+  });
 
   return NextResponse.json({
     verified: true,

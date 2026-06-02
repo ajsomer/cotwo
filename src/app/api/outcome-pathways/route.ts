@@ -48,8 +48,8 @@ export async function GET(request: NextRequest) {
       .map((p) => p.workflow_template_id)
       .filter(Boolean) as string[];
 
-    let templates: Record<string, unknown> = {};
-    let blocksByTemplate: Record<string, unknown[]> = {};
+    const templates: Record<string, unknown> = {};
+    const blocksByTemplate: Record<string, unknown[]> = {};
 
     if (templateIds.length > 0) {
       const { data: templateData } = await supabase

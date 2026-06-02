@@ -27,6 +27,14 @@ const eslintConfig = defineConfig([
     files: ["src/lib/sms/console.ts"],
     rules: { "no-console": "off" },
   },
+  {
+    // server.ts is the long-running Node process (Socket.IO + Next). Its
+    // console logs are operational server-side logging, not browser noise —
+    // the concern no-console guards against (leaking state to patient devices)
+    // doesn't apply here.
+    files: ["server.ts"],
+    rules: { "no-console": "off" },
+  },
 ]);
 
 export default eslintConfig;

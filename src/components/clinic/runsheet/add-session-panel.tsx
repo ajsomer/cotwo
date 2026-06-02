@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useRef } from "react";
 import { SlideOver } from "@/components/ui/slide-over";
 import { Button } from "@/components/ui/button";
 import { useOrg } from "@/hooks/useOrg";
@@ -480,17 +480,17 @@ function TimeInput({ value, onChange }: { value: string; onChange: (v: string) =
   const [minute, setMinute] = useState(initial.minute);
   const [period, setPeriod] = useState(initial.period);
 
-  // Sync local state when value changes externally
-  const lastValue = useRef(value);
-  useEffect(() => {
-    if (value !== lastValue.current) {
-      const parsed = parse24h(value);
-      setHour(parsed.hour);
-      setMinute(parsed.minute);
-      setPeriod(parsed.period);
-      lastValue.current = value;
-    }
-  }, [value]);
+  // Sync local state when value changes externally. Done during render (not an
+  // effect) per React's "adjust state during render" guidance — avoids a
+  // cascading re-render.
+  const [lastValue, setLastValue] = useState(value);
+  if (value !== lastValue) {
+    const parsed = parse24h(value);
+    setHour(parsed.hour);
+    setMinute(parsed.minute);
+    setPeriod(parsed.period);
+    setLastValue(value);
+  }
 
   function commit(h: string, m: string, p: "AM" | "PM") {
     const hNum = parseInt(h, 10);
@@ -503,7 +503,9 @@ function TimeInput({ value, onChange }: { value: string; onChange: (v: string) =
     if (p === "AM" && hNum === 12) h24 = 0;
     else if (p === "PM" && hNum !== 12) h24 = hNum + 12;
     const result = `${String(h24).padStart(2, "0")}:${String(mNum).padStart(2, "0")}`;
-    lastValue.current = result;
+    // Record what we're emitting so the render-phase sync above doesn't treat
+    // our own change as an external one and clobber in-progress edits.
+    setLastValue(result);
     onChange(result);
   }
 

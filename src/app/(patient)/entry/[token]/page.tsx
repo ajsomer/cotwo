@@ -1,6 +1,41 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { createServiceClient } from '@/lib/supabase/service';
 import { EntryContext } from '@/lib/supabase/types';
+import type { OrgTier, RoomType } from '@/lib/supabase/custom-types';
 import { EntryFlowClient } from './entry-flow-client';
+
+/** Unwrap a Supabase embedded relation (object or single-element array). */
+function rel<T = Record<string, unknown>>(value: unknown): T {
+  if (Array.isArray(value)) return (value[0] ?? {}) as T;
+  return (value ?? {}) as T;
+}
+
+type OrgRel = {
+  id: string;
+  name: string;
+  logo_url: string | null;
+  tier: OrgTier;
+  stripe_routing?: string;
+};
+type LocationRel = {
+  id: string;
+  name: string;
+  stripe_account_id: string | null;
+  organisations: unknown;
+};
+type RoomRel = {
+  id: string;
+  name: string;
+  room_type: RoomType;
+  payments_enabled?: boolean;
+  locations: unknown;
+};
+type AppointmentRel = {
+  scheduled_at: string | null;
+  phone_number: string | null;
+  clinician_id: string | null;
+  users: { full_name: string | null } | { full_name: string | null }[] | null;
+};
 
 export default async function EntryPage({
   params,
@@ -59,13 +94,14 @@ async function resolveToken(token: string): Promise<EntryContext | null> {
     .single();
 
   if (session) {
-    const room = session.rooms as any;
-    const location = room.locations as any;
-    const org = location.organisations as any;
-    const appointment = session.appointments as any;
+    const room = rel<RoomRel>(session.rooms);
+    const location = rel<LocationRel>(room.locations);
+    const org = rel<OrgRel>(location.organisations);
+    const appointment = rel<AppointmentRel>(session.appointments);
+    const clinician = rel<{ full_name: string | null }>(appointment.users);
 
     const paymentsEnabled = await resolvePaymentsEnabled(
-      supabase, room, location, org, appointment?.clinician_id
+      supabase, room, location, org, appointment.clinician_id
     );
 
     return {
@@ -78,9 +114,9 @@ async function resolveToken(token: string): Promise<EntryContext | null> {
         entry_token: session.entry_token,
         status: session.status,
         appointment_id: session.appointment_id,
-        scheduled_at: appointment?.scheduled_at || null,
-        phone_number: appointment?.phone_number || null,
-        clinician_name: appointment?.users?.full_name || null,
+        scheduled_at: appointment.scheduled_at || null,
+        phone_number: appointment.phone_number || null,
+        clinician_name: clinician.full_name || null,
       },
       payments_enabled: paymentsEnabled,
     };
@@ -99,11 +135,12 @@ async function resolveToken(token: string): Promise<EntryContext | null> {
     .single();
 
   if (room) {
-    const location = (room as any).locations as any;
-    const org = location.organisations as any;
+    const roomRel = room as unknown as RoomRel;
+    const location = rel<LocationRel>(roomRel.locations);
+    const org = rel<OrgRel>(location.organisations);
 
     const paymentsEnabled = await resolvePaymentsEnabled(
-      supabase, room, location, org, null
+      supabase, roomRel, location, org, null
     );
 
     return {
@@ -127,7 +164,7 @@ async function resolveToken(token: string): Promise<EntryContext | null> {
     .single();
 
   if (location) {
-    const org = (location as any).organisations as any;
+    const org = rel<OrgRel>((location as { organisations: unknown }).organisations);
 
     return {
       entry_type: 'qr_code',
@@ -150,10 +187,10 @@ async function resolveToken(token: string): Promise<EntryContext | null> {
  * 3. Whether the relevant Stripe account is connected
  */
 async function resolvePaymentsEnabled(
-  supabase: any,
-  room: any,
-  location: any,
-  org: any,
+  supabase: SupabaseClient,
+  room: RoomRel,
+  location: LocationRel,
+  org: OrgRel,
   clinicianId: string | null
 ): Promise<boolean> {
   // Room has payments disabled — skip regardless

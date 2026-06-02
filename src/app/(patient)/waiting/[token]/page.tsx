@@ -1,6 +1,20 @@
 import { createServiceClient } from '@/lib/supabase/service';
 import { WaitingRoomClient } from './waiting-room-client';
 
+/** Unwrap a Supabase embedded relation (object or single-element array). */
+function rel<T = Record<string, unknown>>(value: unknown): T {
+  if (Array.isArray(value)) return (value[0] ?? {}) as T;
+  return (value ?? {}) as T;
+}
+
+type OrgRel = { name: string; logo_url: string | null };
+type LocationRel = { id: string; organisations: unknown };
+type RoomRel = { name: string; locations: unknown };
+type AppointmentRel = {
+  scheduled_at: string | null;
+  users: { full_name: string | null } | { full_name: string | null }[] | null;
+};
+
 export default async function WaitingRoomPage({
   params,
 }: {
@@ -42,10 +56,11 @@ export default async function WaitingRoomPage({
     );
   }
 
-  const room = session.rooms as any;
-  const location = room.locations as any;
-  const org = location.organisations as any;
-  const appointment = session.appointments as any;
+  const room = rel<RoomRel>(session.rooms);
+  const location = rel<LocationRel>(room.locations);
+  const org = rel<OrgRel>(location.organisations);
+  const appointment = rel<AppointmentRel>(session.appointments);
+  const clinician = rel<{ full_name: string | null }>(appointment.users);
 
   return (
     <div className="mx-auto w-full max-w-[420px]">
@@ -56,8 +71,8 @@ export default async function WaitingRoomPage({
       clinicName={org.name}
       logoUrl={org.logo_url}
       roomName={room.name}
-      clinicianName={appointment?.users?.full_name || null}
-      scheduledAt={appointment?.scheduled_at || null}
+      clinicianName={clinician.full_name || null}
+      scheduledAt={appointment.scheduled_at || null}
       isOnboardingDemo={session.is_onboarding_demo ?? false}
     />
     </div>

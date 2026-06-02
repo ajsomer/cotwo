@@ -97,6 +97,9 @@ export function RoomContainer({
     prevAutoStateRef.current = autoState;
 
     if (!manualOverride) {
+      // Syncing expansion to the realtime-derived autoState (an external
+      // signal), and detecting its rising edge via the ref — intentional.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setExpansion(autoState);
       return;
     }
