@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { resolveEntryTokenScope } from '@/lib/patient/entry-token';
+import { assertPatientInOrg } from '@/lib/auth/staff-access';
 
 /**
  * POST /api/patient/card
@@ -7,22 +9,35 @@ import { createServiceClient } from '@/lib/supabase/service';
  * Called after the client-side Stripe Elements card capture.
  *
  * Also: GET to check if patient has a card on file.
+ *
+ * Scope is derived from the entry token: the patient must belong to the
+ * token's org, and the session updated is the token's session — not a
+ * caller-supplied id — so a card can't be attached to another patient or
+ * another patient's session.
  */
 export async function POST(request: NextRequest) {
   const {
+    token,
     patient_id,
     stripe_payment_method_id,
     card_last_four,
     card_brand,
     card_expiry,
-    session_id,
   } = await request.json();
 
-  if (!patient_id || !stripe_payment_method_id || !card_last_four || !card_brand) {
+  if (!token || !patient_id || !stripe_payment_method_id || !card_last_four || !card_brand) {
     return NextResponse.json({ error: 'Missing required card fields' }, { status: 400 });
   }
 
   const supabase = createServiceClient();
+
+  const scope = await resolveEntryTokenScope(supabase, token);
+  if (!scope) {
+    return NextResponse.json({ error: 'Invalid token' }, { status: 404 });
+  }
+  if (!(await assertPatientInOrg(supabase, patient_id, scope.orgId))) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
 
   // Mark any existing default cards as non-default
   await supabase
@@ -50,12 +65,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to store card' }, { status: 500 });
   }
 
-  // Update session tracking
-  if (session_id) {
+  // Update session tracking — use the token's session, never a caller value.
+  if (scope.sessionId) {
     await supabase
       .from('sessions')
       .update({ card_captured: true })
-      .eq('id', session_id);
+      .eq('id', scope.sessionId);
   }
 
   return NextResponse.json({ payment_method: paymentMethod });
@@ -63,13 +78,22 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
+  const token = searchParams.get('token');
   const patientId = searchParams.get('patient_id');
 
-  if (!patientId) {
-    return NextResponse.json({ error: 'patient_id is required' }, { status: 400 });
+  if (!token || !patientId) {
+    return NextResponse.json({ error: 'token and patient_id are required' }, { status: 400 });
   }
 
   const supabase = createServiceClient();
+
+  const scope = await resolveEntryTokenScope(supabase, token);
+  if (!scope) {
+    return NextResponse.json({ error: 'Invalid token' }, { status: 404 });
+  }
+  if (!(await assertPatientInOrg(supabase, patientId, scope.orgId))) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
 
   const { data: card } = await supabase
     .from('payment_methods')

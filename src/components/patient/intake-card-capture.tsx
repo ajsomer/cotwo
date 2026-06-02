@@ -49,7 +49,9 @@ export function IntakeCardCapture({
   useEffect(() => {
     async function checkCard() {
       try {
-        const res = await fetch(`/api/patient/card?patient_id=${patientId}`);
+        const res = await fetch(
+          `/api/patient/card?token=${encodeURIComponent(token)}&patient_id=${patientId}`,
+        );
         const data = await res.json();
         if (data.card) setExistingCard(data.card);
       } catch {
@@ -59,7 +61,7 @@ export function IntakeCardCapture({
       }
     }
     checkCard();
-  }, [patientId]);
+  }, [patientId, token]);
 
   const markComplete = async () => {
     const res = await fetch(`/api/intake/${token}/complete-item`, {
@@ -101,12 +103,12 @@ export function IntakeCardCapture({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          token,
           patient_id: patientId,
           stripe_payment_method_id: mockPaymentMethodId,
           card_last_four: lastFour,
           card_brand: brand,
           card_expiry: expiry,
-          session_id: null,
         }),
       });
       const data = await res.json();

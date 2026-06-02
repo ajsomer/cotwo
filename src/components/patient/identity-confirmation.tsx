@@ -11,8 +11,7 @@ interface IdentityConfirmationProps {
   currentStep: number;
   totalSteps: number;
   existingPatients: PatientContact[];
-  sessionId: string | null;
-  orgId: string;
+  token: string;
   phoneNumber: string;
   onConfirmed: (patient: PatientContact) => void;
 }
@@ -26,8 +25,7 @@ export function IdentityConfirmation({
   currentStep,
   totalSteps,
   existingPatients,
-  sessionId,
-  orgId,
+  token,
   phoneNumber,
   onConfirmed,
 }: IdentityConfirmationProps) {
@@ -52,9 +50,8 @@ export function IdentityConfirmation({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          token,
           existing_patient_id: patientId,
-          session_id: sessionId,
-          org_id: orgId,
           phone_number: phoneNumber,
         }),
       });
@@ -87,11 +84,10 @@ export function IdentityConfirmation({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          token,
           first_name: firstName.trim(),
           last_name: lastName.trim(),
           date_of_birth: dob || null,
-          session_id: sessionId,
-          org_id: orgId,
           phone_number: phoneNumber,
         }),
       });

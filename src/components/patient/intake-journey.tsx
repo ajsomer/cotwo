@@ -298,14 +298,13 @@ export function IntakeJourney({
     // Onboarding demo: transition the session into 'waiting' and send the user
     // to the waiting room so they can be admitted by the clinician.
     if (journey.is_onboarding_demo && journey.session_entry_token && journey.session_id) {
-      const sessionId = journey.session_id;
       const entryToken = journey.session_entry_token;
       if (typeof window !== 'undefined') {
         void (async () => {
           await fetch('/api/patient/arrive', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session_id: sessionId, modality: 'telehealth' }),
+            body: JSON.stringify({ token: entryToken, modality: 'telehealth' }),
           });
           window.location.replace(`/waiting/${entryToken}`);
         })();

@@ -1,25 +1,45 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { broadcastSessionChange } from '@/lib/realtime/broadcast';
+import { resolveEntryTokenScope } from '@/lib/patient/entry-token';
+import { assertPatientInOrg } from '@/lib/auth/staff-access';
 
 /**
  * POST /api/patient/arrive
  * Transitions a session to 'waiting' (telehealth) or 'checked_in' (in-person).
- * For on-demand entries, creates the session first.
+ * For on-demand entries (room link token, no session yet), creates the session.
+ *
+ * Session/room/location all come from the entry token — never caller-supplied
+ * ids — so a patient can only arrive into the session/room their token names.
+ * Any patient_id supplied must belong to the token's org.
  */
 export async function POST(request: NextRequest) {
   const body = await request.json();
   const supabase = createServiceClient();
 
-  let sessionId = body.session_id;
+  if (!body.token) {
+    return NextResponse.json({ error: 'token required' }, { status: 400 });
+  }
 
-  // On-demand entry: create session now
-  if (!sessionId && body.room_id && body.location_id) {
+  const scope = await resolveEntryTokenScope(supabase, body.token);
+  if (!scope) {
+    return NextResponse.json({ error: 'Invalid token' }, { status: 404 });
+  }
+
+  if (body.patient_id && !(await assertPatientInOrg(supabase, body.patient_id, scope.orgId))) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
+
+  let sessionId = scope.sessionId;
+
+  // On-demand entry (room link token, no session yet): create the session
+  // using the token's room + location.
+  if (!sessionId && scope.roomId) {
     const { data: newSession, error: sessionError } = await supabase
       .from('sessions')
       .insert({
-        room_id: body.room_id,
-        location_id: body.location_id,
+        room_id: scope.roomId,
+        location_id: scope.locationId,
         status: 'waiting',
         patient_arrived: true,
         patient_arrived_at: new Date().toISOString(),
@@ -43,7 +63,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    await broadcastSessionChange(body.location_id, 'session_created', {
+    await broadcastSessionChange(scope.locationId, 'session_created', {
       session_id: sessionId,
     });
 
@@ -54,9 +74,9 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // Existing session: transition to waiting/checked_in
+  // No session and no room to create one from.
   if (!sessionId) {
-    return NextResponse.json({ error: 'session_id or room_id + location_id required' }, { status: 400 });
+    return NextResponse.json({ error: 'Token does not resolve to a session' }, { status: 400 });
   }
 
   const modality = body.modality || 'telehealth';

@@ -10,7 +10,7 @@ interface CardCaptureProps {
   currentStep: number;
   totalSteps: number;
   patientId: string;
-  sessionId: string | null;
+  token: string;
   stripeAccountId: string | null;
   onComplete: (cardInfo: { card_last_four: string; card_brand: string } | null) => void;
 }
@@ -28,7 +28,7 @@ export function CardCapture({
   currentStep,
   totalSteps,
   patientId,
-  sessionId,
+  token,
   stripeAccountId,
   onComplete,
 }: CardCaptureProps) {
@@ -47,7 +47,9 @@ export function CardCapture({
   useEffect(() => {
     async function checkCard() {
       try {
-        const res = await fetch(`/api/patient/card?patient_id=${patientId}`);
+        const res = await fetch(
+          `/api/patient/card?token=${encodeURIComponent(token)}&patient_id=${patientId}`,
+        );
         const data = await res.json();
         if (data.card) {
           setExistingCard(data.card);
@@ -59,7 +61,7 @@ export function CardCapture({
       }
     }
     checkCard();
-  }, [patientId]);
+  }, [patientId, token]);
 
   const saveCard = async () => {
     setError(null);
@@ -79,12 +81,12 @@ export function CardCapture({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          token,
           patient_id: patientId,
           stripe_payment_method_id: mockPaymentMethodId,
           card_last_four: lastFour,
           card_brand: brand,
           card_expiry: expiry,
-          session_id: sessionId,
         }),
       });
 

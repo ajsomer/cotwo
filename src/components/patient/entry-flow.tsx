@@ -89,8 +89,8 @@ export function EntryFlow({ context, token }: EntryFlowProps) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            token,
             patientId: patient.id,
-            orgId: context.org.id,
           }),
         });
         if (!res.ok) {
@@ -114,7 +114,7 @@ export function EntryFlow({ context, token }: EntryFlowProps) {
         advancePastIntake();
       }
     },
-    [context.org.id, advancePastIntake]
+    [token, advancePastIntake]
   );
 
   const handleIdentityConfirmed = useCallback(
@@ -141,8 +141,8 @@ export function EntryFlow({ context, token }: EntryFlowProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          token,
           patientId: confirmedPatient.id,
-          orgId: context.org.id,
         }),
       });
       const data = res.ok
@@ -165,7 +165,7 @@ export function EntryFlow({ context, token }: EntryFlowProps) {
       console.error('[entry-flow] post-completion re-check failed:', err);
       advancePastIntake();
     }
-  }, [confirmedPatient, context.org.id, advancePastIntake]);
+  }, [confirmedPatient, token, advancePastIntake]);
 
   const handleCardComplete = useCallback(() => {
     setStep('device_test');
@@ -177,18 +177,14 @@ export function EntryFlow({ context, token }: EntryFlowProps) {
       setError(null);
 
       try {
+        // The server derives session/room/location from the token; we only
+        // pass patient_id (validated against the token's org) and flags.
         const body: Record<string, unknown> = {
-          session_id: sessionId,
+          token,
           patient_id: patientId,
           device_tested: passed,
           modality: 'telehealth',
         };
-
-        // For on-demand entries, include room and location for session creation
-        if (!sessionId && context.room && context.location) {
-          body.room_id = context.room.id;
-          body.location_id = context.location.id;
-        }
 
         const res = await fetch('/api/patient/arrive', {
           method: 'POST',
@@ -281,8 +277,7 @@ export function EntryFlow({ context, token }: EntryFlowProps) {
           currentStep={currentStepNumber!}
           totalSteps={totalSteps}
           existingPatients={existingPatients}
-          sessionId={sessionId}
-          orgId={context.org.id}
+          token={token}
           phoneNumber={phoneNumber!}
           onConfirmed={handleIdentityConfirmed}
         />
@@ -329,7 +324,7 @@ export function EntryFlow({ context, token }: EntryFlowProps) {
           currentStep={currentStepNumber!}
           totalSteps={totalSteps}
           patientId={patientId!}
-          sessionId={sessionId}
+          token={token}
           stripeAccountId={context.location.stripe_account_id}
           onComplete={handleCardComplete}
         />
