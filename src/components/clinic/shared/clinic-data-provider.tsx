@@ -94,6 +94,25 @@ export function ClinicDataProvider({ children }: ClinicDataProviderProps) {
     };
   }, [locationId]);
 
+  // Prewarm location-scoped slices used by the most common pages. Pages still
+  // own their fetch-if-empty guards, but this makes route transitions closer to
+  // Tasks: by the time the user clicks into another section, the shared store
+  // often already has the structural data it needs.
+  useEffect(() => {
+    if (!locationId) return;
+    const store = getClinicStore();
+    if (store.locationId !== locationId) return;
+
+    if (!store.roomsLoaded) void store.refreshRooms(locationId);
+    if (!store.clinicianRoomIdsLoaded) {
+      void store.refreshClinicianRoomIds(locationId);
+    }
+    if (!store.sessionsLoaded) void store.refreshSessions(locationId);
+    if (!store.readinessLoadedPre || !store.readinessLoadedPost) {
+      void store.refreshReadiness(locationId);
+    }
+  }, [locationId]);
+
   // Org-wide socket room. Used for events that don't belong to a single
   // location — currently `submission_changed` fired by the standalone form
   // submit route. The server's join:org handler authorises against the
@@ -125,6 +144,21 @@ export function ClinicDataProvider({ children }: ClinicDataProviderProps) {
       socket.off("connect", onConnect);
       socket.off("submission_changed", onSubmissionChanged);
     };
+  }, [orgId]);
+
+  // Prewarm org-scoped configuration shared by Workflows, Tasks filters, and
+  // Forms. These are relatively stable and the store's loaded flags prevent
+  // repeated fetches in a warm tab.
+  useEffect(() => {
+    if (!orgId) return;
+    const store = getClinicStore();
+    if (store.orgId !== orgId) return;
+
+    if (!store.workflowsLoaded) void store.refreshWorkflows(orgId);
+    if (!store.formsLoaded) void store.refreshForms(orgId);
+    if (!store.standaloneSubmissionsLoaded) {
+      void store.refreshStandaloneSubmissions(orgId);
+    }
   }, [orgId]);
 
   // Location switch handler — only fires when the user actually changes

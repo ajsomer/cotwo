@@ -22,7 +22,17 @@ import { useRole } from "@/hooks/useRole";
 import { OnboardingOverlay } from "@/components/clinic/onboarding/onboarding-overlay";
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { OnboardingCoachMark } from "@/components/clinic/onboarding/onboarding-coach-mark";
-import { RunsheetSkeleton } from "./runsheet-skeleton";
+import { RoomContainerSkeleton } from "./room-container-skeleton";
+
+const EMPTY_SUMMARY = {
+  total: 0,
+  late: 0,
+  upcoming: 0,
+  waiting: 0,
+  active: 0,
+  complete: 0,
+  done: 0,
+};
 
 // Lazy-load heavy modals — only downloaded when first opened
 const ProcessFlowDynamic = dynamic(
@@ -337,23 +347,55 @@ export function RunsheetShell() {
   if (structuralLoading) {
     if (structuralError) {
       return (
-        <div className="p-6 max-w-[860px] mx-auto">
-          <div className="bg-white rounded-xl border border-gray-200 p-12 text-center space-y-4">
-            <p className="text-gray-800 font-medium">Couldn&apos;t load the run sheet</p>
-            <p className="text-sm text-gray-500">
-              Check your connection and try again.
-            </p>
-            <button
-              onClick={() => setRetryKey((k) => k + 1)}
-              className="inline-flex items-center gap-2 rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 transition-colors"
-            >
-              Retry
-            </button>
+        <PatientSlideOverProvider onOpenPatient={handleOpenPatient}>
+          <div className="p-6 max-w-[860px] mx-auto">
+            <div className="mb-4">
+              <RunsheetHeader
+                summary={EMPTY_SUMMARY}
+                showAddButton={false}
+                onSeed={handleSeed}
+                isSeeding={isSeeding}
+                onNuke={handleNuke}
+                isNuking={isNuking}
+              />
+            </div>
+            <div className="bg-white rounded-xl border border-gray-200 p-12 text-center space-y-4">
+              <p className="text-gray-800 font-medium">Couldn&apos;t load the run sheet</p>
+              <p className="text-sm text-gray-500">
+                Check your connection and try again.
+              </p>
+              <button
+                onClick={() => setRetryKey((k) => k + 1)}
+                className="inline-flex items-center gap-2 rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 transition-colors"
+              >
+                Retry
+              </button>
+            </div>
           </div>
-        </div>
+        </PatientSlideOverProvider>
       );
     }
-    return <RunsheetSkeleton />;
+    return (
+      <PatientSlideOverProvider onOpenPatient={handleOpenPatient}>
+        <div className="p-6 max-w-[860px] mx-auto">
+          <div className="mb-4">
+            <RunsheetHeader
+              summary={EMPTY_SUMMARY}
+              showAddButton={false}
+              onSeed={handleSeed}
+              isSeeding={isSeeding}
+              onNuke={handleNuke}
+              isNuking={isNuking}
+            />
+          </div>
+          <div className="space-y-3">
+            <RoomContainerSkeleton />
+            <RoomContainerSkeleton />
+            <RoomContainerSkeleton />
+          </div>
+        </div>
+      </PatientSlideOverProvider>
+    );
   }
 
   // Sessions-only failure: rooms are drawn, but session fetch didn't land.
