@@ -2,7 +2,10 @@
 
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
-import type { ReadinessAppointment } from "@/stores/clinic-store";
+import type {
+  ReadinessAppointment,
+  StandaloneSubmissionRow as StandaloneSubmissionRowType,
+} from "@/stores/clinic-store";
 import type { ReadinessPriority } from "@/lib/readiness/derived-state";
 import { Button } from "@/components/ui/button";
 import { ReadinessModeToggle } from "@/components/clinic/readiness/readiness-mode-toggle";
@@ -18,6 +21,13 @@ import { FormHandoffPanel } from "@/components/clinic/forms/form-handoff-panel";
 import { IntakePackageHandoffPanel } from "@/components/clinic/forms/intake-package-handoff-panel";
 import { StandaloneSubmissionPanel } from "@/components/clinic/forms/standalone-submission-panel";
 import { PatientContactCard } from "@/components/clinic/patient/patient-contact-card";
+import type { PatientSeed } from "@/components/clinic/patient/patient-contact-card/types";
+import {
+  prefetchReviewData,
+  formSubmissionUrl,
+  intakeHandoffUrl,
+  standaloneSubmissionUrl,
+} from "@/components/clinic/forms/review-prefetch-cache";
 
 const AddPatientPanel = dynamic(
   () =>
@@ -161,6 +171,9 @@ export function ReadinessShell() {
           type: "intake-handoff",
           appointment: appt,
           actionId: intakeAction.action_id,
+          // Match the panel payload's authoritative source
+          // (appointment_actions.completed_at); fall back to fired_at.
+          submittedAt: intakeAction.completed_at ?? intakeAction.fired_at ?? null,
           returnTo: "none",
         });
         return;
@@ -181,12 +194,55 @@ export function ReadinessShell() {
           actionId: formAction.action_id,
           formName: formAction.form_name ?? "Unknown form",
           submissionId: completedSubmission?.submission_id ?? null,
+          submittedAt:
+            completedSubmission?.completed_at ?? formAction.fired_at ?? null,
           returnTo: "none",
         });
       }
     }
     // at_risk "Nudge" would trigger SMS — stubbed for prototype
   }, []);
+
+  // Warm the review fetch on intent (hover / pointer-down of the action
+  // control), so the field data is often already present when the slide-over
+  // animates in. Mirrors handleActionButton's reviewable-action resolution but
+  // only prefetches; guards to genuinely reviewable rows with known IDs.
+  const handleActionIntent = useCallback((appt: ReadinessAppointment) => {
+    if (appt.priority !== "form_completed_needs_transcription") return;
+
+    const intakeAction = appt.actions.find(
+      (a) => a.action_type === "intake_package" && a.status === "completed"
+    );
+    if (intakeAction) {
+      prefetchReviewData(intakeHandoffUrl(appt.appointment_id));
+      return;
+    }
+    const formAction = appt.actions.find(
+      (a) => a.action_type === "deliver_form" && a.status === "completed"
+    );
+    if (formAction) {
+      const completedSubmission = appt.completed_form_submissions.find(
+        (s) =>
+          s.source === "assignment" &&
+          (s.form_name === formAction.form_name ||
+            s.form_name === (formAction.form_name ?? "Unknown form"))
+      );
+      prefetchReviewData(
+        formSubmissionUrl({
+          appointmentId: appt.appointment_id,
+          formName: formAction.form_name ?? "Unknown form",
+          submissionId: completedSubmission?.submission_id ?? null,
+        })
+      );
+    }
+  }, []);
+
+  const handleReviewStandaloneIntent = useCallback(
+    (row: StandaloneSubmissionRowType) => {
+      prefetchReviewData(standaloneSubmissionUrl(row.id));
+    },
+    []
+  );
 
   const handleTaskResolve = useCallback(async () => {
     if (!taskResolving) return;
@@ -204,15 +260,28 @@ export function ReadinessShell() {
   }, [locationId, refreshReadiness]);
 
   const handlePatientDetail = useCallback(
-    (appointment: ReadinessAppointment | null, patientId: string) => {
-      setActivePanel({ type: "detail", appointment, patientId });
+    (
+      appointment: ReadinessAppointment | null,
+      patientId: string,
+      patientSeed?: PatientSeed | null
+    ) => {
+      setActivePanel({ type: "detail", appointment, patientId, patientSeed });
     },
     []
   );
 
-  const handleReviewStandalone = useCallback((submissionId: string) => {
-    setActivePanel({ type: "standalone-submission", submissionId });
-  }, []);
+  const handleReviewStandalone = useCallback(
+    (row: StandaloneSubmissionRowType) => {
+      setActivePanel({
+        type: "standalone-submission",
+        submissionId: row.id,
+        seedFormName: row.form_name,
+        seedPatientName: row.patient_name,
+        seedCreatedAt: row.created_at,
+      });
+    },
+    []
+  );
 
   if (!loaded) {
     return (
@@ -288,7 +357,9 @@ export function ReadinessShell() {
         now={now}
         onPatientDetail={handlePatientDetail}
         onAction={handleActionButton}
+        onActionIntent={handleActionIntent}
         onReviewStandalone={handleReviewStandalone}
+        onReviewStandaloneIntent={handleReviewStandaloneIntent}
       />
 
       {/* Panels */}
@@ -305,6 +376,7 @@ export function ReadinessShell() {
           open
           patientId={activePanel.patientId || null}
           appointment={activePanel.appointment}
+          patientSeed={activePanel.patientSeed}
           onClose={() => setActivePanel(null)}
           onDeleted={handleSaved}
         />
@@ -314,6 +386,7 @@ export function ReadinessShell() {
           actionId={activePanel.actionId}
           formName={activePanel.formName}
           submissionId={activePanel.submissionId}
+          submittedAt={activePanel.submittedAt}
           patientName={`${activePanel.appointment.patient_first_name} ${activePanel.appointment.patient_last_name}`}
           appointmentId={activePanel.appointment.appointment_id}
           onClose={() => {
@@ -335,6 +408,7 @@ export function ReadinessShell() {
         <IntakePackageHandoffPanel
           appointmentId={activePanel.appointment.appointment_id}
           actionId={activePanel.actionId}
+          submittedAt={activePanel.submittedAt}
           patientName={`${activePanel.appointment.patient_first_name} ${activePanel.appointment.patient_last_name}`}
           onClose={() => {
             const { returnTo, appointment } = activePanel;
@@ -355,6 +429,9 @@ export function ReadinessShell() {
       {activePanel?.type === "standalone-submission" && orgId && (
         <StandaloneSubmissionPanel
           submissionId={activePanel.submissionId}
+          seedFormName={activePanel.seedFormName}
+          seedPatientName={activePanel.seedPatientName}
+          seedCreatedAt={activePanel.seedCreatedAt}
           onClose={() => setActivePanel(null)}
           onActioned={() => {
             // Submission was marked reviewed or archived. Close the panel

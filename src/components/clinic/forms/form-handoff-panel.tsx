@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { SlideOver } from "@/components/ui/slide-over";
+import {
+  fetchReviewData,
+  formSubmissionUrl,
+} from "./review-prefetch-cache";
 
 interface FormHandoffPanelProps {
   actionId: string;
@@ -9,6 +13,8 @@ interface FormHandoffPanelProps {
   submissionId?: string | null;
   patientName: string;
   appointmentId: string;
+  /** Row's completed_at — seeds the header timestamp before the fetch lands. */
+  submittedAt?: string | null;
   onClose: () => void;
   onTranscribed: () => void;
 }
@@ -47,6 +53,7 @@ export function FormHandoffPanel({
   submissionId: initialSubmissionId,
   patientName,
   appointmentId,
+  submittedAt: seedSubmittedAt = null,
   onClose,
   onTranscribed,
 }: FormHandoffPanelProps) {
@@ -54,27 +61,29 @@ export function FormHandoffPanel({
   const [loading, setLoading] = useState(true);
   const [marking, setMarking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [submittedAt, setSubmittedAt] = useState<string | null>(null);
+  // Seed from the row's completed_at; the fetched value overrides once present.
+  const [submittedAt, setSubmittedAt] = useState<string | null>(
+    seedSubmittedAt
+  );
   const [loadedSubmissionId, setLoadedSubmissionId] = useState<string | null>(null);
 
   const loadFormData = useCallback(async () => {
     try {
-      // Fetch form submission for this appointment
-      const params = new URLSearchParams({
-        appointment_id: appointmentId,
-        form_name: formName,
-      });
-      if (initialSubmissionId) {
-        params.set("submission_id", initialSubmissionId);
-      }
-      const res = await fetch(
-        `/api/readiness/form-submission?${params.toString()}`
+      // Reads an in-flight/resolved prefetch from the shared cache when one was
+      // warmed on hover; otherwise fetches fresh. URL must match the prefetch
+      // site's exactly — both go through formSubmissionUrl.
+      const res = await fetchReviewData(
+        formSubmissionUrl({
+          appointmentId,
+          formName,
+          submissionId: initialSubmissionId,
+        })
       );
 
       if (res.ok) {
         const data = await res.json();
         setFields(data.fields ?? []);
-        setSubmittedAt(data.submitted_at ?? null);
+        if (data.submitted_at) setSubmittedAt(data.submitted_at);
         setLoadedSubmissionId(data.submission_id ?? null);
       } else {
         // If no dedicated endpoint exists, show a message

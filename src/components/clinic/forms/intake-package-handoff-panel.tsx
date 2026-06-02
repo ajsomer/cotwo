@@ -2,11 +2,19 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { SlideOver } from "@/components/ui/slide-over";
+import { fetchReviewData, intakeHandoffUrl } from "./review-prefetch-cache";
 
 interface IntakePackageHandoffPanelProps {
   appointmentId: string;
   actionId: string;
   patientName: string;
+  /**
+   * Completion time of the intake_package action — seeds the header timestamp
+   * before the fetch lands. A package can hold multiple forms with differing
+   * per-form completion times, so the header uses the action's time, not a
+   * single form's.
+   */
+  submittedAt?: string | null;
   onClose: () => void;
   onTranscribed: () => void;
 }
@@ -70,6 +78,7 @@ export function IntakePackageHandoffPanel({
   appointmentId,
   actionId,
   patientName,
+  submittedAt: seedSubmittedAt = null,
   onClose,
   onTranscribed,
 }: IntakePackageHandoffPanelProps) {
@@ -82,9 +91,7 @@ export function IntakePackageHandoffPanel({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(
-        `/api/readiness/intake-handoff?appointment_id=${appointmentId}`
-      );
+      const res = await fetchReviewData(intakeHandoffUrl(appointmentId));
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         setError(data.error ?? "Failed to load intake package");
@@ -126,7 +133,8 @@ export function IntakePackageHandoffPanel({
     }
   };
 
-  const submittedAt = payload?.action.completed_at;
+  // Fetched action time overrides the seed once present.
+  const submittedAt = payload?.action.completed_at ?? seedSubmittedAt;
 
   return (
     <SlideOver open onClose={onClose} title="" width="w-[420px]">

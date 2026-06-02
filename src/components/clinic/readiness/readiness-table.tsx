@@ -9,6 +9,7 @@ import {
   type ReadinessPriority,
   isAttentionPriority,
 } from "@/lib/readiness/derived-state";
+import type { PatientSeed } from "@/components/clinic/patient/patient-contact-card/types";
 import { Badge } from "@/components/ui/badge";
 import { PatientRow } from "./patient-row";
 import { StandaloneSubmissionRow } from "./standalone-submission-row";
@@ -20,10 +21,13 @@ interface ReadinessTableProps {
   now: Date;
   onPatientDetail: (
     appointment: ReadinessAppointment | null,
-    patientId: string
+    patientId: string,
+    patientSeed?: PatientSeed | null
   ) => void;
   onAction: (appointment: ReadinessAppointment) => void;
-  onReviewStandalone: (submissionId: string) => void;
+  onActionIntent: (appointment: ReadinessAppointment) => void;
+  onReviewStandalone: (row: StandaloneSubmissionRowType) => void;
+  onReviewStandaloneIntent: (row: StandaloneSubmissionRowType) => void;
 }
 
 export function ReadinessTable({
@@ -32,7 +36,9 @@ export function ReadinessTable({
   now,
   onPatientDetail,
   onAction,
+  onActionIntent,
   onReviewStandalone,
+  onReviewStandaloneIntent,
 }: ReadinessTableProps) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [manuallyCollapsed, setManuallyCollapsed] = useState<Set<string>>(
@@ -158,8 +164,17 @@ export function ReadinessTable({
                   <StandaloneSubmissionRow
                     key={row.id}
                     row={row}
-                    onPatientClick={() => onPatientDetail(null, row.patient_id)}
-                    onReview={() => onReviewStandalone(row.id)}
+                    onPatientClick={() =>
+                      onPatientDetail(null, row.patient_id, {
+                        id: row.patient_id,
+                        firstName: row.patient_first_name,
+                        lastName: row.patient_last_name,
+                        // Standalone rows carry no phone — omit so the contact
+                        // section shimmers rather than showing a false "none".
+                      })
+                    }
+                    onReview={() => onReviewStandalone(row)}
+                    onReviewIntent={() => onReviewStandaloneIntent(row)}
                   />
                 ))}
                 {items.map((appt) => {
@@ -184,6 +199,7 @@ export function ReadinessTable({
                         onPatientDetail(appt, appt.patient_id ?? "")
                       }
                       onAction={() => onAction(appt)}
+                      onActionIntent={() => onActionIntent(appt)}
                     />
                   );
                 })}

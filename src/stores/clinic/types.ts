@@ -57,6 +57,8 @@ export interface StandaloneSubmissionRow {
   form_name: string;
   patient_id: string;
   patient_name: string;
+  patient_first_name: string;
+  patient_last_name: string;
   submission_source:
     | "standalone_public"
     | "standalone_sms"
@@ -77,6 +79,7 @@ export interface WorkflowAction {
   status: string;
   scheduled_for: string;
   fired_at: string | null;
+  completed_at: string | null;
   error_message: string | null;
   form_name: string | null;
   offset_minutes: number;

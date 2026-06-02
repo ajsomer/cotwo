@@ -6,6 +6,7 @@ import {
   type ReadinessPriority,
 } from "@/lib/readiness/derived-state";
 import { getPostActionLabel } from "@/lib/workflows/types";
+import { getActionLabel } from "./workflow-actions";
 import type {
   CompletedFormSubmission,
   ReadinessAppointment,
@@ -89,7 +90,7 @@ export const fetchReadinessSlice = cache(async (
   const runIds = locationApptIds.flatMap((id) => runsByAppointment.get(id) ?? []);
   const { data: actions } = await supabase
     .from("appointment_actions")
-    .select("id, appointment_id, action_block_id, workflow_run_id, status, scheduled_for, fired_at, error_message, updated_at, session_id, config, form_id, resolved_at, resolved_by, resolution_note")
+    .select("id, appointment_id, action_block_id, workflow_run_id, status, scheduled_for, fired_at, completed_at, error_message, updated_at, session_id, config, form_id, resolved_at, resolved_by, resolution_note")
     .in("workflow_run_id", runIds);
 
   const blockIds = [...new Set((actions ?? []).map((a) => a.action_block_id))];
@@ -388,6 +389,7 @@ export const fetchReadinessSlice = cache(async (
       status: action.status,
       scheduled_for: action.scheduled_for,
       fired_at: action.fired_at,
+      completed_at: action.completed_at ?? null,
       error_message: action.error_message,
       form_name: formName,
       offset_minutes: block?.offset_minutes ?? 0,
@@ -468,33 +470,4 @@ function computePackageProgress(
   completed += Object.keys(formsCompleted).length;
 
   return { totalItems: total, completedItems: completed };
-}
-
-function getActionLabel(actionType: string, formName?: string): string {
-  switch (actionType) {
-    case "deliver_form":
-      return formName ? `Send form: ${formName}` : "Send form";
-    case "send_reminder":
-      return "Send reminder SMS";
-    case "send_sms":
-      return "Send SMS";
-    case "capture_card":
-      return "Capture card on file";
-    case "verify_contact":
-      return "Verify contact details";
-    case "send_file":
-      return "Send file";
-    case "send_rebooking_nudge":
-      return "Send rebooking nudge";
-    case "intake_package":
-      return "Intake package";
-    case "intake_reminder":
-      return "Intake reminder";
-    case "add_to_runsheet":
-      return "Add to run sheet";
-    case "task":
-      return "Task";
-    default:
-      return actionType;
-  }
 }

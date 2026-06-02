@@ -110,6 +110,10 @@ export async function GET(request: NextRequest) {
       patient_name: patient
         ? `${patient.first_name} ${patient.last_name}`
         : "Unknown patient",
+      // Carry first/last separately (not split from the display string) so the
+      // contact card can build a real PatientSeed.
+      patient_first_name: patient?.first_name ?? "",
+      patient_last_name: patient?.last_name ?? "",
       submission_source: r.submission_source,
       review_status: r.review_status,
       duplicate: serverMeta?.duplicate_suspected

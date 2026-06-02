@@ -2,9 +2,20 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { SlideOver } from "@/components/ui/slide-over";
+import {
+  fetchReviewData,
+  standaloneSubmissionUrl,
+} from "./review-prefetch-cache";
 
 interface StandaloneSubmissionPanelProps {
   submissionId: string;
+  // Optional seeds from the dashboard row — render the header before the
+  // detail fetch returns instead of showing "—". The fetched `detail`
+  // overrides once present. Note: the row carries `created_at`, which maps to
+  // the panel's `detail.created_at` submitted timestamp.
+  seedFormName?: string | null;
+  seedPatientName?: string | null;
+  seedCreatedAt?: string | null;
   onClose: () => void;
   onActioned: () => void;
 }
@@ -78,6 +89,9 @@ function CopyButton({ text, small }: { text: string; small?: boolean }) {
  */
 export function StandaloneSubmissionPanel({
   submissionId,
+  seedFormName = null,
+  seedPatientName = null,
+  seedCreatedAt = null,
   onClose,
   onActioned,
 }: StandaloneSubmissionPanelProps) {
@@ -90,7 +104,7 @@ export function StandaloneSubmissionPanel({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/forms/standalone/submissions/${submissionId}`);
+      const res = await fetchReviewData(standaloneSubmissionUrl(submissionId));
       if (!res.ok) {
         setError("Couldn't load submission.");
         setDetail(null);
@@ -139,7 +153,7 @@ export function StandaloneSubmissionPanel({
     <div className="border-b border-gray-200 px-5 py-4">
       <div className="flex items-start justify-between gap-3">
         <h2 className="text-sm font-semibold text-gray-800 min-w-0">
-          Form completed: {detail?.form_name ?? "—"}
+          Form completed: {detail?.form_name ?? seedFormName ?? "—"}
         </h2>
         <button
           onClick={onClose}
@@ -162,17 +176,20 @@ export function StandaloneSubmissionPanel({
         </button>
       </div>
       <p className="text-xs text-gray-500 mt-0.5">
-        {detail?.patient.name ?? "Unknown patient"}
-        {detail?.created_at && (
+        {detail?.patient.name ?? seedPatientName ?? "Unknown patient"}
+        {(detail?.created_at ?? seedCreatedAt) && (
           <>
             {" "}
             · Submitted{" "}
-            {new Date(detail.created_at).toLocaleString("en-AU", {
-              day: "numeric",
-              month: "short",
-              hour: "numeric",
-              minute: "2-digit",
-            })}
+            {new Date(detail?.created_at ?? seedCreatedAt!).toLocaleString(
+              "en-AU",
+              {
+                day: "numeric",
+                month: "short",
+                hour: "numeric",
+                minute: "2-digit",
+              }
+            )}
           </>
         )}
       </p>

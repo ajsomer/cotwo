@@ -5,6 +5,12 @@ import type { PatientDetails } from "./types";
 
 interface DemographicsSectionProps {
   details: PatientDetails;
+  // While the summary fetch is in flight, DOB / cards / phones (when not
+  // seeded from the row) shimmer instead of rendering as a false "none".
+  summaryLoading?: boolean;
+  // If the summary fetch failed, show a degraded note rather than a false
+  // "none" for the sections it would have populated.
+  summaryError?: boolean;
   onTakePayment: () => void;
   onSendSms: () => void;
   // Readiness mode adds a delete affordance below the quick actions.
@@ -13,10 +19,13 @@ interface DemographicsSectionProps {
 
 export function DemographicsSection({
   details,
+  summaryLoading = false,
+  summaryError = false,
   onTakePayment,
   onSendSms,
   readinessActions,
 }: DemographicsSectionProps) {
+  const hasPhones = details.phone_numbers.length > 0;
   return (
     <>
       <div className="flex flex-col items-center gap-2">
@@ -29,11 +38,13 @@ export function DemographicsSection({
         <h3 className="text-xl font-semibold text-gray-800">
           {details.patient.first_name} {details.patient.last_name}
         </h3>
-        {details.patient.date_of_birth && (
+        {details.patient.date_of_birth ? (
           <p className="text-sm text-gray-500">
             DOB: {formatDob(details.patient.date_of_birth)}
           </p>
-        )}
+        ) : summaryLoading ? (
+          <div className="h-4 w-28 rounded bg-gray-100 animate-pulse" />
+        ) : null}
 
         {/* Quick actions */}
         <div className="flex items-center gap-2 pt-1">
@@ -61,36 +72,55 @@ export function DemographicsSection({
         <h4 className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
           Contact
         </h4>
-        <div className="space-y-1.5">
-          {details.phone_numbers.map((p) => (
-            <div
-              key={p.phone_number}
-              className="flex items-center gap-2 rounded-lg bg-gray-50 px-3 py-2"
-            >
-              <PhoneIcon />
-              <span className="text-sm text-gray-800">
-                {formatPhoneNumber(p.phone_number)}
-              </span>
-              {details.phone_numbers.length > 1 && p.is_primary && (
-                <span className="text-[10px] font-medium uppercase text-gray-400 ml-auto">
-                  Primary
+        {!hasPhones && summaryLoading ? (
+          <div className="h-10 w-full rounded-lg bg-gray-100 animate-pulse" />
+        ) : !hasPhones && summaryError ? (
+          <p className="text-sm text-gray-400">Couldn&apos;t load contact details.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {details.phone_numbers.map((p) => (
+              <div
+                key={p.phone_number}
+                className="flex items-center gap-2 rounded-lg bg-gray-50 px-3 py-2"
+              >
+                <PhoneIcon />
+                <span className="text-sm text-gray-800">
+                  {formatPhoneNumber(p.phone_number)}
                 </span>
-              )}
-            </div>
-          ))}
-        </div>
+                {details.phone_numbers.length > 1 && p.is_primary && (
+                  <span className="text-[10px] font-medium uppercase text-gray-400 ml-auto">
+                    Primary
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     </>
   );
 }
 
-export function PaymentSection({ details }: { details: PatientDetails }) {
+export function PaymentSection({
+  details,
+  summaryLoading = false,
+  summaryError = false,
+}: {
+  details: PatientDetails;
+  summaryLoading?: boolean;
+  summaryError?: boolean;
+}) {
+  const hasCards = details.payment_methods.length > 0;
   return (
     <section>
       <h4 className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
         Payment
       </h4>
-      {details.payment_methods.length > 0 ? (
+      {summaryLoading && !hasCards ? (
+        <div className="h-10 w-full rounded-lg bg-gray-100 animate-pulse" />
+      ) : summaryError && !hasCards ? (
+        <p className="text-sm text-gray-400">Couldn&apos;t load card details.</p>
+      ) : hasCards ? (
         <div className="space-y-1.5">
           {details.payment_methods.map((pm, i) => (
             <div

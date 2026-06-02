@@ -1,5 +1,6 @@
 import type { ReadinessAppointment } from "@/stores/clinic-store";
 import type { ReadinessPriority } from "@/lib/readiness/derived-state";
+import type { PatientSeed } from "@/components/clinic/patient/patient-contact-card/types";
 
 export type ActivePanel =
   | { type: "add-patient" }
@@ -10,6 +11,10 @@ export type ActivePanel =
       // appointment is null; PatientContactCard runs in patientId-only mode.
       appointment: ReadinessAppointment | null;
       patientId: string;
+      // Generic seed for instant-open when there's no readiness appointment
+      // (e.g. standalone form rows). Lets the panel paint the header without a
+      // network wait.
+      patientSeed?: PatientSeed | null;
     }
   | {
       type: "form-handoff";
@@ -17,6 +22,8 @@ export type ActivePanel =
       actionId: string;
       formName: string;
       submissionId: string | null;
+      /** Row's completed_at, seeds the header timestamp before fetch. */
+      submittedAt: string | null;
       /** What to show on close. "detail" reopens the patient card, "none" closes everything. */
       returnTo: "detail" | "none";
     }
@@ -24,9 +31,18 @@ export type ActivePanel =
       type: "intake-handoff";
       appointment: ReadinessAppointment;
       actionId: string;
+      /** Intake action's completion time, seeds the header timestamp. */
+      submittedAt: string | null;
       returnTo: "detail" | "none";
     }
-  | { type: "standalone-submission"; submissionId: string }
+  | {
+      type: "standalone-submission";
+      submissionId: string;
+      // Row seeds so the panel header renders before the detail fetch.
+      seedFormName: string | null;
+      seedPatientName: string | null;
+      seedCreatedAt: string | null;
+    }
   | null;
 
 export interface PrioritySlot {

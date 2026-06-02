@@ -12,6 +12,11 @@ interface AppointmentsSectionProps {
   activeAppointmentId: string | null;
   activeSessionId: string | null;
   isReadinessMode: boolean;
+  // The appointments timeline + count come from the deferred history fetch.
+  // While loading, show a skeleton; on error, a degraded note (never a false
+  // "No appointments yet").
+  historyLoading?: boolean;
+  historyError?: boolean;
 }
 
 export function AppointmentsSection({
@@ -20,6 +25,8 @@ export function AppointmentsSection({
   activeAppointmentId,
   activeSessionId,
   isReadinessMode,
+  historyLoading = false,
+  historyError = false,
 }: AppointmentsSectionProps) {
   const orderedAppointments = useMemo(
     () =>
@@ -41,7 +48,16 @@ export function AppointmentsSection({
       <h4 className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
         Appointments
       </h4>
-      {orderedAppointments.length === 0 ? (
+      {orderedAppointments.length === 0 && historyLoading ? (
+        <div className="space-y-1.5">
+          <div className="h-12 w-full rounded-lg bg-gray-100 animate-pulse" />
+          <div className="h-12 w-full rounded-lg bg-gray-100 animate-pulse" />
+        </div>
+      ) : orderedAppointments.length === 0 && historyError ? (
+        <p className="text-sm text-gray-400">
+          Couldn&apos;t load appointment history.
+        </p>
+      ) : orderedAppointments.length === 0 ? (
         <p className="text-sm text-gray-400">No appointments yet</p>
       ) : (
         <div className="space-y-1.5">

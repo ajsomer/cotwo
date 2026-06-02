@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { ActionTypeIcon } from "@/components/clinic/shared/action-type-icon";
 import type { ActionType } from "@/lib/workflows/types";
 import type { EnrichedSession } from "@/lib/supabase/types";
-import type { ReadinessAppointment } from "@/stores/clinic-store";
+import type { ReadinessAppointment, WorkflowAction } from "@/stores/clinic-store";
 import {
   ACTION_STATUS_BADGE,
   type CompletedFormDisplayRow,
@@ -13,12 +13,14 @@ import {
 } from "./types";
 
 interface WorkflowTimelineProps {
-  appointment: ReadinessAppointment;
+  // Dumb component: takes a flat action list and renders the timeline. No
+  // knowledge of readiness vs run-sheet. Both call sites pass their array.
+  actions: WorkflowAction[];
 }
 
-export function WorkflowTimeline({ appointment }: WorkflowTimelineProps) {
+export function WorkflowTimeline({ actions }: WorkflowTimelineProps) {
   // Sort by offset descending — matches the original ordering
-  const sortedActions = [...appointment.actions].sort(
+  const sortedActions = [...actions].sort(
     (a, b) => b.offset_minutes - a.offset_minutes
   );
 
@@ -114,6 +116,12 @@ export function CompletedFormsList({
 
   if (completedForms.length === 0) return null;
 
+  // Non-readiness mode reads from the bounded /history list; flag when older
+  // forms exist beyond the fetched window. Readiness reads from the row, which
+  // isn't bounded, so the note never applies there.
+  const showTruncationNote =
+    !isReadinessMode && !!details.form_history_truncated;
+
   return (
     <section>
       <h4 className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
@@ -150,6 +158,11 @@ export function CompletedFormsList({
           </button>
         ))}
       </div>
+      {showTruncationNote && (
+        <p className="text-[11px] text-gray-400 mt-2">
+          Earlier forms not shown — showing the most recent.
+        </p>
+      )}
     </section>
   );
 }

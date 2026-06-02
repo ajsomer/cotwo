@@ -10,12 +10,15 @@ interface StandaloneSubmissionRowProps {
   row: StandaloneSubmissionRowType;
   onPatientClick: () => void;
   onReview: () => void;
+  /** Warm the detail fetch on hover / pointer-down of the Review control. */
+  onReviewIntent?: () => void;
 }
 
 export function StandaloneSubmissionRow({
   row,
   onPatientClick,
   onReview,
+  onReviewIntent,
 }: StandaloneSubmissionRowProps) {
   const sourceLabel =
     STANDALONE_SOURCE_LABEL[row.submission_source] ?? row.submission_source;
@@ -78,6 +81,8 @@ export function StandaloneSubmissionRow({
                 e.stopPropagation();
                 onReview();
               }}
+              onMouseEnter={onReviewIntent}
+              onPointerDown={onReviewIntent}
             >
               Review
             </Button>

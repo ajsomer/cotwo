@@ -459,6 +459,20 @@ export function RunsheetShell() {
       <PatientContactCard
         session={contactSession}
         patientId={contactPatientId}
+        // Seed the shell from the run-sheet row so the header (name, avatar,
+        // phone) paints instantly — same staged treatment as readiness. Phone
+        // comes from the appointment's contact number; /summary makes the
+        // authoritative phone list override it.
+        patientSeed={
+          contactSession?.patient_id
+            ? {
+                id: contactSession.patient_id,
+                firstName: contactSession.patient_first_name ?? "",
+                lastName: contactSession.patient_last_name ?? "",
+                primaryPhone: contactSession.phone_number,
+              }
+            : null
+        }
         open={!!contactSessionId || !!contactPatientId}
         onClose={() => {
           setContactSessionId(null);

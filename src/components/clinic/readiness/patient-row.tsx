@@ -28,6 +28,8 @@ interface PatientRowProps {
   onToggle: () => void;
   onNameClick: () => void;
   onAction: () => void;
+  /** Warm the review fetch on hover / pointer-down of the action control. */
+  onActionIntent?: () => void;
 }
 
 export function PatientRow({
@@ -39,6 +41,7 @@ export function PatientRow({
   onToggle,
   onNameClick,
   onAction,
+  onActionIntent,
 }: PatientRowProps) {
   const priority = appointment.priority as ReadinessPriority;
   const actionBtn = getActionButtonConfig(priority);
@@ -135,6 +138,8 @@ export function PatientRow({
                   e.stopPropagation();
                   onAction();
                 }}
+                onMouseEnter={onActionIntent}
+                onPointerDown={onActionIntent}
               >
                 {actionBtn.label}
               </Button>
