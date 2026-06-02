@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { getAuthenticatedUserId } from "@/lib/auth/staff-access";
 import { createServiceClient } from "@/lib/supabase/service";
 import { NextResponse, type NextRequest } from "next/server";
 
@@ -6,9 +6,8 @@ const STAGE_ORDER = ["not_started", "test_session_sent", "call_active", "call_co
 type OnboardingStage = (typeof STAGE_ORDER)[number];
 
 export async function POST(request: NextRequest) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const userId = await getAuthenticatedUserId();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await request.json();
   const { to } = body as { to?: OnboardingStage };
@@ -22,7 +21,7 @@ export async function POST(request: NextRequest) {
   const { data: userRecord } = await service
     .from("users")
     .select("onboarding_stage")
-    .eq("id", user.id)
+    .eq("id", userId)
     .single();
 
   const currentStage = userRecord?.onboarding_stage as OnboardingStage | undefined;
@@ -37,7 +36,7 @@ export async function POST(request: NextRequest) {
   await service
     .from("users")
     .update({ onboarding_stage: to })
-    .eq("id", user.id);
+    .eq("id", userId);
 
   return NextResponse.json({ ok: true, stage: to });
 }

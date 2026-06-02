@@ -1,16 +1,13 @@
-import { createClient } from "@/lib/supabase/server";
+import { getAuthenticatedUserId } from "@/lib/auth/staff-access";
 import { createServiceClient } from "@/lib/supabase/service";
 import { generateSlug } from "@/lib/utils/slug";
 import { seedDefaultWorkflows } from "@/lib/workflows/seed-defaults";
 import { NextResponse, type NextRequest } from "next/server";
 
 export async function POST(request: NextRequest) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const userId = await getAuthenticatedUserId();
 
-  if (!user) {
+  if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -62,7 +59,7 @@ export async function POST(request: NextRequest) {
   }
 
   const { error: saError } = await service.from("staff_assignments").insert({
-    user_id: user.id,
+    user_id: userId,
     location_id: location.id,
     role: "clinic_owner",
     employment_type: "full_time",

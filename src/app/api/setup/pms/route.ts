@@ -1,6 +1,5 @@
-import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { resolveDefaultStaffOrg } from "@/lib/auth/staff-access";
+import { resolveDefaultStaffOrg, getAuthenticatedUserId } from "@/lib/auth/staff-access";
 import { seedDefaultWorkflows } from "@/lib/workflows/seed-defaults";
 import { NextResponse, type NextRequest } from "next/server";
 
@@ -39,9 +38,8 @@ const GENTU_CLINICIANS = [
 ];
 
 export async function POST(request: NextRequest) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const userId = await getAuthenticatedUserId();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await request.json();
   const { provider, skipped } = body as { provider: string | null; skipped: boolean };
@@ -49,7 +47,7 @@ export async function POST(request: NextRequest) {
   const service = createServiceClient();
 
   // Setup flow: no scope is supplied, so resolve the user's default org.
-  const resolved = await resolveDefaultStaffOrg(user.id);
+  const resolved = await resolveDefaultStaffOrg(userId);
   if (!resolved) return NextResponse.json({ error: "No org found." }, { status: 400 });
   const { orgId, locationId } = resolved;
 

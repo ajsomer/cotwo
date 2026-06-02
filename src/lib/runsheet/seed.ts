@@ -1,7 +1,7 @@
 "use server";
 
 import { createClient as createServerClient } from "@supabase/supabase-js";
-import { createClient } from "@/lib/supabase/server";
+import { getAuthenticatedUserId } from "@/lib/auth/staff-access";
 
 /**
  * Seeds the database with demo data for the run sheet.
@@ -50,13 +50,10 @@ export async function seedDemoData() {
     return { success: false, error: "Missing SUPABASE_SERVICE_ROLE_KEY" };
   }
 
-  // Get the authenticated user's org and location
-  const authClient = await createClient();
-  const {
-    data: { user },
-  } = await authClient.auth.getUser();
+  // Get the authenticated user's org and location (local cookie verification).
+  const userId = await getAuthenticatedUserId();
 
-  if (!user) {
+  if (!userId) {
     return { success: false, error: "Not authenticated" };
   }
 
@@ -77,7 +74,7 @@ export async function seedDemoData() {
         )
       )
     `)
-    .eq("user_id", user.id)
+    .eq("user_id", userId)
     .limit(1)
     .single();
 
@@ -158,7 +155,7 @@ export async function seedDemoData() {
 
     const clinicianIds = (clinicians ?? []).map((c) => c.user_id as string);
     if (clinicianIds.length === 0) {
-      clinicianIds.push(user.id); // fallback to the current user
+      clinicianIds.push(userId); // fallback to the current user
     }
 
     // Determine current time in the clinic's timezone

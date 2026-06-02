@@ -15,6 +15,73 @@ export type StaffAccessResult =
   | { ok: false; status: 401 | 404 };
 
 /**
+ * Resolve the caller's user id from the cookie session, verified LOCALLY.
+ *
+ * `getClaims()` validates the JWT signature against the project's cached
+ * signing key (JWKS for asymmetric keys, or the shared secret for legacy
+ * HS256) — no per-call network round-trip to the Supabase Auth server, unlike
+ * `getUser()`. The returned `sub` claim is the user id (`users.id =
+ * auth.users.id`; see the auth model in CLAUDE.md), which is all the gates
+ * below consume.
+ *
+ * This is the single identity-resolution point for every staff gate; keep all
+ * of them routed through it so the auth path stays consistent (no mix of
+ * network-verifying and local-verifying reads). Returns null when the cookie
+ * is absent or the token fails local verification.
+ *
+ * Exported for the setup/onboarding/livekit routes that only need the user id
+ * and previously called `getUser()` directly — route them here too so there's
+ * no network-verifying read left anywhere.
+ */
+export async function getAuthenticatedUserId(): Promise<string | null> {
+  const ssr = await createServerClient();
+  const { data, error } = await ssr.auth.getClaims();
+  const sub = data?.claims?.sub;
+  if (error || !sub) return null;
+  return sub;
+}
+
+// ---------------------------------------------------------------------------
+// Patient access-decision cache.
+//
+// The contact card now opens via two routes (/summary + /history), each of
+// which runs assertStaffCanAccessPatient. The auth half is already local
+// (getClaims), but the org-membership query would otherwise run on both. Cache
+// the ALLOW decision briefly so the second route — and quick reopens — reuse
+// it. Decision-only (a resolved StaffAccessResult), per-server-instance, short
+// TTL. Never cache the patient's data here.
+//
+// Only successful (ok:true) decisions are cached: a denial may be transient
+// (a just-added assignment), and not caching it keeps the failure path honest.
+// ---------------------------------------------------------------------------
+const PATIENT_ACCESS_TTL_MS = 30_000;
+const patientAccessCache = new Map<
+  string,
+  { expiresAt: number; result: StaffAccessResult }
+>();
+
+function getCachedPatientAccess(
+  userId: string,
+  patientId: string,
+): StaffAccessResult | null {
+  const entry = patientAccessCache.get(`${userId}:${patientId}`);
+  if (entry && entry.expiresAt > Date.now()) return entry.result;
+  return null;
+}
+
+function setCachedPatientAccess(
+  userId: string,
+  patientId: string,
+  result: StaffAccessResult,
+): void {
+  if (!result.ok) return;
+  patientAccessCache.set(`${userId}:${patientId}`, {
+    result,
+    expiresAt: Date.now() + PATIENT_ACCESS_TTL_MS,
+  });
+}
+
+/**
  * First gate on staff-only API routes: must be called before any
  * service-role lookup of the resource. Returns the auth user or 401.
  *
@@ -27,12 +94,9 @@ export async function requireAuthenticatedUser(): Promise<
   | { ok: true; userId: string }
   | { ok: false; status: 401 }
 > {
-  const ssr = await createServerClient();
-  const {
-    data: { user },
-  } = await ssr.auth.getUser();
-  if (!user) return { ok: false, status: 401 };
-  return { ok: true, userId: user.id };
+  const userId = await getAuthenticatedUserId();
+  if (!userId) return { ok: false, status: 401 };
+  return { ok: true, userId };
 }
 
 /**
@@ -54,22 +118,20 @@ export async function requireStaffLocationAccess(
   | { ok: true; userId: string; role: UserRole }
   | { ok: false; status: 401 | 403 }
 > {
-  const ssr = await createServerClient();
-  const {
-    data: { user },
-  } = await ssr.auth.getUser();
-  if (!user) return { ok: false, status: 401 };
+  const userId = await getAuthenticatedUserId();
+  if (!userId) return { ok: false, status: 401 };
 
+  const ssr = await createServerClient();
   const { data: assignment } = await ssr
     .from("staff_assignments")
     .select("role")
-    .eq("user_id", user.id)
+    .eq("user_id", userId)
     .eq("location_id", locationId)
     .maybeSingle();
 
   if (!assignment) return { ok: false, status: 403 };
 
-  return { ok: true, userId: user.id, role: assignment.role as UserRole };
+  return { ok: true, userId, role: assignment.role as UserRole };
 }
 
 /**
@@ -90,41 +152,36 @@ export async function assertStaffCanAccessPatient(
   serviceClient: SupabaseClient,
   patientId: string,
 ): Promise<StaffAccessResult> {
-  const ssr = await createServerClient();
-  const {
-    data: { user },
-  } = await ssr.auth.getUser();
+  const userId = await getAuthenticatedUserId();
+  if (!userId) return { ok: false, status: 401 };
 
-  if (!user) return { ok: false, status: 401 };
+  // Reuse a recent allow-decision so the split /summary + /history opens (and
+  // quick reopens) don't each re-run the membership query. Decision-only,
+  // per-instance, short TTL — never caches patient data.
+  const cached = getCachedPatientAccess(userId, patientId);
+  if (cached) return cached;
 
-  const { data: patient } = await serviceClient
-    .from("patients")
-    .select("org_id")
-    .eq("id", patientId)
-    .single();
+  // Patient-org and the user's org memberships are independent reads — run
+  // them concurrently rather than chaining.
+  const [patientRes, orgIds] = await Promise.all([
+    serviceClient.from("patients").select("org_id").eq("id", patientId).single(),
+    fetchUserOrgIds(serviceClient, userId),
+  ]);
 
+  const patient = patientRes.data;
   if (!patient) return { ok: false, status: 404 };
-
-  const { data: assignments } = await serviceClient
-    .from("staff_assignments")
-    .select("location_id, locations!inner(org_id)")
-    .eq("user_id", user.id);
-
-  const orgIds = new Set(
-    (assignments ?? [])
-      .map((a) => {
-        const loc = a.locations as { org_id: string } | { org_id: string }[] | null;
-        if (Array.isArray(loc)) return loc[0]?.org_id;
-        return loc?.org_id;
-      })
-      .filter((id): id is string => !!id),
-  );
 
   if (!orgIds.has(patient.org_id)) {
     return { ok: false, status: 404 };
   }
 
-  return { ok: true, userId: user.id, orgId: patient.org_id };
+  const result: StaffAccessResult = {
+    ok: true,
+    userId,
+    orgId: patient.org_id,
+  };
+  setCachedPatientAccess(userId, patientId, result);
+  return result;
 }
 
 /**
@@ -142,12 +199,8 @@ export async function assertStaffCanAccessSubmission(
   serviceClient: SupabaseClient,
   submissionId: string,
 ): Promise<StaffAccessResult> {
-  const ssr = await createServerClient();
-  const {
-    data: { user },
-  } = await ssr.auth.getUser();
-
-  if (!user) return { ok: false, status: 401 };
+  const userId = await getAuthenticatedUserId();
+  if (!userId) return { ok: false, status: 401 };
 
   const { data: submission } = await serviceClient
     .from("form_submissions")
@@ -164,26 +217,12 @@ export async function assertStaffCanAccessSubmission(
   const orgId = Array.isArray(formOrg) ? formOrg[0]?.org_id : formOrg?.org_id;
   if (!orgId) return { ok: false, status: 404 };
 
-  const { data: assignments } = await serviceClient
-    .from("staff_assignments")
-    .select("locations!inner(org_id)")
-    .eq("user_id", user.id);
-
-  const userOrgIds = new Set(
-    (assignments ?? [])
-      .map((a) => {
-        const loc = a.locations as { org_id: string } | { org_id: string }[] | null;
-        if (Array.isArray(loc)) return loc[0]?.org_id;
-        return loc?.org_id;
-      })
-      .filter((id): id is string => !!id),
-  );
-
+  const userOrgIds = await fetchUserOrgIds(serviceClient, userId);
   if (!userOrgIds.has(orgId)) {
     return { ok: false, status: 404 };
   }
 
-  return { ok: true, userId: user.id, orgId };
+  return { ok: true, userId, orgId };
 }
 
 /**
@@ -235,16 +274,13 @@ export async function requireStaffOrgAccess(
   serviceClient: SupabaseClient,
   orgId: string,
 ): Promise<StaffAccessResult> {
-  const ssr = await createServerClient();
-  const {
-    data: { user },
-  } = await ssr.auth.getUser();
-  if (!user) return { ok: false, status: 401 };
+  const userId = await getAuthenticatedUserId();
+  if (!userId) return { ok: false, status: 401 };
 
-  const orgIds = await fetchUserOrgIds(serviceClient, user.id);
+  const orgIds = await fetchUserOrgIds(serviceClient, userId);
   if (!orgIds.has(orgId)) return { ok: false, status: 404 };
 
-  return { ok: true, userId: user.id, orgId };
+  return { ok: true, userId, orgId };
 }
 
 /**
@@ -262,11 +298,8 @@ async function requireStaffCanAccessResource(
   resourceId: string,
   orgColumn: string,
 ): Promise<StaffAccessResult> {
-  const ssr = await createServerClient();
-  const {
-    data: { user },
-  } = await ssr.auth.getUser();
-  if (!user) return { ok: false, status: 401 };
+  const userId = await getAuthenticatedUserId();
+  if (!userId) return { ok: false, status: 401 };
 
   const { data: row } = await serviceClient
     .from(table)
@@ -277,10 +310,10 @@ async function requireStaffCanAccessResource(
   const orgId = (row as Record<string, string> | null)?.[orgColumn];
   if (!orgId) return { ok: false, status: 404 };
 
-  const orgIds = await fetchUserOrgIds(serviceClient, user.id);
+  const orgIds = await fetchUserOrgIds(serviceClient, userId);
   if (!orgIds.has(orgId)) return { ok: false, status: 404 };
 
-  return { ok: true, userId: user.id, orgId };
+  return { ok: true, userId, orgId };
 }
 
 // ---------------------------------------------------------------------------
@@ -435,11 +468,8 @@ export async function requireStaffCanAccessAppointment(
   | { ok: true; userId: string; orgId: string; locationId: string }
   | { ok: false; status: 401 | 404 }
 > {
-  const ssr = await createServerClient();
-  const {
-    data: { user },
-  } = await ssr.auth.getUser();
-  if (!user) return { ok: false, status: 401 };
+  const userId = await getAuthenticatedUserId();
+  if (!userId) return { ok: false, status: 401 };
 
   const { data: appt } = await serviceClient
     .from("appointments")
@@ -449,12 +479,12 @@ export async function requireStaffCanAccessAppointment(
 
   if (!appt?.org_id) return { ok: false, status: 404 };
 
-  const orgIds = await fetchUserOrgIds(serviceClient, user.id);
+  const orgIds = await fetchUserOrgIds(serviceClient, userId);
   if (!orgIds.has(appt.org_id)) return { ok: false, status: 404 };
 
   return {
     ok: true,
-    userId: user.id,
+    userId,
     orgId: appt.org_id,
     locationId: appt.location_id,
   };
@@ -467,11 +497,8 @@ export async function requireStaffCanAccessFormAssignment(
   serviceClient: SupabaseClient,
   assignmentId: string,
 ): Promise<StaffAccessResult> {
-  const ssr = await createServerClient();
-  const {
-    data: { user },
-  } = await ssr.auth.getUser();
-  if (!user) return { ok: false, status: 401 };
+  const userId = await getAuthenticatedUserId();
+  if (!userId) return { ok: false, status: 401 };
 
   const { data: assignment } = await serviceClient
     .from("form_assignments")
@@ -487,10 +514,10 @@ export async function requireStaffCanAccessFormAssignment(
   const orgId = Array.isArray(formOrg) ? formOrg[0]?.org_id : formOrg?.org_id;
   if (!orgId) return { ok: false, status: 404 };
 
-  const orgIds = await fetchUserOrgIds(serviceClient, user.id);
+  const orgIds = await fetchUserOrgIds(serviceClient, userId);
   if (!orgIds.has(orgId)) return { ok: false, status: 404 };
 
-  return { ok: true, userId: user.id, orgId };
+  return { ok: true, userId, orgId };
 }
 
 /**

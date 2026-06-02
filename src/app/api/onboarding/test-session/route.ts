@@ -1,11 +1,10 @@
-import { createClient } from "@/lib/supabase/server";
+import { getAuthenticatedUserId } from "@/lib/auth/staff-access";
 import { createServiceClient } from "@/lib/supabase/service";
 import { NextResponse, type NextRequest } from "next/server";
 
 export async function POST(request: NextRequest) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const userId = await getAuthenticatedUserId();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   // The test session uses a placeholder phone number — the OTP code is
   // surfaced via the console SMS provider (dev) and the user copies it from
@@ -18,7 +17,7 @@ export async function POST(request: NextRequest) {
   const { data: sa } = await service
     .from("staff_assignments")
     .select("location_id, locations!inner(org_id, stripe_account_id)")
-    .eq("user_id", user.id)
+    .eq("user_id", userId)
     .limit(1)
     .single();
 
@@ -32,10 +31,10 @@ export async function POST(request: NextRequest) {
   const { data: userRecord } = await service
     .from("users")
     .select("full_name")
-    .eq("id", user.id)
+    .eq("id", userId)
     .single();
 
-  const fullName = userRecord?.full_name ?? user.user_metadata?.full_name ?? "Test User";
+  const fullName = userRecord?.full_name ?? "Test User";
   const nameParts = fullName.trim().split(" ");
   const firstName = nameParts[0];
   const lastName = nameParts.slice(1).join(" ") || "";
@@ -48,7 +47,7 @@ export async function POST(request: NextRequest) {
       await service
         .from("staff_assignments")
         .select("id")
-        .eq("user_id", user.id)
+        .eq("user_id", userId)
         .limit(1)
         .single()
     ).data?.id ?? "")
@@ -239,7 +238,7 @@ export async function POST(request: NextRequest) {
     form_id: demoForm.id,
     patient_id: patient.id,
     appointment_id: appointment.id,
-    assigned_by: user.id,
+    assigned_by: userId,
   });
   if (faErr) console.error("[onboarding/test-session] form_assignments insert failed:", faErr);
 
@@ -253,7 +252,7 @@ export async function POST(request: NextRequest) {
   await service
     .from("users")
     .update({ onboarding_stage: "test_session_sent" })
-    .eq("id", user.id);
+    .eq("id", userId);
 
   return NextResponse.json({
     session_id: session.id,

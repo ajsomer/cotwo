@@ -1,22 +1,18 @@
-import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { resolveDefaultStaffOrg } from "@/lib/auth/staff-access";
+import { resolveDefaultStaffOrg, getAuthenticatedUserId } from "@/lib/auth/staff-access";
 import { NextResponse, type NextRequest } from "next/server";
 
 export async function GET() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const userId = await getAuthenticatedUserId();
 
-  if (!user) {
+  if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const service = createServiceClient();
 
   // Setup flow: no scope is supplied, so resolve the user's default org.
-  const resolved = await resolveDefaultStaffOrg(user.id);
+  const resolved = await resolveDefaultStaffOrg(userId);
   if (!resolved) {
     return NextResponse.json({ rooms: [], imported: false });
   }
@@ -41,12 +37,9 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const userId = await getAuthenticatedUserId();
 
-  if (!user) {
+  if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -74,7 +67,7 @@ export async function POST(request: NextRequest) {
   const { data: assignment, error: saError } = await service
     .from("staff_assignments")
     .select("id, location_id, role")
-    .eq("user_id", user.id)
+    .eq("user_id", userId)
     .limit(1)
     .single();
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { getAuthenticatedUserId } from "@/lib/auth/staff-access";
 import { createServiceClient } from "@/lib/supabase/service";
 import { generateAccessToken } from "@/lib/livekit/tokens";
 
@@ -23,13 +23,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "sessionId required" }, { status: 400 });
   }
 
-  // 1. Auth the staff user.
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // 1. Auth the staff user (local cookie verification, no auth-server hop).
+  const userId = await getAuthenticatedUserId();
 
-  if (!user) {
+  if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -59,7 +56,7 @@ export async function POST(request: NextRequest) {
     .from("clinician_room_assignments")
     .select("room_id, staff_assignments!inner(user_id, location_id)")
     .eq("room_id", session.room_id)
-    .eq("staff_assignments.user_id", user.id)
+    .eq("staff_assignments.user_id", userId)
     .maybeSingle();
 
   let authorised = !!roomAssignment;
@@ -68,7 +65,7 @@ export async function POST(request: NextRequest) {
     const { data: staff } = await service
       .from("staff_assignments")
       .select("role")
-      .eq("user_id", user.id)
+      .eq("user_id", userId)
       .eq("location_id", session.location_id)
       .in("role", ["clinic_owner", "practice_manager"])
       .maybeSingle();
@@ -86,7 +83,7 @@ export async function POST(request: NextRequest) {
   const { data: userRow } = await service
     .from("users")
     .select("full_name")
-    .eq("id", user.id)
+    .eq("id", userId)
     .single();
 
   const displayName = userRow?.full_name ?? "Clinician";
@@ -94,7 +91,7 @@ export async function POST(request: NextRequest) {
   // 5. Mint the token.
   const result = await generateAccessToken({
     sessionId: session.id,
-    identity: `clinician-${user.id}`,
+    identity: `clinician-${userId}`,
     name: displayName,
     role: "clinician",
   });
