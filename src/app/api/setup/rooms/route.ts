@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { resolveDefaultStaffOrg } from "@/lib/auth/staff-access";
 import { NextResponse, type NextRequest } from "next/server";
 
 export async function GET() {
@@ -14,24 +15,18 @@ export async function GET() {
 
   const service = createServiceClient();
 
-  const { data: assignment } = await service
-    .from("staff_assignments")
-    .select("location_id, locations!inner(org_id)")
-    .eq("user_id", user.id)
-    .limit(1)
-    .single();
-
-  if (!assignment) {
+  // Setup flow: no scope is supplied, so resolve the user's default org.
+  const resolved = await resolveDefaultStaffOrg(user.id);
+  if (!resolved) {
     return NextResponse.json({ rooms: [], imported: false });
   }
-
-  const orgId = (assignment as unknown as { locations: { org_id: string } }).locations.org_id;
+  const { orgId, locationId } = resolved;
 
   const [{ data: rooms }, { data: pms }] = await Promise.all([
     service
       .from("rooms")
       .select("id, name, sort_order")
-      .eq("location_id", assignment.location_id)
+      .eq("location_id", locationId)
       .order("sort_order", { ascending: true }),
     service
       .from("pms_connections")

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { resolveDefaultStaffOrg } from "@/lib/auth/staff-access";
 import { seedDefaultWorkflows } from "@/lib/workflows/seed-defaults";
 
 // POST /api/workflows/seed
@@ -17,23 +17,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Resolve the user's org
-    const service = createServiceClient();
-    const { data: assignment } = await service
-      .from("staff_assignments")
-      .select("locations!inner(org_id)")
-      .eq("user_id", user.id)
-      .limit(1)
-      .single();
-
-    if (!assignment) {
+    // Setup flow: no scope is supplied, so resolve the user's default org.
+    const resolved = await resolveDefaultStaffOrg(user.id);
+    if (!resolved) {
       return NextResponse.json(
         { error: "No staff assignment found" },
         { status: 404 }
       );
     }
 
-    const orgId = (assignment.locations as unknown as { org_id: string }).org_id;
+    const { orgId } = resolved;
 
     await seedDefaultWorkflows(orgId);
 

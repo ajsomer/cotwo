@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { resolveDefaultStaffOrg } from "@/lib/auth/staff-access";
 import { seedDefaultWorkflows } from "@/lib/workflows/seed-defaults";
 import { NextResponse, type NextRequest } from "next/server";
 
@@ -47,17 +48,10 @@ export async function POST(request: NextRequest) {
 
   const service = createServiceClient();
 
-  // Resolve org via staff_assignments
-  const { data: sa } = await service
-    .from("staff_assignments")
-    .select("location_id, locations!inner(org_id)")
-    .eq("user_id", user.id)
-    .limit(1)
-    .single();
-
-  if (!sa) return NextResponse.json({ error: "No org found." }, { status: 400 });
-  const orgId = (sa as unknown as { locations: { org_id: string } }).locations.org_id;
-  const locationId = sa.location_id;
+  // Setup flow: no scope is supplied, so resolve the user's default org.
+  const resolved = await resolveDefaultStaffOrg(user.id);
+  if (!resolved) return NextResponse.json({ error: "No org found." }, { status: 400 });
+  const { orgId, locationId } = resolved;
 
   if (provider === "gentu") {
     await seedGentuData(service, orgId, locationId);

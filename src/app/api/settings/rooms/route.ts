@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchRoomsWithClinicians } from "@/lib/clinic/fetchers/rooms";
+import { updateClinicianAssignments } from "@/lib/clinic/fetchers/rooms-mutations";
 import {
   requireAuthenticatedUser,
   requireStaffLocationAccess,
@@ -150,18 +151,7 @@ export async function POST(request: NextRequest) {
 
   // Insert clinician assignments if provided
   if (clinician_assignment_ids?.length > 0 && room) {
-    const rows = clinician_assignment_ids.map((saId: string) => ({
-      staff_assignment_id: saId,
-      room_id: room.id,
-    }));
-
-    const { error: assignError } = await supabase
-      .from("clinician_room_assignments")
-      .insert(rows);
-
-    if (assignError) {
-      console.error("Failed to insert clinician assignments:", assignError);
-    }
+    await updateClinicianAssignments(supabase, room.id, clinician_assignment_ids);
   }
 
   return NextResponse.json({ room }, { status: 201 });
@@ -201,27 +191,7 @@ export async function PATCH(request: NextRequest) {
 
   // Replace clinician assignments if provided
   if (clinician_assignment_ids !== undefined) {
-    // Delete existing
-    await supabase
-      .from("clinician_room_assignments")
-      .delete()
-      .eq("room_id", id);
-
-    // Insert new
-    if (clinician_assignment_ids.length > 0) {
-      const rows = clinician_assignment_ids.map((saId: string) => ({
-        staff_assignment_id: saId,
-        room_id: id,
-      }));
-
-      const { error: assignError } = await supabase
-        .from("clinician_room_assignments")
-        .insert(rows);
-
-      if (assignError) {
-        console.error("Failed to update clinician assignments:", assignError);
-      }
-    }
+    await updateClinicianAssignments(supabase, id, clinician_assignment_ids);
   }
 
   return NextResponse.json({ success: true });
