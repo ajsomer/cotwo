@@ -19,8 +19,14 @@ interface WorkflowTimelineProps {
 }
 
 export function WorkflowTimeline({ actions }: WorkflowTimelineProps) {
+  // Pre-appointment steps (session_id === null) are noise — the readiness
+  // row's top-level status already conveys pending/completed/late. Show only
+  // post-appointment steps (PROMs, rebooking, outcome-pathway actions), which
+  // a single status can't summarise.
+  const postActions = actions.filter((a) => a.session_id);
+
   // Sort by offset descending — matches the original ordering
-  const sortedActions = [...actions].sort(
+  const sortedActions = [...postActions].sort(
     (a, b) => b.offset_minutes - a.offset_minutes
   );
 
@@ -29,7 +35,7 @@ export function WorkflowTimeline({ actions }: WorkflowTimelineProps) {
   return (
     <section>
       <h4 className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
-        Workflow
+        Follow-up
       </h4>
       <div className="relative space-y-3 pl-5">
         {/* Vertical line */}
