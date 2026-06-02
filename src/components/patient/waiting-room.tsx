@@ -20,8 +20,8 @@ interface WaitingRoomProps {
 type SessionStatus = 'waiting' | 'in_session' | 'complete' | 'done';
 
 export function WaitingRoom({
-  sessionId,
-  locationId,
+  // sessionId/locationId still arrive from the page but are no longer used
+  // here — presence + session join are now bound server-side from entryToken.
   entryToken,
   clinicName,
   logoUrl,
@@ -47,14 +47,16 @@ export function WaitingRoom({
   useEffect(() => {
     const socket = getSocket();
     const track = () => {
-      socket.emit('presence:track', { locationId, sessionId });
+      // Send only the entry token; the server resolves (and binds) the
+      // session + location from it, so the payload can't claim another session.
+      socket.emit('presence:track', { entryToken });
     };
     if (socket.connected) track();
     socket.on('connect', track);
     return () => {
       socket.off('connect', track);
     };
-  }, [sessionId, locationId]);
+  }, [entryToken]);
 
   // Subscribe to session status changes via Socket.IO. When the clinician
   // flips the session into `in_session`, PatientVideoCall auto-mounts;
@@ -62,7 +64,7 @@ export function WaitingRoom({
   useEffect(() => {
     const socket = getSocket();
     const joinRoom = () => {
-      socket.emit('join:session', sessionId);
+      socket.emit('join:session', { entryToken });
     };
     if (socket.connected) joinRoom();
     socket.on('connect', joinRoom);
@@ -76,7 +78,7 @@ export function WaitingRoom({
       socket.off('connect', joinRoom);
       socket.off('status_changed', onStatusChanged);
     };
-  }, [sessionId]);
+  }, [entryToken]);
 
   if (status === 'in_session') {
     return <PatientVideoCall entryToken={entryToken} clinicianName={clinicianName} />;

@@ -127,6 +127,56 @@ async function main() {
     io.to(`location:${locationId}`).emit("presence:update", { sessionIds });
   }
 
+  /**
+   * Resolve a patient `entry_token` to the session it belongs to, server-side.
+   *
+   * Patient sockets are anonymous, so the only proof they can offer that they
+   * own a session is the unguessable entry token from their URL. We resolve it
+   * here and bind the result to `socket.data.session` ONCE — every later
+   * presence/join emit reuses that bound claim rather than trusting the
+   * payload, so a forged emit can't point the socket at another session (which
+   * previously allowed deleting another patient's on-demand session on
+   * disconnect, see cleanUpOnDemandSession).
+   */
+  async function resolveEntryToken(
+    token: string
+  ): Promise<{ sessionId: string; locationId: string } | null> {
+    try {
+      const supabase = createSupabaseClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      );
+      const { data } = await supabase
+        .from("sessions")
+        .select("id, location_id")
+        .eq("entry_token", token)
+        .maybeSingle();
+      if (!data) return null;
+      return { sessionId: data.id, locationId: data.location_id };
+    } catch (err) {
+      console.warn("[socket] entry token resolve error:", err);
+      return null;
+    }
+  }
+
+  /**
+   * Establish (once) the session claim for a patient socket from its entry
+   * token, caching it on `socket.data.session`. Returns the bound claim, or
+   * null if the token doesn't resolve. Idempotent: a socket that already has a
+   * claim keeps it (the claim is immutable for the socket's lifetime).
+   */
+  async function bindSocketSession(
+    socket: import("socket.io").Socket,
+    entryToken: unknown
+  ): Promise<{ sessionId: string; locationId: string } | null> {
+    if (socket.data.session) return socket.data.session;
+    if (typeof entryToken !== "string" || !entryToken) return null;
+    const resolved = await resolveEntryToken(entryToken);
+    if (!resolved) return null;
+    socket.data.session = resolved;
+    return resolved;
+  }
+
   io.on("connection", (socket) => {
     console.log("[socket] connected:", socket.id);
 
@@ -164,66 +214,46 @@ async function main() {
     });
 
     // Patient-side: join a session room so server-emitted status changes
-    // reach the waiting room without any polling.
-    socket.on("join:session", (sessionId: string) => {
-      if (typeof sessionId !== "string" || !sessionId) return;
-      socket.join(`session:${sessionId}`);
+    // reach the waiting room without any polling. The socket proves ownership
+    // with its entry token; the resolved session id is taken from the bound
+    // claim, never from the payload.
+    socket.on("join:session", async (payload: { entryToken?: string }) => {
+      const claim = await bindSocketSession(socket, payload?.entryToken);
+      if (!claim) return;
+      socket.join(`session:${claim.sessionId}`);
     });
 
-    // Patient-side: claim presence for a given session. Called from the
-    // waiting room. Idempotent across repeat emits from the same socket.
-    socket.on(
-      "presence:track",
-      (payload: { locationId?: string; sessionId?: string }) => {
-        const { locationId, sessionId } = payload ?? {};
-        if (
-          typeof locationId !== "string" ||
-          !locationId ||
-          typeof sessionId !== "string" ||
-          !sessionId
-        ) {
-          return;
-        }
+    // Patient-side: claim presence for the socket's own session. Called from
+    // the waiting room with its entry token. The (location, session) pair is
+    // resolved server-side from the token and bound to the socket, so a forged
+    // emit cannot claim presence for — or, on disconnect, delete — another
+    // patient's session. Idempotent across repeat emits from the same socket.
+    socket.on("presence:track", async (payload: { entryToken?: string }) => {
+      const claim = await bindSocketSession(socket, payload?.entryToken);
+      if (!claim) return;
+      const { locationId, sessionId } = claim;
 
-        // If this socket already had a presence claim (different session or
-        // location), clear the old one first before setting the new claim.
-        const prior = socketReverseMap.get(socket.id);
-        if (
-          prior &&
-          (prior.locationId !== locationId || prior.sessionId !== sessionId)
-        ) {
-          const priorLoc = activeLocations.get(prior.locationId);
-          const priorSockets = priorLoc?.get(prior.sessionId);
-          priorSockets?.delete(socket.id);
-          if (priorSockets && priorSockets.size === 0) {
-            priorLoc!.delete(prior.sessionId);
-          }
-          if (priorLoc && priorLoc.size === 0) {
-            activeLocations.delete(prior.locationId);
-          }
-          broadcastPresence(prior.locationId);
-        }
+      // The claim is immutable once bound, so a socket can only ever register
+      // presence for its own session — no prior-claim teardown is needed.
+      socketReverseMap.set(socket.id, { locationId, sessionId });
 
-        socketReverseMap.set(socket.id, { locationId, sessionId });
-
-        let locMap = activeLocations.get(locationId);
-        if (!locMap) {
-          locMap = new Map();
-          activeLocations.set(locationId, locMap);
-        }
-        let sockets = locMap.get(sessionId);
-        if (!sockets) {
-          sockets = new Set();
-          locMap.set(sessionId, sockets);
-        }
-        sockets.add(socket.id);
-
-        console.log(
-          `[socket] presence:track ${socket.id} location=${locationId} session=${sessionId}`
-        );
-        broadcastPresence(locationId);
+      let locMap = activeLocations.get(locationId);
+      if (!locMap) {
+        locMap = new Map();
+        activeLocations.set(locationId, locMap);
       }
-    );
+      let sockets = locMap.get(sessionId);
+      if (!sockets) {
+        sockets = new Set();
+        locMap.set(sessionId, sockets);
+      }
+      sockets.add(socket.id);
+
+      console.log(
+        `[socket] presence:track ${socket.id} location=${locationId} session=${sessionId}`
+      );
+      broadcastPresence(locationId);
+    });
 
     socket.on("disconnect", (reason) => {
       console.log(`[socket] ${socket.id} disconnected: ${reason}`);
