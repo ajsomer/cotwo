@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { normalisePhone } from '@/lib/phone/normalise';
 
 /**
  * POST /api/intake/[token]/verify
@@ -75,11 +76,13 @@ export async function POST(
     return NextResponse.json({ status: 'matched', contact });
   }
 
-  // Resolve contacts for this phone number within this org.
+  // Resolve contacts for this phone number within this org. Match on the
+  // canonical E.164 form so it lines up with how the number was stored.
+  const matchPhone = normalisePhone(phone_number) ?? phone_number;
   const { data: phoneLinks } = await supabase
     .from('patient_phone_numbers')
     .select('patient_id, patients!inner (id, first_name, last_name, org_id)')
-    .eq('phone_number', phone_number)
+    .eq('phone_number', matchPhone)
     .eq('patients.org_id', orgId);
 
   type PhoneLink = {

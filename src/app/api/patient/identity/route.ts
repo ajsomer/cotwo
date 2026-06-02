@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { resolveEntryTokenScope } from '@/lib/patient/entry-token';
 import { assertPatientInOrg } from '@/lib/auth/staff-access';
+import { normalisePhone } from '@/lib/phone/normalise';
 
 /**
  * POST /api/patient/identity
@@ -18,10 +19,17 @@ import { assertPatientInOrg } from '@/lib/auth/staff-access';
  */
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const { token, phone_number } = body;
+  const { token, phone_number: rawPhone } = body;
 
-  if (!token || !phone_number) {
+  if (!token || !rawPhone) {
     return NextResponse.json({ error: 'token and phone_number are required' }, { status: 400 });
+  }
+
+  // Store the canonical E.164 form so this patient's number matches however it
+  // was originally entered elsewhere (readiness, run sheet, PMS).
+  const phone_number = normalisePhone(rawPhone);
+  if (!phone_number) {
+    return NextResponse.json({ error: 'Invalid phone number' }, { status: 400 });
   }
 
   const supabase = createServiceClient();

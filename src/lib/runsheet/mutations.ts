@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { getSmsProvider } from "@/lib/sms";
+import { normalisePhone } from "@/lib/phone/normalise";
 
 interface SessionInput {
   phone_number: string;
@@ -62,6 +63,11 @@ export async function createSessions(
 
   const results = [];
   for (const input of sessions) {
+    // Canonical E.164 so this number matches the same patient however it was
+    // entered elsewhere (patient OTP entry, readiness, PMS). Fall back to the
+    // raw input if it can't be normalised rather than dropping the session.
+    const phoneNumber = normalisePhone(input.phone_number) ?? input.phone_number;
+
     // Create appointment
     const { data: appointment, error: apptError } = await supabase
       .from("appointments")
@@ -70,7 +76,7 @@ export async function createSessions(
         room_id: input.room_id,
         location_id: locationId,
         scheduled_at: input.scheduled_at,
-        phone_number: input.phone_number,
+        phone_number: phoneNumber,
         appointment_type_id: null,
       })
       .select("id")
@@ -107,7 +113,7 @@ export async function createSessions(
     const { data: phoneMatch } = await supabase
       .from("patient_phone_numbers")
       .select("patient_id, patients!inner (id, org_id)")
-      .eq("phone_number", input.phone_number)
+      .eq("phone_number", phoneNumber)
       .limit(10);
 
     const matchedPatient = (phoneMatch ?? []).find((row: Record<string, unknown>) => {
@@ -142,12 +148,12 @@ export async function createSessions(
 
     if (smsAction === "prep" && shouldSendPrepNow(input.scheduled_at)) {
       await sms.sendNotification(
-        input.phone_number,
+        phoneNumber,
         `Hi — you have an upcoming appointment with ${clinicName} ${timeLabel}. Get ready ahead of time so your clinician can focus on you: ${entryLink}`
       );
     } else if (smsAction === "invite_immediate") {
       await sms.sendNotification(
-        input.phone_number,
+        phoneNumber,
         `Your appointment with ${clinicName} starts in 10 minutes. Join here: ${entryLink}`
       );
     }
@@ -176,9 +182,19 @@ export async function updateSession(
     return { success: false, error: "Session has no appointment" };
   }
 
+  // Normalise an updated phone number to the canonical E.164 form.
+  const normalisedUpdates =
+    updates.phone_number !== undefined
+      ? {
+          ...updates,
+          phone_number:
+            normalisePhone(updates.phone_number) ?? updates.phone_number,
+        }
+      : updates;
+
   const { error } = await supabase
     .from("appointments")
-    .update(updates)
+    .update(normalisedUpdates)
     .eq("id", session.appointment_id);
 
   if (error) {

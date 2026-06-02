@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getSmsProvider } from '@/lib/sms';
+import { normalisePhone } from '@/lib/phone/normalise';
 
 /**
  * POST /api/patient/otp/send
@@ -8,10 +9,17 @@ import { getSmsProvider } from '@/lib/sms';
  * Rate limited: max 3 sends per phone number per 10-minute window.
  */
 export async function POST(request: NextRequest) {
-  const { phone_number, session_id } = await request.json();
+  const { phone_number: rawPhone, session_id } = await request.json();
 
-  if (!phone_number || typeof phone_number !== 'string') {
+  if (!rawPhone || typeof rawPhone !== 'string') {
     return NextResponse.json({ error: 'Phone number is required' }, { status: 400 });
+  }
+
+  // Normalise to E.164 up front so the verification record — and every later
+  // match against patient_phone_numbers — uses the canonical form.
+  const phone_number = normalisePhone(rawPhone);
+  if (!phone_number) {
+    return NextResponse.json({ error: 'Invalid phone number' }, { status: 400 });
   }
 
   const supabase = createServiceClient();

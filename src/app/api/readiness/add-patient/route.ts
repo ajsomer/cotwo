@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { scheduleWorkflowForAppointment } from "@/lib/workflows/scanner";
 import { requireStaffLocationAccess } from "@/lib/auth/staff-access";
+import { normalisePhone } from "@/lib/phone/normalise";
 
 /**
  * POST /api/readiness/add-patient
@@ -217,29 +218,4 @@ async function collectFiredActions(
     result: a.result as Record<string, unknown> | null,
     fired_at: a.fired_at,
   }));
-}
-
-/**
- * Basic phone normalisation to E.164 for Australian mobiles.
- */
-function normalisePhone(input: string): string | null {
-  const digits = input.replace(/[\s\-()]/g, "");
-
-  if (digits.startsWith("+")) {
-    return digits.length >= 10 ? digits : null;
-  }
-
-  if (digits.startsWith("0") && digits.length === 10) {
-    return "+61" + digits.slice(1);
-  }
-
-  if (digits.startsWith("61") && digits.length === 11) {
-    return "+" + digits;
-  }
-
-  if (digits.length >= 10) {
-    return digits.startsWith("+") ? digits : "+" + digits;
-  }
-
-  return null;
 }

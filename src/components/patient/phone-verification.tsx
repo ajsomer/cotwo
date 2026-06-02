@@ -222,7 +222,10 @@ export function PhoneVerification({
                 autoFocus
                 value={phoneNumber.replace(/^\+61/, '')}
                 onChange={(e) => {
-                  const digits = e.target.value.replace(/\D/g, '');
+                  // The +61 prefix is fixed beside the field, so strip a
+                  // leading 0 (the AU trunk prefix) — typing "0450336880" or
+                  // "450336880" both yield +61450336880, never +610450...
+                  const digits = e.target.value.replace(/\D/g, '').replace(/^0+/, '');
                   setPhoneNumber('+61' + digits);
                 }}
                 placeholder="450 336 880"
