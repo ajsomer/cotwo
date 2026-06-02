@@ -9,6 +9,8 @@ import { STANDALONE_SOURCE_LABEL } from "./types";
 interface StandaloneSubmissionRowProps {
   row: StandaloneSubmissionRowType;
   onPatientClick: () => void;
+  /** Warm the patient-card fetches on hover / pointer-down of the name. */
+  onPatientIntent?: () => void;
   onReview: () => void;
   /** Warm the detail fetch on hover / pointer-down of the Review control. */
   onReviewIntent?: () => void;
@@ -17,6 +19,7 @@ interface StandaloneSubmissionRowProps {
 export function StandaloneSubmissionRow({
   row,
   onPatientClick,
+  onPatientIntent,
   onReview,
   onReviewIntent,
 }: StandaloneSubmissionRowProps) {
@@ -24,7 +27,11 @@ export function StandaloneSubmissionRow({
     STANDALONE_SOURCE_LABEL[row.submission_source] ?? row.submission_source;
 
   return (
-    <div className="border-b border-gray-200 last:border-b-0">
+    <div
+      className="border-b border-gray-200 last:border-b-0"
+      // Whole-row hover warms the submission-detail fetch ahead of the click.
+      onMouseEnter={onReviewIntent}
+    >
       <div className="flex items-stretch border-l-[3px] border-l-amber-500 bg-amber-500/[0.03] transition-colors">
         {/* Time column — submission age instead of a scheduled time */}
         <span className="flex items-center justify-center w-[94px] flex-shrink-0 text-[13px] font-medium whitespace-nowrap bg-[#FAF9F7] text-[#5F5E5A]">
@@ -36,6 +43,8 @@ export function StandaloneSubmissionRow({
           {/* Patient name — clickable, opens the patient contact card */}
           <button
             onClick={onPatientClick}
+            onMouseEnter={onPatientIntent}
+            onPointerDown={onPatientIntent}
             className="text-[14px] font-semibold text-gray-800 truncate leading-none hover:underline hover:text-teal-600 transition-colors"
           >
             {row.patient_name}

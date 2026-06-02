@@ -28,6 +28,7 @@ import {
   intakeHandoffUrl,
   standaloneSubmissionUrl,
 } from "@/components/clinic/forms/review-prefetch-cache";
+import { prefetchPatientDetails } from "@/components/clinic/patient/patient-contact-card/patient-details-cache";
 
 const AddPatientPanel = dynamic(
   () =>
@@ -270,6 +271,21 @@ export function ReadinessShell() {
     []
   );
 
+  // Warm the patient-card fetches on hover of the patient name, so DOB/card +
+  // history are often already present when the card opens. Mirrors the active-
+  // row hints the card itself passes (appointment_id when readiness).
+  const handlePatientIntent = useCallback(
+    (appointment: ReadinessAppointment | null, patientId: string) => {
+      if (!patientId) return;
+      prefetchPatientDetails(
+        patientId,
+        appointment?.appointment_id ?? null,
+        null
+      );
+    },
+    []
+  );
+
   const handleReviewStandalone = useCallback(
     (row: StandaloneSubmissionRowType) => {
       setActivePanel({
@@ -356,6 +372,7 @@ export function ReadinessShell() {
         standaloneRows={standaloneRows}
         now={now}
         onPatientDetail={handlePatientDetail}
+        onPatientIntent={handlePatientIntent}
         onAction={handleActionButton}
         onActionIntent={handleActionIntent}
         onReviewStandalone={handleReviewStandalone}

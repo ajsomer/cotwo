@@ -14,18 +14,14 @@ import type {
   PatientSummaryResponse,
   PatientHistoryResponse,
 } from "./types";
-
-const CACHE_TTL_MS = 30_000;
-// Two independent caches, keyed by route URL. Reopening is instant from cache,
-// and a history refresh doesn't refetch demographics (or vice versa).
-const summaryCache = new Map<
-  string,
-  { expiresAt: number; data: PatientSummaryResponse }
->();
-const historyCache = new Map<
-  string,
-  { expiresAt: number; data: PatientHistoryResponse }
->();
+import {
+  summaryCache,
+  historyCache,
+  cacheSummary,
+  cacheHistory,
+  patientSummaryUrl,
+  patientHistoryUrl,
+} from "./patient-details-cache";
 
 interface PatientContactCardProps {
   session?: EnrichedSession | null;
@@ -169,17 +165,14 @@ export function PatientContactCard({
       appointment?.appointment_id ?? session?.appointment_id ?? null;
     const sessionId = session?.session_id ?? null;
 
-    const historyParams = new URLSearchParams();
-    if (sessionId) historyParams.set("session_id", sessionId);
-    if (activeApptId) historyParams.set("appointment_id", activeApptId);
-    const historyQs = historyParams.toString();
-    const summaryQs = activeApptId
-      ? `?appointment_id=${activeApptId}`
-      : "";
-
-    const base = `/api/patient/${resolvedPatientId}`;
-    const summaryUrl = `${base}/summary${summaryQs}`;
-    const historyUrl = `${base}/history${historyQs ? `?${historyQs}` : ""}`;
+    // Shared URL builders so these match the hover-prefetch URLs exactly (a
+    // cache hit depends on byte-identical keys).
+    const summaryUrl = patientSummaryUrl(resolvedPatientId, activeApptId);
+    const historyUrl = patientHistoryUrl(
+      resolvedPatientId,
+      activeApptId,
+      sessionId,
+    );
 
     // Cancel/ignore stale responses: a quick A→B click must not let A's late
     // response overwrite B. The closure-captured `cancelled` flag (invalidated
@@ -218,10 +211,7 @@ export function PatientContactCard({
           }
           const data = (await res.json()) as PatientSummaryResponse;
           if (cancelled) return;
-          summaryCache.set(summaryUrl, {
-            data,
-            expiresAt: Date.now() + CACHE_TTL_MS,
-          });
+          cacheSummary(summaryUrl, data);
           applySummary(data);
           setSummaryLoading(false);
         } catch (err) {
@@ -256,10 +246,7 @@ export function PatientContactCard({
           }
           const data = (await res.json()) as PatientHistoryResponse;
           if (cancelled) return;
-          historyCache.set(historyUrl, {
-            data,
-            expiresAt: Date.now() + CACHE_TTL_MS,
-          });
+          cacheHistory(historyUrl, data);
           applyHistory(data);
           setHistoryLoading(false);
         } catch (err) {

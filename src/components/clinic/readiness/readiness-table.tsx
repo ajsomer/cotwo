@@ -5,10 +5,7 @@ import type {
   ReadinessAppointment,
   StandaloneSubmissionRow as StandaloneSubmissionRowType,
 } from "@/stores/clinic-store";
-import {
-  type ReadinessPriority,
-  isAttentionPriority,
-} from "@/lib/readiness/derived-state";
+import { type ReadinessPriority } from "@/lib/readiness/derived-state";
 import type { PatientSeed } from "@/components/clinic/patient/patient-contact-card/types";
 import { Badge } from "@/components/ui/badge";
 import { PatientRow } from "./patient-row";
@@ -24,6 +21,10 @@ interface ReadinessTableProps {
     patientId: string,
     patientSeed?: PatientSeed | null
   ) => void;
+  onPatientIntent: (
+    appointment: ReadinessAppointment | null,
+    patientId: string
+  ) => void;
   onAction: (appointment: ReadinessAppointment) => void;
   onActionIntent: (appointment: ReadinessAppointment) => void;
   onReviewStandalone: (row: StandaloneSubmissionRowType) => void;
@@ -35,15 +36,12 @@ export function ReadinessTable({
   standaloneRows,
   now,
   onPatientDetail,
+  onPatientIntent,
   onAction,
   onActionIntent,
   onReviewStandalone,
   onReviewStandaloneIntent,
 }: ReadinessTableProps) {
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-  const [manuallyCollapsed, setManuallyCollapsed] = useState<Set<string>>(
-    new Set()
-  );
   const [collapsedSlots, setCollapsedSlots] = useState<Set<ReadinessPriority>>(
     new Set(["recently_completed"])
   );
@@ -61,27 +59,6 @@ export function ReadinessTable({
   }, [appointments]);
 
   const totalItems = appointments.length;
-
-  const toggleRow = useCallback(
-    (id: string) => {
-      if (expandedIds.has(id)) {
-        setExpandedIds((prev) => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
-        setManuallyCollapsed((prev) => new Set(prev).add(id));
-      } else {
-        setExpandedIds((prev) => new Set(prev).add(id));
-        setManuallyCollapsed((prev) => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
-      }
-    },
-    [expandedIds]
-  );
 
   const toggleSlot = useCallback((slot: ReadinessPriority) => {
     setCollapsedSlots((prev) => {
@@ -173,36 +150,27 @@ export function ReadinessTable({
                         // section shimmers rather than showing a false "none".
                       })
                     }
+                    onPatientIntent={() => onPatientIntent(null, row.patient_id)}
                     onReview={() => onReviewStandalone(row)}
                     onReviewIntent={() => onReviewStandaloneIntent(row)}
                   />
                 ))}
-                {items.map((appt) => {
-                  const isManuallyExpanded = expandedIds.has(
-                    appt.appointment_id
-                  );
-                  const isAutoExpanded =
-                    isAttentionPriority(appt.priority as ReadinessPriority) &&
-                    !manuallyCollapsed.has(appt.appointment_id);
-                  const isRowExpanded = isManuallyExpanded || isAutoExpanded;
-
-                  return (
-                    <PatientRow
-                      key={appt.appointment_id}
-                      appointment={appt}
-                      slot={slot}
-                      now={now}
-                      isExpanded={isRowExpanded}
-                      isAutoExpanded={isAutoExpanded && !isManuallyExpanded}
-                      onToggle={() => toggleRow(appt.appointment_id)}
-                      onNameClick={() =>
-                        onPatientDetail(appt, appt.patient_id ?? "")
-                      }
-                      onAction={() => onAction(appt)}
-                      onActionIntent={() => onActionIntent(appt)}
-                    />
-                  );
-                })}
+                {items.map((appt) => (
+                  <PatientRow
+                    key={appt.appointment_id}
+                    appointment={appt}
+                    slot={slot}
+                    now={now}
+                    onNameClick={() =>
+                      onPatientDetail(appt, appt.patient_id ?? "")
+                    }
+                    onNameIntent={() =>
+                      onPatientIntent(appt, appt.patient_id ?? "")
+                    }
+                    onAction={() => onAction(appt)}
+                    onActionIntent={() => onActionIntent(appt)}
+                  />
+                ))}
               </div>
             )}
           </div>
