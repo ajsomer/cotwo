@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUserId } from "@/lib/auth/staff-access";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  sessions as sessionsT,
+  clinicianRoomAssignments,
+  staffAssignments,
+  users as usersT,
+} from "@/lib/db/schema";
+import { and, eq, inArray } from "drizzle-orm";
 import { generateAccessToken } from "@/lib/livekit/tokens";
 
 /**
@@ -31,14 +38,18 @@ export async function POST(request: NextRequest) {
   }
 
   // 2. Load the session with its room + location.
-  const service = createServiceClient();
-  const { data: session, error: sessionError } = await service
-    .from("sessions")
-    .select("id, status, room_id, location_id")
-    .eq("id", sessionId)
-    .single();
+  const [session] = await db
+    .select({
+      id: sessionsT.id,
+      status: sessionsT.status,
+      room_id: sessionsT.roomId,
+      location_id: sessionsT.locationId,
+    })
+    .from(sessionsT)
+    .where(eq(sessionsT.id, sessionId))
+    .limit(1);
 
-  if (sessionError || !session) {
+  if (!session) {
     return NextResponse.json({ error: "Session not found" }, { status: 404 });
   }
 
@@ -52,23 +63,37 @@ export async function POST(request: NextRequest) {
   }
 
   // 3. Authorise. Try room assignment first; fall back to owner/PM at location.
-  const { data: roomAssignment } = await service
-    .from("clinician_room_assignments")
-    .select("room_id, staff_assignments!inner(user_id, location_id)")
-    .eq("room_id", session.room_id)
-    .eq("staff_assignments.user_id", userId)
-    .maybeSingle();
-
-  let authorised = !!roomAssignment;
+  let authorised = false;
+  if (session.room_id) {
+    const [roomAssignment] = await db
+      .select({ room_id: clinicianRoomAssignments.roomId })
+      .from(clinicianRoomAssignments)
+      .innerJoin(
+        staffAssignments,
+        eq(staffAssignments.id, clinicianRoomAssignments.staffAssignmentId),
+      )
+      .where(
+        and(
+          eq(clinicianRoomAssignments.roomId, session.room_id),
+          eq(staffAssignments.userId, userId),
+        ),
+      )
+      .limit(1);
+    authorised = !!roomAssignment;
+  }
 
   if (!authorised) {
-    const { data: staff } = await service
-      .from("staff_assignments")
-      .select("role")
-      .eq("user_id", userId)
-      .eq("location_id", session.location_id)
-      .in("role", ["clinic_owner", "practice_manager"])
-      .maybeSingle();
+    const [staff] = await db
+      .select({ role: staffAssignments.role })
+      .from(staffAssignments)
+      .where(
+        and(
+          eq(staffAssignments.userId, userId),
+          eq(staffAssignments.locationId, session.location_id),
+          inArray(staffAssignments.role, ["clinic_owner", "practice_manager"]),
+        ),
+      )
+      .limit(1);
     authorised = !!staff;
   }
 
@@ -80,11 +105,11 @@ export async function POST(request: NextRequest) {
   }
 
   // 4. Resolve the clinician's display name.
-  const { data: userRow } = await service
-    .from("users")
-    .select("full_name")
-    .eq("id", userId)
-    .single();
+  const [userRow] = await db
+    .select({ full_name: usersT.fullName })
+    .from(usersT)
+    .where(eq(usersT.id, userId))
+    .limit(1);
 
   const displayName = userRow?.full_name ?? "Clinician";
 

@@ -29,7 +29,7 @@ export async function GET(
   const activeAppointmentId = request.nextUrl.searchParams.get("appointment_id");
   const supabase = createServiceClient();
 
-  const access = await assertStaffCanAccessPatient(supabase, patientId);
+  const access = await assertStaffCanAccessPatient(patientId);
   if (!access.ok) {
     return NextResponse.json(
       { error: access.status === 401 ? "Unauthenticated" : "Patient not found" },
@@ -38,7 +38,7 @@ export async function GET(
   }
 
   const [summary, workflowActions] = await Promise.all([
-    fetchPatientSummary(supabase, patientId),
+    fetchPatientSummary(patientId),
     activeAppointmentId
       ? fetchAppointmentWorkflowActions(supabase, activeAppointmentId, patientId)
       : Promise.resolve(null),

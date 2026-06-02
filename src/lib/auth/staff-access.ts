@@ -1,6 +1,22 @@
-import { createClient as createServerClient } from "@/lib/supabase/server";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { auth } from "@/lib/auth/neon-auth";
 import type { Location, Organisation, UserRole } from "@/lib/supabase/types";
+import { db } from "@/lib/db";
+import {
+  staffAssignments,
+  locations as locationsT,
+  patients as patientsT,
+  formSubmissions,
+  forms as formsT,
+  appointments as appointmentsT,
+  appointmentTypes as appointmentTypesT,
+  workflowTemplates as workflowTemplatesT,
+  outcomePathways as outcomePathwaysT,
+  files as filesT,
+  formAssignments,
+  organisations as organisationsT,
+} from "@/lib/db/schema";
+import { and, eq, inArray } from "drizzle-orm";
+import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 
 export interface StaffAssignmentData {
   location: Location;
@@ -15,30 +31,21 @@ export type StaffAccessResult =
   | { ok: false; status: 401 | 404 };
 
 /**
- * Resolve the caller's user id from the cookie session, verified LOCALLY.
+ * Resolve the caller's user id from the Neon Auth session.
  *
- * `getClaims()` validates the JWT signature against the project's cached
- * signing key (JWKS for asymmetric keys, or the shared secret for legacy
- * HS256) — no per-call network round-trip to the Supabase Auth server, unlike
- * `getUser()`. The returned `sub` claim is the user id (`users.id =
- * auth.users.id`; see the auth model in CLAUDE.md), which is all the gates
- * below consume.
+ * `auth.getSession()` reads the signed session cookie and verifies it locally
+ * (cached for sessionDataTtl), only hitting the Neon Auth server when the cache
+ * is cold — so this stays fast on the hot path. The returned `session.user.id`
+ * is the Neon Auth user id, which the app uses directly as `public.users.id`
+ * (see neon-auth.ts identity contract). That id is all the gates below consume.
  *
  * This is the single identity-resolution point for every staff gate; keep all
- * of them routed through it so the auth path stays consistent (no mix of
- * network-verifying and local-verifying reads). Returns null when the cookie
- * is absent or the token fails local verification.
- *
- * Exported for the setup/onboarding/livekit routes that only need the user id
- * and previously called `getUser()` directly — route them here too so there's
- * no network-verifying read left anywhere.
+ * of them routed through it so the auth path stays consistent. Returns null
+ * when there is no active session.
  */
 export async function getAuthenticatedUserId(): Promise<string | null> {
-  const ssr = await createServerClient();
-  const { data, error } = await ssr.auth.getClaims();
-  const sub = data?.claims?.sub;
-  if (error || !sub) return null;
-  return sub;
+  const { data } = await auth.getSession();
+  return data?.user?.id ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -121,13 +128,16 @@ export async function requireStaffLocationAccess(
   const userId = await getAuthenticatedUserId();
   if (!userId) return { ok: false, status: 401 };
 
-  const ssr = await createServerClient();
-  const { data: assignment } = await ssr
-    .from("staff_assignments")
-    .select("role")
-    .eq("user_id", userId)
-    .eq("location_id", locationId)
-    .maybeSingle();
+  const [assignment] = await db
+    .select({ role: staffAssignments.role })
+    .from(staffAssignments)
+    .where(
+      and(
+        eq(staffAssignments.userId, userId),
+        eq(staffAssignments.locationId, locationId)
+      )
+    )
+    .limit(1);
 
   if (!assignment) return { ok: false, status: 403 };
 
@@ -142,14 +152,8 @@ export async function requireStaffLocationAccess(
  * Returns { ok: false, status: 404 } if the patient doesn't exist or the user
  * is not a staff member at the patient's org. 404 (not 403) is intentional —
  * we don't leak patient existence to unauthorised callers.
- *
- * `serviceClient` is used for the patient + staff_assignments lookups so the
- * checks see all rows regardless of RLS (which is staff-scoped via auth.uid()
- * and would otherwise be empty for service-role bypass paths). The auth check
- * itself uses an SSR client bound to the request cookies.
  */
 export async function assertStaffCanAccessPatient(
-  serviceClient: SupabaseClient,
   patientId: string,
 ): Promise<StaffAccessResult> {
   const userId = await getAuthenticatedUserId();
@@ -163,12 +167,12 @@ export async function assertStaffCanAccessPatient(
 
   // Patient-org and the user's org memberships are independent reads — run
   // them concurrently rather than chaining.
-  const [patientRes, orgIds] = await Promise.all([
-    serviceClient.from("patients").select("org_id").eq("id", patientId).single(),
-    fetchUserOrgIds(serviceClient, userId),
+  const [patientRows, orgIds] = await Promise.all([
+    db.select({ org_id: patientsT.orgId }).from(patientsT).where(eq(patientsT.id, patientId)).limit(1),
+    fetchUserOrgIds(userId),
   ]);
 
-  const patient = patientRes.data;
+  const patient = patientRows[0];
   if (!patient) return { ok: false, status: 404 };
 
   if (!orgIds.has(patient.org_id)) {
@@ -196,28 +200,24 @@ export async function assertStaffCanAccessPatient(
  * rationale as `assertStaffCanAccessPatient`.
  */
 export async function assertStaffCanAccessSubmission(
-  serviceClient: SupabaseClient,
   submissionId: string,
 ): Promise<StaffAccessResult> {
   const userId = await getAuthenticatedUserId();
   if (!userId) return { ok: false, status: 401 };
 
-  const { data: submission } = await serviceClient
-    .from("form_submissions")
-    .select("form_id, forms!inner(org_id)")
-    .eq("id", submissionId)
-    .single();
+  const [submission] = await db
+    .select({ org_id: formsT.orgId })
+    .from(formSubmissions)
+    .innerJoin(formsT, eq(formsT.id, formSubmissions.formId))
+    .where(eq(formSubmissions.id, submissionId))
+    .limit(1);
 
   if (!submission) return { ok: false, status: 404 };
 
-  const formOrg = submission.forms as
-    | { org_id: string }
-    | { org_id: string }[]
-    | null;
-  const orgId = Array.isArray(formOrg) ? formOrg[0]?.org_id : formOrg?.org_id;
+  const orgId = submission.org_id;
   if (!orgId) return { ok: false, status: 404 };
 
-  const userOrgIds = await fetchUserOrgIds(serviceClient, userId);
+  const userOrgIds = await fetchUserOrgIds(userId);
   if (!userOrgIds.has(orgId)) {
     return { ok: false, status: 404 };
   }
@@ -230,26 +230,15 @@ export async function assertStaffCanAccessSubmission(
  * `staff_assignments → locations.org_id`. Shared by the org/resource gates
  * below so the membership rule lives in one place.
  */
-async function fetchUserOrgIds(
-  serviceClient: SupabaseClient,
-  userId: string,
-): Promise<Set<string>> {
-  const { data: assignments } = await serviceClient
-    .from("staff_assignments")
-    .select("locations!inner(org_id)")
-    .eq("user_id", userId);
+async function fetchUserOrgIds(userId: string): Promise<Set<string>> {
+  const assignments = await db
+    .select({ org_id: locationsT.orgId })
+    .from(staffAssignments)
+    .innerJoin(locationsT, eq(locationsT.id, staffAssignments.locationId))
+    .where(eq(staffAssignments.userId, userId));
 
   return new Set(
-    (assignments ?? [])
-      .map((a) => {
-        const loc = a.locations as
-          | { org_id: string }
-          | { org_id: string }[]
-          | null;
-        if (Array.isArray(loc)) return loc[0]?.org_id;
-        return loc?.org_id;
-      })
-      .filter((id): id is string => !!id),
+    assignments.map((a) => a.org_id).filter((id): id is string => !!id),
   );
 }
 
@@ -271,13 +260,12 @@ async function fetchUserOrgIds(
  * matching the existence-leak convention of `assertStaffCanAccess*`.
  */
 export async function requireStaffOrgAccess(
-  serviceClient: SupabaseClient,
   orgId: string,
 ): Promise<StaffAccessResult> {
   const userId = await getAuthenticatedUserId();
   if (!userId) return { ok: false, status: 401 };
 
-  const orgIds = await fetchUserOrgIds(serviceClient, userId);
+  const orgIds = await fetchUserOrgIds(userId);
   if (!orgIds.has(orgId)) return { ok: false, status: 404 };
 
   return { ok: true, userId, orgId };
@@ -292,25 +280,39 @@ export async function requireStaffOrgAccess(
  * table carrying the org. 404 on missing resource OR non-membership (no
  * existence leak).
  */
+// Maps the legacy `table` string used by the resource gates to its Drizzle
+// table + id/org columns. Every resource here is org-scoped via `org_id`.
+const RESOURCE_TABLES: Record<
+  string,
+  { table: PgTable; id: PgColumn; org: PgColumn }
+> = {
+  forms: { table: formsT, id: formsT.id, org: formsT.orgId },
+  workflow_templates: { table: workflowTemplatesT, id: workflowTemplatesT.id, org: workflowTemplatesT.orgId },
+  appointment_types: { table: appointmentTypesT, id: appointmentTypesT.id, org: appointmentTypesT.orgId },
+  files: { table: filesT, id: filesT.id, org: filesT.orgId },
+  outcome_pathways: { table: outcomePathwaysT, id: outcomePathwaysT.id, org: outcomePathwaysT.orgId },
+};
+
 async function requireStaffCanAccessResource(
-  serviceClient: SupabaseClient,
   table: string,
   resourceId: string,
-  orgColumn: string,
 ): Promise<StaffAccessResult> {
   const userId = await getAuthenticatedUserId();
   if (!userId) return { ok: false, status: 401 };
 
-  const { data: row } = await serviceClient
-    .from(table)
-    .select(orgColumn)
-    .eq("id", resourceId)
-    .single();
+  const mapping = RESOURCE_TABLES[table];
+  if (!mapping) return { ok: false, status: 404 };
 
-  const orgId = (row as Record<string, string> | null)?.[orgColumn];
+  const [row] = await db
+    .select({ org_id: mapping.org })
+    .from(mapping.table)
+    .where(eq(mapping.id, resourceId))
+    .limit(1);
+
+  const orgId = (row as { org_id: string } | undefined)?.org_id;
   if (!orgId) return { ok: false, status: 404 };
 
-  const orgIds = await fetchUserOrgIds(serviceClient, userId);
+  const orgIds = await fetchUserOrgIds(userId);
   if (!orgIds.has(orgId)) return { ok: false, status: 404 };
 
   return { ok: true, userId, orgId };
@@ -329,8 +331,17 @@ async function requireStaffCanAccessResource(
 // ---------------------------------------------------------------------------
 
 /** True iff every id in `ids` exists in `table` with `org_id === orgId`. */
+// Org-scoped tables addressable by the `assertIdsBelongToOrg` helper.
+const ORG_SCOPED_TABLES: Record<
+  string,
+  { table: PgTable; id: PgColumn; org: PgColumn }
+> = {
+  patients: { table: patientsT, id: patientsT.id, org: patientsT.orgId },
+  appointments: { table: appointmentsT, id: appointmentsT.id, org: appointmentsT.orgId },
+  forms: { table: formsT, id: formsT.id, org: formsT.orgId },
+};
+
 export async function assertIdsBelongToOrg(
-  serviceClient: SupabaseClient,
   table: string,
   ids: string[],
   orgId: string,
@@ -338,33 +349,34 @@ export async function assertIdsBelongToOrg(
   const unique = [...new Set(ids.filter(Boolean))];
   if (unique.length === 0) return true;
 
-  const { data, error } = await serviceClient
-    .from(table)
-    .select("id")
-    .eq("org_id", orgId)
-    .in("id", unique);
+  const mapping = ORG_SCOPED_TABLES[table];
+  if (!mapping) return false;
 
-  if (error) return false;
-  return (data?.length ?? 0) === unique.length;
+  try {
+    const data = await db
+      .select({ id: mapping.id })
+      .from(mapping.table)
+      .where(and(eq(mapping.org, orgId), inArray(mapping.id, unique)));
+    return data.length === unique.length;
+  } catch {
+    return false;
+  }
 }
 
 /** True iff the patient belongs to `orgId`. */
 export function assertPatientInOrg(
-  serviceClient: SupabaseClient,
   patientId: string,
   orgId: string,
 ): Promise<boolean> {
-  return assertIdsBelongToOrg(serviceClient, "patients", [patientId], orgId);
+  return assertIdsBelongToOrg("patients", [patientId], orgId);
 }
 
 /** True iff the appointment belongs to `orgId`. */
 export function assertAppointmentInOrg(
-  serviceClient: SupabaseClient,
   appointmentId: string,
   orgId: string,
 ): Promise<boolean> {
   return assertIdsBelongToOrg(
-    serviceClient,
     "appointments",
     [appointmentId],
     orgId,
@@ -373,84 +385,77 @@ export function assertAppointmentInOrg(
 
 /** True iff every form id belongs to `orgId`. */
 export function assertFormsInOrg(
-  serviceClient: SupabaseClient,
   formIds: string[],
   orgId: string,
 ): Promise<boolean> {
-  return assertIdsBelongToOrg(serviceClient, "forms", formIds, orgId);
+  return assertIdsBelongToOrg("forms", formIds, orgId);
 }
 
 /** True iff every staff_assignment id is attached to `locationId`. */
 export async function assertStaffAssignmentsInLocation(
-  serviceClient: SupabaseClient,
   staffAssignmentIds: string[],
   locationId: string,
 ): Promise<boolean> {
   const unique = [...new Set(staffAssignmentIds.filter(Boolean))];
   if (unique.length === 0) return true;
 
-  const { data, error } = await serviceClient
-    .from("staff_assignments")
-    .select("id")
-    .eq("location_id", locationId)
-    .in("id", unique);
-
-  if (error) return false;
-  return (data?.length ?? 0) === unique.length;
+  try {
+    const data = await db
+      .select({ id: staffAssignments.id })
+      .from(staffAssignments)
+      .where(
+        and(
+          eq(staffAssignments.locationId, locationId),
+          inArray(staffAssignments.id, unique)
+        )
+      );
+    return data.length === unique.length;
+  } catch {
+    return false;
+  }
 }
 
 /** Verify staff access to a form, anchored on `forms.org_id`. */
 export function requireStaffCanAccessForm(
-  serviceClient: SupabaseClient,
   formId: string,
 ): Promise<StaffAccessResult> {
-  return requireStaffCanAccessResource(serviceClient, "forms", formId, "org_id");
+  return requireStaffCanAccessResource("forms", formId);
 }
 
 /** Verify staff access to a workflow template, anchored on `workflow_templates.org_id`. */
 export function requireStaffCanAccessWorkflowTemplate(
-  serviceClient: SupabaseClient,
   templateId: string,
 ): Promise<StaffAccessResult> {
   return requireStaffCanAccessResource(
-    serviceClient,
     "workflow_templates",
     templateId,
-    "org_id",
   );
 }
 
 /** Verify staff access to an appointment type, anchored on `appointment_types.org_id`. */
 export function requireStaffCanAccessAppointmentType(
-  serviceClient: SupabaseClient,
   appointmentTypeId: string,
 ): Promise<StaffAccessResult> {
   return requireStaffCanAccessResource(
-    serviceClient,
     "appointment_types",
     appointmentTypeId,
-    "org_id",
   );
 }
 
 /** Verify staff access to an uploaded file, anchored on `files.org_id`. */
 export function requireStaffCanAccessFile(
-  serviceClient: SupabaseClient,
   fileId: string,
 ): Promise<StaffAccessResult> {
-  return requireStaffCanAccessResource(serviceClient, "files", fileId, "org_id");
+  return requireStaffCanAccessResource("files", fileId);
 }
 
 /** Verify staff access to an outcome pathway, anchored on `outcome_pathways.org_id`. */
 export function requireStaffCanAccessOutcomePathway(
-  serviceClient: SupabaseClient,
   pathwayId: string,
 ): Promise<StaffAccessResult> {
   return requireStaffCanAccessResource(
-    serviceClient,
     "outcome_pathways",
     pathwayId,
-    "org_id",
   );
 }
 
@@ -462,7 +467,6 @@ export function requireStaffCanAccessOutcomePathway(
  * Returns { ok: true, userId, orgId, locationId } on success.
  */
 export async function requireStaffCanAccessAppointment(
-  serviceClient: SupabaseClient,
   appointmentId: string,
 ): Promise<
   | { ok: true; userId: string; orgId: string; locationId: string }
@@ -471,15 +475,15 @@ export async function requireStaffCanAccessAppointment(
   const userId = await getAuthenticatedUserId();
   if (!userId) return { ok: false, status: 401 };
 
-  const { data: appt } = await serviceClient
-    .from("appointments")
-    .select("org_id, location_id")
-    .eq("id", appointmentId)
-    .single();
+  const [appt] = await db
+    .select({ org_id: appointmentsT.orgId, location_id: appointmentsT.locationId })
+    .from(appointmentsT)
+    .where(eq(appointmentsT.id, appointmentId))
+    .limit(1);
 
   if (!appt?.org_id) return { ok: false, status: 404 };
 
-  const orgIds = await fetchUserOrgIds(serviceClient, userId);
+  const orgIds = await fetchUserOrgIds(userId);
   if (!orgIds.has(appt.org_id)) return { ok: false, status: 404 };
 
   return {
@@ -494,27 +498,23 @@ export async function requireStaffCanAccessAppointment(
  * Verify staff access to a form assignment, resolved via its form's org.
  */
 export async function requireStaffCanAccessFormAssignment(
-  serviceClient: SupabaseClient,
   assignmentId: string,
 ): Promise<StaffAccessResult> {
   const userId = await getAuthenticatedUserId();
   if (!userId) return { ok: false, status: 401 };
 
-  const { data: assignment } = await serviceClient
-    .from("form_assignments")
-    .select("form_id, forms!inner(org_id)")
-    .eq("id", assignmentId)
-    .single();
+  const [assignment] = await db
+    .select({ org_id: formsT.orgId })
+    .from(formAssignments)
+    .innerJoin(formsT, eq(formsT.id, formAssignments.formId))
+    .where(eq(formAssignments.id, assignmentId))
+    .limit(1);
 
   if (!assignment) return { ok: false, status: 404 };
-  const formOrg = assignment.forms as
-    | { org_id: string }
-    | { org_id: string }[]
-    | null;
-  const orgId = Array.isArray(formOrg) ? formOrg[0]?.org_id : formOrg?.org_id;
+  const orgId = assignment.org_id;
   if (!orgId) return { ok: false, status: 404 };
 
-  const orgIds = await fetchUserOrgIds(serviceClient, userId);
+  const orgIds = await fetchUserOrgIds(userId);
   if (!orgIds.has(orgId)) return { ok: false, status: 404 };
 
   return { ok: true, userId, orgId };
@@ -534,20 +534,18 @@ export async function requireStaffCanAccessFormAssignment(
 export async function resolveDefaultStaffOrg(
   userId: string,
 ): Promise<{ orgId: string; locationId: string } | null> {
-  const ssr = await createServerClient();
-  const { data: assignments } = await ssr
-    .from("staff_assignments")
-    .select("location_id, locations!inner(org_id)")
-    .eq("user_id", userId)
+  const [assignment] = await db
+    .select({
+      location_id: staffAssignments.locationId,
+      org_id: locationsT.orgId,
+    })
+    .from(staffAssignments)
+    .innerJoin(locationsT, eq(locationsT.id, staffAssignments.locationId))
+    .where(eq(staffAssignments.userId, userId))
     .limit(1);
 
-  const assignment = assignments?.[0];
   if (!assignment) return null;
-  const loc = assignment.locations as
-    | { org_id: string }
-    | { org_id: string }[]
-    | null;
-  const orgId = Array.isArray(loc) ? loc[0]?.org_id : loc?.org_id;
+  const orgId = assignment.org_id;
   if (!orgId) return null;
 
   return { orgId, locationId: assignment.location_id };
@@ -568,60 +566,51 @@ export async function fetchUserClinicAssignments(
   userId: string,
   fullName: string,
 ): Promise<StaffAssignmentData[]> {
-  const ssr = await createServerClient();
+  const rows = await db
+    .select({
+      role: staffAssignments.role,
+      loc_id: locationsT.id,
+      loc_org_id: locationsT.orgId,
+      loc_name: locationsT.name,
+      loc_address: locationsT.address,
+      loc_timezone: locationsT.timezone,
+      loc_qr_token: locationsT.qrToken,
+      loc_stripe_account_id: locationsT.stripeAccountId,
+      org_id: organisationsT.id,
+      org_name: organisationsT.name,
+      org_slug: organisationsT.slug,
+      org_tier: organisationsT.tier,
+      org_logo_url: organisationsT.logoUrl,
+      org_stripe_routing: organisationsT.stripeRouting,
+      org_timezone: organisationsT.timezone,
+    })
+    .from(staffAssignments)
+    .innerJoin(locationsT, eq(locationsT.id, staffAssignments.locationId))
+    .innerJoin(organisationsT, eq(organisationsT.id, locationsT.orgId))
+    .where(eq(staffAssignments.userId, userId));
 
-  const { data } = await ssr
-    .from("staff_assignments")
-    .select(
-      `
-      role,
-      locations!inner (
-        id,
-        org_id,
-        name,
-        address,
-        timezone,
-        qr_token,
-        stripe_account_id,
-        organisations!inner (
-          id,
-          name,
-          slug,
-          tier,
-          logo_url,
-          stripe_routing,
-          timezone
-        )
-      )
-    `,
-    )
-    .eq("user_id", userId);
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const assignments: StaffAssignmentData[] = (data ?? []).map((sa: any) => {
-    const loc = sa.locations as Record<string, unknown>;
-    const org = loc.organisations as Record<string, unknown>;
+  const assignments: StaffAssignmentData[] = rows.map((sa) => {
     return {
       userId,
       fullName,
       role: sa.role as UserRole,
       location: {
-        id: loc.id as string,
-        org_id: loc.org_id as string,
-        name: loc.name as string,
-        address: loc.address as string | null,
-        timezone: loc.timezone as string,
-        qr_token: loc.qr_token as string,
-        stripe_account_id: loc.stripe_account_id as string | null,
+        id: sa.loc_id,
+        org_id: sa.loc_org_id,
+        name: sa.loc_name,
+        address: sa.loc_address,
+        timezone: sa.loc_timezone,
+        qr_token: sa.loc_qr_token as string,
+        stripe_account_id: sa.loc_stripe_account_id,
       },
       org: {
-        id: org.id as string,
-        name: org.name as string,
-        slug: org.slug as string,
-        tier: org.tier as Organisation["tier"],
-        logo_url: org.logo_url as string | null,
-        stripe_routing: org.stripe_routing as Organisation["stripe_routing"],
-        timezone: org.timezone as string,
+        id: sa.org_id,
+        name: sa.org_name,
+        slug: sa.org_slug,
+        tier: sa.org_tier as Organisation["tier"],
+        logo_url: sa.org_logo_url,
+        stripe_routing: sa.org_stripe_routing as Organisation["stripe_routing"],
+        timezone: sa.org_timezone,
       },
     };
   });

@@ -269,11 +269,11 @@ export const useClinicStore = create<ClinicStore>()(
             fetchJson<{
               appointments: ReadinessAppointment[];
               counts?: ReadinessCounts;
-            }>(`/api/readiness?location_id=${locationId}&direction=pre_appointment`),
+            }>(`/api/tasks?location_id=${locationId}&direction=pre_appointment`),
             fetchJson<{
               appointments: ReadinessAppointment[];
               counts?: ReadinessCounts;
-            }>(`/api/readiness?location_id=${locationId}&direction=post_appointment`),
+            }>(`/api/tasks?location_id=${locationId}&direction=post_appointment`),
           ]);
           if (get().locationId !== locationId) return;
           set(

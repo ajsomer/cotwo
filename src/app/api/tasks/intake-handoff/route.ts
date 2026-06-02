@@ -1,10 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  appointments as appointmentsT,
+  appointmentActions,
+  workflowActionBlocks,
+  intakePackageJourneys,
+  patients as patientsT,
+  forms as formsT,
+  formSubmissions,
+  paymentMethods,
+} from "@/lib/db/schema";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { extractFieldsFromSchema } from "@/lib/forms/extract-fields";
 import { requireStaffCanAccessAppointment } from "@/lib/auth/staff-access";
 
 /**
- * GET /api/readiness/intake-handoff?appointment_id=X
+ * GET /api/tasks/intake-handoff?appointment_id=X
  *
  * Returns everything the intake-package handoff panel needs in one shot:
  * the action's completion timestamp, every form's responses (flattened),
@@ -24,8 +35,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "appointment_id required" }, { status: 400 });
   }
 
-  const supabase = createServiceClient();
-  const access = await requireStaffCanAccessAppointment(supabase, appointmentId);
+  const access = await requireStaffCanAccessAppointment(appointmentId);
   if (!access.ok) {
     return NextResponse.json(
       { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -34,33 +44,45 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const { data: appointment, error: apptErr } = await supabase
-      .from("appointments")
-      .select("id, scheduled_at, patient_id")
-      .eq("id", appointmentId)
-      .maybeSingle();
+    const [appointment] = await db
+      .select({
+        id: appointmentsT.id,
+        scheduled_at: appointmentsT.scheduledAt,
+        patient_id: appointmentsT.patientId,
+      })
+      .from(appointmentsT)
+      .where(eq(appointmentsT.id, appointmentId))
+      .limit(1);
 
-    if (apptErr || !appointment) {
+    if (!appointment) {
       return NextResponse.json({ error: "Appointment not found" }, { status: 404 });
     }
 
     // Find the intake_package appointment_action — the source of truth for
     // completion / transcribed state.
-    const { data: actionRows } = await supabase
-      .from("appointment_actions")
-      .select("id, status, action_block_id, completed_at, updated_at")
-      .eq("appointment_id", appointmentId);
+    const actionRows = await db
+      .select({
+        id: appointmentActions.id,
+        status: appointmentActions.status,
+        action_block_id: appointmentActions.actionBlockId,
+        completed_at: appointmentActions.completedAt,
+        updated_at: appointmentActions.updatedAt,
+      })
+      .from(appointmentActions)
+      .where(eq(appointmentActions.appointmentId, appointmentId));
 
-    const blockIds = (actionRows ?? []).map((a) => a.action_block_id);
-    const { data: blocks } = blockIds.length
-      ? await supabase
-          .from("workflow_action_blocks")
-          .select("id, action_type, config")
-          .in("id", blockIds)
-      : { data: [] as Array<{ id: string; action_type: string; config: unknown }> };
+    const blockIds = actionRows.map((a) => a.action_block_id);
+    const blocks = blockIds.length === 0 ? [] : await db
+      .select({
+        id: workflowActionBlocks.id,
+        action_type: workflowActionBlocks.actionType,
+        config: workflowActionBlocks.config,
+      })
+      .from(workflowActionBlocks)
+      .where(inArray(workflowActionBlocks.id, blockIds));
 
-    const blockMap = new Map((blocks ?? []).map((b) => [b.id, b]));
-    const intakeAction = (actionRows ?? []).find(
+    const blockMap = new Map(blocks.map((b) => [b.id, b]));
+    const intakeAction = actionRows.find(
       (a) => blockMap.get(a.action_block_id)?.action_type === "intake_package"
     );
 
@@ -79,13 +101,21 @@ export async function GET(request: NextRequest) {
     };
 
     // Journey is preferred but optional — we'll fall back to block config.
-    const { data: journey } = await supabase
-      .from("intake_package_journeys")
-      .select(
-        "id, patient_id, form_ids, includes_card_capture, includes_consent, card_captured_at, consent_completed_at, forms_completed, completed_at"
-      )
-      .eq("appointment_id", appointmentId)
-      .maybeSingle();
+    const [journey] = await db
+      .select({
+        id: intakePackageJourneys.id,
+        patient_id: intakePackageJourneys.patientId,
+        form_ids: intakePackageJourneys.formIds,
+        includes_card_capture: intakePackageJourneys.includesCardCapture,
+        includes_consent: intakePackageJourneys.includesConsent,
+        card_captured_at: intakePackageJourneys.cardCapturedAt,
+        consent_completed_at: intakePackageJourneys.consentCompletedAt,
+        forms_completed: intakePackageJourneys.formsCompleted,
+        completed_at: intakePackageJourneys.completedAt,
+      })
+      .from(intakePackageJourneys)
+      .where(eq(intakePackageJourneys.appointmentId, appointmentId))
+      .limit(1);
 
     const includesCardCapture =
       journey?.includes_card_capture ?? blockConfig.includes_card_capture ?? false;
@@ -101,11 +131,11 @@ export async function GET(request: NextRequest) {
     let patientFirstName = "Unknown";
     let patientLastName = "";
     if (patientId) {
-      const { data: patient } = await supabase
-        .from("patients")
-        .select("first_name, last_name")
-        .eq("id", patientId)
-        .maybeSingle();
+      const [patient] = await db
+        .select({ first_name: patientsT.firstName, last_name: patientsT.lastName })
+        .from(patientsT)
+        .where(eq(patientsT.id, patientId))
+        .limit(1);
       if (patient) {
         patientFirstName = patient.first_name;
         patientLastName = patient.last_name;
@@ -122,14 +152,26 @@ export async function GET(request: NextRequest) {
     }> = [];
 
     if (formIds.length > 0) {
-      const [{ data: formRows }, { data: submissions }] = await Promise.all([
-        supabase.from("forms").select("id, name, schema").in("id", formIds),
-        supabase
-          .from("form_submissions")
-          .select("id, form_id, responses, created_at")
-          .eq("appointment_id", appointmentId)
-          .in("form_id", formIds)
-          .order("created_at", { ascending: false }),
+      const [formRows, submissions] = await Promise.all([
+        db
+          .select({ id: formsT.id, name: formsT.name, schema: formsT.schema })
+          .from(formsT)
+          .where(inArray(formsT.id, formIds)),
+        db
+          .select({
+            id: formSubmissions.id,
+            form_id: formSubmissions.formId,
+            responses: formSubmissions.responses,
+            created_at: formSubmissions.createdAt,
+          })
+          .from(formSubmissions)
+          .where(
+            and(
+              eq(formSubmissions.appointmentId, appointmentId),
+              inArray(formSubmissions.formId, formIds)
+            )
+          )
+          .orderBy(desc(formSubmissions.createdAt)),
       ]);
 
       type SubmissionRow = {
@@ -138,9 +180,9 @@ export async function GET(request: NextRequest) {
         responses: unknown;
         created_at: string;
       };
-      const formMap = new Map((formRows ?? []).map((f) => [f.id, f]));
+      const formMap = new Map(formRows.map((f) => [f.id, f]));
       const submissionByFormId = new Map<string, SubmissionRow>();
-      for (const sub of (submissions ?? []) as SubmissionRow[]) {
+      for (const sub of submissions as SubmissionRow[]) {
         if (!submissionByFormId.has(sub.form_id)) {
           submissionByFormId.set(sub.form_id, sub);
         }
@@ -170,13 +212,17 @@ export async function GET(request: NextRequest) {
     // the most recent payment method on the patient.
     let card: { brand: string; last_four: string; captured_at: string } | null = null;
     if (includesCardCapture && patientId) {
-      const { data: paymentMethods } = await supabase
-        .from("payment_methods")
-        .select("card_brand, card_last_four, created_at")
-        .eq("patient_id", patientId)
-        .order("created_at", { ascending: false })
+      const paymentMethodRows = await db
+        .select({
+          card_brand: paymentMethods.cardBrand,
+          card_last_four: paymentMethods.cardLastFour,
+          created_at: paymentMethods.createdAt,
+        })
+        .from(paymentMethods)
+        .where(eq(paymentMethods.patientId, patientId))
+        .orderBy(desc(paymentMethods.createdAt))
         .limit(1);
-      const pm = paymentMethods?.[0];
+      const pm = paymentMethodRows[0];
       const capturedAt = journey?.card_captured_at ?? pm?.created_at ?? null;
       if (pm) {
         card = {

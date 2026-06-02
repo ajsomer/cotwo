@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import { files as filesT } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { fetchFiles } from "@/lib/clinic/fetchers/forms";
 import {
   requireStaffOrgAccess,
@@ -14,7 +17,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "org_id required" }, { status: 400 });
   }
 
-  const access = await requireStaffOrgAccess(createServiceClient(), orgId);
+  const access = await requireStaffOrgAccess(orgId);
   if (!access.ok) {
     return NextResponse.json(
       { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -64,7 +67,7 @@ export async function POST(request: NextRequest) {
 
     const supabase = createServiceClient();
 
-    const access = await requireStaffOrgAccess(supabase, orgId);
+    const access = await requireStaffOrgAccess(orgId);
     if (!access.ok) {
       return NextResponse.json(
         { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -93,26 +96,37 @@ export async function POST(request: NextRequest) {
     }
 
     // Create files row
-    const { data: fileRow, error: dbError } = await supabase
-      .from("files")
-      .insert({
-        id: fileId,
-        org_id: orgId,
-        name: name.trim(),
-        description: description?.trim() || null,
-        storage_path: storagePath,
-        file_size_bytes: file.size,
-        mime_type: "application/pdf",
-        uploaded_by: uploadedBy || null,
-      })
-      .select()
-      .single();
-
-    if (dbError) {
+    let fileRow;
+    try {
+      [fileRow] = await db
+        .insert(filesT)
+        .values({
+          id: fileId,
+          orgId,
+          name: name.trim(),
+          description: description?.trim() || null,
+          storagePath,
+          fileSizeBytes: file.size,
+          mimeType: "application/pdf",
+          uploadedBy: uploadedBy || null,
+        })
+        .returning({
+          id: filesT.id,
+          org_id: filesT.orgId,
+          name: filesT.name,
+          description: filesT.description,
+          storage_path: filesT.storagePath,
+          file_size_bytes: filesT.fileSizeBytes,
+          mime_type: filesT.mimeType,
+          uploaded_by: filesT.uploadedBy,
+          archived_at: filesT.archivedAt,
+          created_at: filesT.createdAt,
+        });
+    } catch (dbError) {
       console.error("[files] DB insert error:", dbError);
       // Clean up the uploaded storage object
       await supabase.storage.from("clinic-files").remove([storagePath]);
-      return NextResponse.json({ error: dbError.message }, { status: 500 });
+      return NextResponse.json({ error: (dbError as Error).message }, { status: 500 });
     }
 
     return NextResponse.json({ file: fileRow }, { status: 201 });
@@ -133,7 +147,7 @@ export async function DELETE(request: NextRequest) {
   try {
     const supabase = createServiceClient();
 
-    const access = await requireStaffCanAccessFile(supabase, id);
+    const access = await requireStaffCanAccessFile(id);
     if (!access.ok) {
       return NextResponse.json(
         { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -141,14 +155,10 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    const { error } = await supabase
-      .from("files")
-      .update({ archived_at: new Date().toISOString() })
-      .eq("id", id);
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+    await db
+      .update(filesT)
+      .set({ archivedAt: new Date().toISOString() })
+      .where(eq(filesT.id, id));
 
     return NextResponse.json({ success: true });
   } catch (err) {

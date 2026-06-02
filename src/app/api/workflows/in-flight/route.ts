@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import { appointmentWorkflowRuns } from "@/lib/db/schema";
+import { and, eq, sql } from "drizzle-orm";
 import { requireStaffCanAccessWorkflowTemplate } from "@/lib/auth/staff-access";
 
 // GET /api/workflows/in-flight?template_id=xxx
@@ -14,8 +16,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const supabase = createServiceClient();
-  const access = await requireStaffCanAccessWorkflowTemplate(supabase, templateId);
+  const access = await requireStaffCanAccessWorkflowTemplate(templateId);
   if (!access.ok) {
     return NextResponse.json(
       { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -24,17 +25,17 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const { count, error } = await supabase
-      .from("appointment_workflow_runs")
-      .select("id", { count: "exact", head: true })
-      .eq("workflow_template_id", templateId)
-      .eq("status", "active");
+    const [row] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(appointmentWorkflowRuns)
+      .where(
+        and(
+          eq(appointmentWorkflowRuns.workflowTemplateId, templateId),
+          eq(appointmentWorkflowRuns.status, "active")
+        )
+      );
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
-    return NextResponse.json({ in_flight_count: count ?? 0 });
+    return NextResponse.json({ in_flight_count: row?.count ?? 0 });
   } catch (err) {
     console.error("[WORKFLOWS] in-flight count error:", err);
     return NextResponse.json(

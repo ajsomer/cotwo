@@ -1,11 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  patientPhoneNumbers,
+  patients as patientsT,
+  appointments as appointmentsT,
+  appointmentActions,
+  workflowActionBlocks,
+} from "@/lib/db/schema";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { scheduleWorkflowForAppointment } from "@/lib/workflows/scanner";
 import { requireStaffLocationAccess } from "@/lib/auth/staff-access";
 import { normalisePhone } from "@/lib/phone/normalise";
 
 /**
- * POST /api/readiness/add-patient
+ * POST /api/tasks/add-patient
  *
  * Creates a patient (or matches existing) and an appointment, then kicks off
  * the workflow engine. Used by the Readiness Dashboard's "+ Add patient" flow.
@@ -60,39 +68,32 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const supabase = createServiceClient();
-
     // Check for existing patient by phone + DOB + org
-    const { data: existingPatients } = await supabase
-      .from("patient_phone_numbers")
-      .select("patient_id, patients!inner(id, first_name, last_name, date_of_birth, org_id)")
-      .eq("phone_number", normalised);
+    const existingPatients = await db
+      .select({
+        patient_id: patientPhoneNumbers.patientId,
+        id: patientsT.id,
+        first_name: patientsT.firstName,
+        last_name: patientsT.lastName,
+        date_of_birth: patientsT.dateOfBirth,
+        org_id: patientsT.orgId,
+      })
+      .from(patientPhoneNumbers)
+      .innerJoin(patientsT, eq(patientsT.id, patientPhoneNumbers.patientId))
+      .where(eq(patientPhoneNumbers.phoneNumber, normalised));
 
-    const matchingPatient = (existingPatients ?? []).find((row) => {
-      const patient = row.patients as unknown as {
-        id: string;
-        first_name: string;
-        last_name: string;
-        date_of_birth: string;
-        org_id: string;
-      };
-      return patient.org_id === org_id && patient.date_of_birth === dob;
-    });
+    const matchingPatient = existingPatients.find(
+      (row) => row.org_id === org_id && row.date_of_birth === dob,
+    );
 
     if (matchingPatient && !confirm_existing) {
-      const patient = matchingPatient.patients as unknown as {
-        id: string;
-        first_name: string;
-        last_name: string;
-        date_of_birth: string;
-      };
       return NextResponse.json({
         existing_patient: true,
         patient: {
-          id: patient.id,
-          first_name: patient.first_name,
-          last_name: patient.last_name,
-          date_of_birth: patient.date_of_birth,
+          id: matchingPatient.id,
+          first_name: matchingPatient.first_name,
+          last_name: matchingPatient.last_name,
+          date_of_birth: matchingPatient.date_of_birth,
         },
       });
     }
@@ -104,56 +105,61 @@ export async function POST(request: NextRequest) {
       patientId = matchingPatient.patient_id;
     } else {
       // Create new patient
-      const { data: newPatient, error: patientError } = await supabase
-        .from("patients")
-        .insert({
-          org_id,
-          first_name,
-          last_name,
-          date_of_birth: dob,
-        })
-        .select("id")
-        .single();
+      let newPatient: { id: string } | undefined;
+      try {
+        [newPatient] = await db
+          .insert(patientsT)
+          .values({
+            orgId: org_id,
+            firstName: first_name,
+            lastName: last_name,
+            dateOfBirth: dob,
+          })
+          .returning({ id: patientsT.id });
+      } catch (patientError) {
+        console.error("[add-patient] Failed to create patient:", patientError);
+      }
 
-      if (patientError || !newPatient) {
+      if (!newPatient) {
         return NextResponse.json({ error: "Failed to create patient" }, { status: 500 });
       }
 
       patientId = newPatient.id;
 
       // Create phone number record
-      const { error: phoneError } = await supabase
-        .from("patient_phone_numbers")
-        .insert({
-          patient_id: patientId,
-          phone_number: normalised,
-          is_primary: true,
+      try {
+        await db.insert(patientPhoneNumbers).values({
+          patientId,
+          phoneNumber: normalised,
+          isPrimary: true,
         });
-
-      if (phoneError) {
+      } catch (phoneError) {
         console.error("[add-patient] Failed to create phone:", phoneError);
       }
     }
 
     // Create appointment
-    const { data: appointment, error: apptError } = await supabase
-      .from("appointments")
-      .insert({
-        org_id,
-        location_id,
-        patient_id: patientId,
-        appointment_type_id,
-        room_id,
-        scheduled_at,
-        clinician_id: null,
-        phone_number: normalised,
-        status: "scheduled",
-      })
-      .select("id")
-      .single();
-
-    if (apptError || !appointment) {
+    let appointment: { id: string } | undefined;
+    try {
+      [appointment] = await db
+        .insert(appointmentsT)
+        .values({
+          orgId: org_id,
+          locationId: location_id,
+          patientId,
+          appointmentTypeId: appointment_type_id,
+          roomId: room_id,
+          scheduledAt: scheduled_at,
+          clinicianId: null,
+          phoneNumber: normalised,
+          status: "scheduled",
+        })
+        .returning({ id: appointmentsT.id });
+    } catch (apptError) {
       console.error("[add-patient] Failed to create appointment:", apptError);
+    }
+
+    if (!appointment) {
       return NextResponse.json({ error: "Failed to create appointment" }, { status: 500 });
     }
 
@@ -173,7 +179,7 @@ export async function POST(request: NextRequest) {
     // Pull back any actions that fired synchronously during scheduling so
     // the client can surface the stubbed SMS in the browser console. Easier
     // than tailing the server terminal during demos.
-    const fired = await collectFiredActions(supabase, appointment.id);
+    const fired = await collectFiredActions(appointment.id);
 
     return NextResponse.json({
       appointment_id: appointment.id,
@@ -194,23 +200,35 @@ interface FiredAction {
 }
 
 async function collectFiredActions(
-  supabase: ReturnType<typeof createServiceClient>,
   appointmentId: string
 ): Promise<FiredAction[]> {
-  const { data: actions } = await supabase
-    .from("appointment_actions")
-    .select("id, action_block_id, status, result, fired_at")
-    .eq("appointment_id", appointmentId)
-    .not("fired_at", "is", null);
+  const actions = await db
+    .select({
+      id: appointmentActions.id,
+      action_block_id: appointmentActions.actionBlockId,
+      status: appointmentActions.status,
+      result: appointmentActions.result,
+      fired_at: appointmentActions.firedAt,
+    })
+    .from(appointmentActions)
+    .where(
+      and(
+        eq(appointmentActions.appointmentId, appointmentId),
+        isNotNull(appointmentActions.firedAt)
+      )
+    );
 
-  if (!actions || actions.length === 0) return [];
+  if (actions.length === 0) return [];
 
-  const blockIds = actions.map((a) => a.action_block_id);
-  const { data: blocks } = await supabase
-    .from("workflow_action_blocks")
-    .select("id, action_type")
-    .in("id", blockIds);
-  const typeById = new Map((blocks ?? []).map((b) => [b.id, b.action_type]));
+  const blockIds = [...new Set(actions.map((a) => a.action_block_id))];
+  const blocks = blockIds.length === 0 ? [] : await db
+    .select({
+      id: workflowActionBlocks.id,
+      action_type: workflowActionBlocks.actionType,
+    })
+    .from(workflowActionBlocks)
+    .where(inArray(workflowActionBlocks.id, blockIds));
+  const typeById = new Map(blocks.map((b) => [b.id, b.action_type]));
 
   return actions.map((a) => ({
     action_type: typeById.get(a.action_block_id) ?? "unknown",

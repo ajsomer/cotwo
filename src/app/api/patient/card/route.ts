@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServiceClient } from '@/lib/supabase/service';
+import { db } from '@/lib/db';
+import { paymentMethods, sessions as sessionsT } from '@/lib/db/schema';
+import { and, eq } from 'drizzle-orm';
 import { resolveEntryTokenScope } from '@/lib/patient/entry-token';
 import { assertPatientInOrg } from '@/lib/auth/staff-access';
 
@@ -29,48 +31,60 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Missing required card fields' }, { status: 400 });
   }
 
-  const supabase = createServiceClient();
-
-  const scope = await resolveEntryTokenScope(supabase, token);
+  const scope = await resolveEntryTokenScope(token);
   if (!scope) {
     return NextResponse.json({ error: 'Invalid token' }, { status: 404 });
   }
-  if (!(await assertPatientInOrg(supabase, patient_id, scope.orgId))) {
+  if (!(await assertPatientInOrg(patient_id, scope.orgId))) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
   // Mark any existing default cards as non-default
-  await supabase
-    .from('payment_methods')
-    .update({ is_default: false })
-    .eq('patient_id', patient_id)
-    .eq('is_default', true);
+  await db
+    .update(paymentMethods)
+    .set({ isDefault: false })
+    .where(
+      and(
+        eq(paymentMethods.patientId, patient_id),
+        eq(paymentMethods.isDefault, true)
+      )
+    );
 
   // Insert new payment method
-  const { data: paymentMethod, error } = await supabase
-    .from('payment_methods')
-    .insert({
-      patient_id,
-      stripe_payment_method_id,
-      card_last_four,
-      card_brand,
-      card_expiry: card_expiry || null,
-      is_default: true,
-    })
-    .select('id, card_last_four, card_brand, card_expiry')
-    .single();
-
-  if (error) {
+  let paymentMethod: {
+    id: string;
+    card_last_four: string;
+    card_brand: string;
+    card_expiry: string | null;
+  };
+  try {
+    [paymentMethod] = await db
+      .insert(paymentMethods)
+      .values({
+        patientId: patient_id,
+        stripePaymentMethodId: stripe_payment_method_id,
+        cardLastFour: card_last_four,
+        cardBrand: card_brand,
+        cardExpiry: card_expiry || null,
+        isDefault: true,
+      })
+      .returning({
+        id: paymentMethods.id,
+        card_last_four: paymentMethods.cardLastFour,
+        card_brand: paymentMethods.cardBrand,
+        card_expiry: paymentMethods.cardExpiry,
+      });
+  } catch (error) {
     console.error('[CARD] Failed to store payment method:', error);
     return NextResponse.json({ error: 'Failed to store card' }, { status: 500 });
   }
 
   // Update session tracking — use the token's session, never a caller value.
   if (scope.sessionId) {
-    await supabase
-      .from('sessions')
-      .update({ card_captured: true })
-      .eq('id', scope.sessionId);
+    await db
+      .update(sessionsT)
+      .set({ cardCaptured: true })
+      .where(eq(sessionsT.id, scope.sessionId));
   }
 
   return NextResponse.json({ payment_method: paymentMethod });
@@ -85,22 +99,29 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'token and patient_id are required' }, { status: 400 });
   }
 
-  const supabase = createServiceClient();
-
-  const scope = await resolveEntryTokenScope(supabase, token);
+  const scope = await resolveEntryTokenScope(token);
   if (!scope) {
     return NextResponse.json({ error: 'Invalid token' }, { status: 404 });
   }
-  if (!(await assertPatientInOrg(supabase, patientId, scope.orgId))) {
+  if (!(await assertPatientInOrg(patientId, scope.orgId))) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  const { data: card } = await supabase
-    .from('payment_methods')
-    .select('id, card_last_four, card_brand, card_expiry, is_default')
-    .eq('patient_id', patientId)
-    .eq('is_default', true)
-    .single();
+  const [card] = await db
+    .select({
+      id: paymentMethods.id,
+      card_last_four: paymentMethods.cardLastFour,
+      card_brand: paymentMethods.cardBrand,
+      card_expiry: paymentMethods.cardExpiry,
+      is_default: paymentMethods.isDefault,
+    })
+    .from(paymentMethods)
+    .where(
+      and(
+        eq(paymentMethods.patientId, patientId),
+        eq(paymentMethods.isDefault, true)
+      )
+    );
 
   return NextResponse.json({ card: card || null });
 }

@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  formSubmissions,
+  forms as formsT,
+  patients as patientsT,
+  staffAssignments,
+  locations,
+} from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { requireAuthenticatedUser } from "@/lib/auth/staff-access";
 import { extractFieldsFromSchema } from "@/lib/forms/extract-fields";
 
@@ -27,62 +35,48 @@ export async function GET(
     return NextResponse.json({ error: "id required" }, { status: 400 });
   }
 
-  const supabase = createServiceClient();
   const auth = await requireAuthenticatedUser();
   if (!auth.ok) {
     return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
   }
 
-  const { data: submission } = await supabase
-    .from("form_submissions")
-    .select(
-      `
-      id,
-      form_id,
-      patient_id,
-      submission_source,
-      review_status,
-      reviewed_at,
-      reviewed_by,
-      responses,
-      created_at,
-      forms!inner(id, name, schema, org_id),
-      patients!inner(id, first_name, last_name)
-    `,
-    )
-    .eq("id", id)
-    .single();
+  const [submission] = await db
+    .select({
+      id: formSubmissions.id,
+      form_id: formSubmissions.formId,
+      patient_id: formSubmissions.patientId,
+      submission_source: formSubmissions.submissionSource,
+      review_status: formSubmissions.reviewStatus,
+      reviewed_at: formSubmissions.reviewedAt,
+      reviewed_by: formSubmissions.reviewedBy,
+      responses: formSubmissions.responses,
+      created_at: formSubmissions.createdAt,
+      form_name: formsT.name,
+      form_schema: formsT.schema,
+      form_org_id: formsT.orgId,
+      patient_first_name: patientsT.firstName,
+      patient_last_name: patientsT.lastName,
+    })
+    .from(formSubmissions)
+    .innerJoin(formsT, eq(formsT.id, formSubmissions.formId))
+    .innerJoin(patientsT, eq(patientsT.id, formSubmissions.patientId))
+    .where(eq(formSubmissions.id, id));
 
   if (!submission) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const form = Array.isArray(submission.forms)
-    ? submission.forms[0]
-    : submission.forms;
-  const patient = Array.isArray(submission.patients)
-    ? submission.patients[0]
-    : submission.patients;
-
-  const { data: assignments } = await supabase
-    .from("staff_assignments")
-    .select("locations!inner(org_id)")
-    .eq("user_id", auth.userId);
+  const assignments = await db
+    .select({ org_id: locations.orgId })
+    .from(staffAssignments)
+    .innerJoin(locations, eq(locations.id, staffAssignments.locationId))
+    .where(eq(staffAssignments.userId, auth.userId));
 
   const userOrgIds = new Set(
-    (assignments ?? [])
-      .map((a) => {
-        const loc = a.locations as
-          | { org_id: string }
-          | { org_id: string }[]
-          | null;
-        if (Array.isArray(loc)) return loc[0]?.org_id;
-        return loc?.org_id;
-      })
-      .filter((orgId): orgId is string => !!orgId),
+    assignments.map((a) => a.org_id).filter((orgId): orgId is string => !!orgId),
   );
 
-  if (!form?.org_id || !userOrgIds.has(form.org_id)) {
+  if (!submission.form_org_id || !userOrgIds.has(submission.form_org_id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
@@ -107,7 +101,7 @@ export async function GET(
   if (identity.email) projectedResponses.__identity_email = identity.email;
 
   const allFields = extractFieldsFromSchema(
-    form.schema as Record<string, unknown>,
+    submission.form_schema as Record<string, unknown>,
     projectedResponses,
   );
 
@@ -129,10 +123,10 @@ export async function GET(
   return NextResponse.json({
     id: submission.id,
     form_id: submission.form_id,
-    form_name: form.name,
+    form_name: submission.form_name,
     patient: {
-      id: patient.id,
-      name: `${patient.first_name} ${patient.last_name}`,
+      id: submission.patient_id,
+      name: `${submission.patient_first_name} ${submission.patient_last_name}`,
     },
     submission_source: submission.submission_source,
     review_status: submission.review_status,

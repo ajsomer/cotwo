@@ -106,7 +106,7 @@ export function FormHandoffPanel({
     setError(null);
 
     try {
-      const res = await fetch("/api/readiness/mark-transcribed", {
+      const res = await fetch("/api/tasks/mark-transcribed", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action_id: actionId }),

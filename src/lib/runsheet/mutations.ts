@@ -1,6 +1,14 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
+import { db } from "@/lib/db";
+import {
+  appointments as appointmentsT,
+  sessions as sessionsT,
+  patientPhoneNumbers,
+  patients as patientsT,
+  sessionParticipants,
+} from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { getSmsProvider } from "@/lib/sms";
 import { normalisePhone } from "@/lib/phone/normalise";
 
@@ -58,7 +66,6 @@ export async function createSessions(
   clinicName: string,
   sessions: SessionInput[]
 ) {
-  const supabase = await createClient();
   const sms = getSmsProvider();
 
   const results = [];
@@ -69,70 +76,70 @@ export async function createSessions(
     const phoneNumber = normalisePhone(input.phone_number) ?? input.phone_number;
 
     // Create appointment
-    const { data: appointment, error: apptError } = await supabase
-      .from("appointments")
-      .insert({
-        org_id: orgId,
-        room_id: input.room_id,
-        location_id: locationId,
-        scheduled_at: input.scheduled_at,
-        phone_number: phoneNumber,
-        appointment_type_id: null,
-      })
-      .select("id")
-      .single();
-
-    if (apptError) {
+    let appointment: { id: string } | undefined;
+    try {
+      [appointment] = await db
+        .insert(appointmentsT)
+        .values({
+          orgId,
+          roomId: input.room_id,
+          locationId,
+          scheduledAt: input.scheduled_at,
+          phoneNumber,
+          appointmentTypeId: null,
+        })
+        .returning({ id: appointmentsT.id });
+    } catch (apptError) {
       console.error("[CREATE] Failed to create appointment:", apptError);
       continue;
     }
+    if (!appointment) continue;
 
     // Create session
     const smsAction = getSmsAction(input.scheduled_at);
-    const { data: session, error: sessionError } = await supabase
-      .from("sessions")
-      .insert({
-        appointment_id: appointment.id,
-        room_id: input.room_id,
-        location_id: locationId,
-        status: "queued",
-        notification_sent: smsAction === "prep",
-        notification_sent_at: smsAction === "prep" ? new Date().toISOString() : null,
-        invite_sent: smsAction === "invite_immediate",
-        invite_sent_at: smsAction === "invite_immediate" ? new Date().toISOString() : null,
-      })
-      .select("id, entry_token")
-      .single();
-
-    if (sessionError) {
+    let session: { id: string; entry_token: string | null } | undefined;
+    try {
+      [session] = await db
+        .insert(sessionsT)
+        .values({
+          appointmentId: appointment.id,
+          roomId: input.room_id,
+          locationId,
+          status: "queued",
+          notificationSent: smsAction === "prep",
+          notificationSentAt: smsAction === "prep" ? new Date().toISOString() : null,
+          inviteSent: smsAction === "invite_immediate",
+          inviteSentAt: smsAction === "invite_immediate" ? new Date().toISOString() : null,
+        })
+        .returning({ id: sessionsT.id, entry_token: sessionsT.entryToken });
+    } catch (sessionError) {
       console.error("[CREATE] Failed to create session:", sessionError);
       continue;
     }
+    if (!session) continue;
 
-    // Resolve existing patient by phone number and link to session
-    const { data: phoneMatch } = await supabase
-      .from("patient_phone_numbers")
-      .select("patient_id, patients!inner (id, org_id)")
-      .eq("phone_number", phoneNumber)
+    // Resolve existing patient by phone number (within this org) and link.
+    const phoneMatch = await db
+      .select({ patient_id: patientPhoneNumbers.patientId, org_id: patientsT.orgId })
+      .from(patientPhoneNumbers)
+      .innerJoin(patientsT, eq(patientsT.id, patientPhoneNumbers.patientId))
+      .where(eq(patientPhoneNumbers.phoneNumber, phoneNumber))
       .limit(10);
 
-    const matchedPatient = (phoneMatch ?? []).find((row: Record<string, unknown>) => {
-      const p = row.patients as Record<string, unknown> | null;
-      return p?.org_id === orgId;
-    });
+    const matchedPatient = phoneMatch.find((row) => row.org_id === orgId);
 
     if (matchedPatient) {
-      await supabase.from("session_participants").insert({
-        session_id: session.id,
-        patient_id: matchedPatient.patient_id,
+      await db.insert(sessionParticipants).values({
+        sessionId: session.id,
+        patientId: matchedPatient.patient_id,
         role: "patient",
       });
 
       // Also set patient_id on the appointment
-      await supabase
-        .from("appointments")
-        .update({ patient_id: matchedPatient.patient_id })
-        .eq("id", appointment.id);
+      await db
+        .update(appointmentsT)
+        .set({ patientId: matchedPatient.patient_id })
+        .where(eq(appointmentsT.id, appointment.id));
     }
 
     // Send SMS based on timing
@@ -169,36 +176,32 @@ export async function updateSession(
   sessionId: string,
   updates: { scheduled_at?: string; phone_number?: string }
 ) {
-  const supabase = await createClient();
-
   // Get the session's appointment ID
-  const { data: session } = await supabase
-    .from("sessions")
-    .select("appointment_id")
-    .eq("id", sessionId)
-    .single();
+  const [session] = await db
+    .select({ appointment_id: sessionsT.appointmentId })
+    .from(sessionsT)
+    .where(eq(sessionsT.id, sessionId));
 
   if (!session?.appointment_id) {
     return { success: false, error: "Session has no appointment" };
   }
 
-  // Normalise an updated phone number to the canonical E.164 form.
-  const normalisedUpdates =
-    updates.phone_number !== undefined
-      ? {
-          ...updates,
-          phone_number:
-            normalisePhone(updates.phone_number) ?? updates.phone_number,
-        }
-      : updates;
+  // Normalise an updated phone number to the canonical E.164 form, mapping
+  // the snake_case input to the Drizzle column names.
+  const setValues: { scheduledAt?: string; phoneNumber?: string } = {};
+  if (updates.scheduled_at !== undefined) setValues.scheduledAt = updates.scheduled_at;
+  if (updates.phone_number !== undefined) {
+    setValues.phoneNumber =
+      normalisePhone(updates.phone_number) ?? updates.phone_number;
+  }
 
-  const { error } = await supabase
-    .from("appointments")
-    .update(normalisedUpdates)
-    .eq("id", session.appointment_id);
-
-  if (error) {
-    return { success: false, error: error.message };
+  try {
+    await db
+      .update(appointmentsT)
+      .set(setValues)
+      .where(eq(appointmentsT.id, session.appointment_id));
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
   }
 
   return { success: true };
@@ -206,19 +209,26 @@ export async function updateSession(
 
 /** Delete a session. Sends cancellation SMS if notification was sent. */
 export async function deleteSession(sessionId: string) {
-  const supabase = await createClient();
-
-  const { data: session } = await supabase
-    .from("sessions")
-    .select("id, notification_sent, appointments!left (phone_number)")
-    .eq("id", sessionId)
-    .single();
+  const [session] = await db
+    .select({
+      id: sessionsT.id,
+      notification_sent: sessionsT.notificationSent,
+      appointment_id: sessionsT.appointmentId,
+    })
+    .from(sessionsT)
+    .where(eq(sessionsT.id, sessionId));
 
   if (!session) return { success: false, error: "Session not found" };
 
   if (session.notification_sent) {
-    const appointment = session.appointments as unknown as Record<string, unknown> | null;
-    const phone = appointment?.phone_number as string | undefined;
+    let phone: string | undefined;
+    if (session.appointment_id) {
+      const [appt] = await db
+        .select({ phone_number: appointmentsT.phoneNumber })
+        .from(appointmentsT)
+        .where(eq(appointmentsT.id, session.appointment_id));
+      phone = appt?.phone_number ?? undefined;
+    }
     if (phone) {
       const sms = getSmsProvider();
       await sms.sendNotification(
@@ -228,38 +238,33 @@ export async function deleteSession(sessionId: string) {
     }
   }
 
-  const { error } = await supabase
-    .from("sessions")
-    .delete()
-    .eq("id", sessionId);
-
-  if (error) return { success: false, error: error.message };
+  try {
+    await db.delete(sessionsT).where(eq(sessionsT.id, sessionId));
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
   return { success: true };
 }
 
 /** Mark a session as no-show. */
 export async function markNoShow(sessionId: string) {
-  const supabase = await createClient();
-
-  const { error } = await supabase
-    .from("sessions")
-    .update({ status: "done" })
-    .eq("id", sessionId);
-
-  if (error) return { success: false, error: error.message };
+  let session: { appointment_id: string | null } | undefined;
+  try {
+    [session] = await db
+      .update(sessionsT)
+      .set({ status: "done" })
+      .where(eq(sessionsT.id, sessionId))
+      .returning({ appointment_id: sessionsT.appointmentId });
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
 
   // Also update appointment status
-  const { data: session } = await supabase
-    .from("sessions")
-    .select("appointment_id")
-    .eq("id", sessionId)
-    .single();
-
   if (session?.appointment_id) {
-    await supabase
-      .from("appointments")
-      .update({ status: "no_show" })
-      .eq("id", session.appointment_id);
+    await db
+      .update(appointmentsT)
+      .set({ status: "no_show" })
+      .where(eq(appointmentsT.id, session.appointment_id));
   }
 
   return { success: true };

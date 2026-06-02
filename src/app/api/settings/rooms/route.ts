@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  rooms as roomsT,
+  staffAssignments,
+  users as usersT,
+  sessions as sessionsT,
+} from "@/lib/db/schema";
+import { and, eq, notInArray } from "drizzle-orm";
 import { fetchRoomsWithClinicians } from "@/lib/clinic/fetchers/rooms";
 import { updateClinicianAssignments } from "@/lib/clinic/fetchers/rooms-mutations";
 import {
@@ -27,12 +35,11 @@ async function gateRoomMutation(
     };
   }
 
-  const service = createServiceClient();
-  const { data: room } = await service
-    .from("rooms")
-    .select("location_id")
-    .eq("id", roomId)
-    .maybeSingle();
+  const [room] = await db
+    .select({ location_id: roomsT.locationId })
+    .from(roomsT)
+    .where(eq(roomsT.id, roomId))
+    .limit(1);
 
   if (!room) {
     return {
@@ -78,22 +85,25 @@ export async function GET(request: NextRequest) {
 
   try {
     if (type === "clinicians") {
-      const supabase = createServiceClient();
-      const { data, error } = await supabase
-        .from("staff_assignments")
-        .select("id, user_id, users ( full_name )")
-        .eq("location_id", locationId)
-        .eq("role", "clinician");
+      const rows = await db
+        .select({
+          id: staffAssignments.id,
+          user_id: staffAssignments.userId,
+          full_name: usersT.fullName,
+        })
+        .from(staffAssignments)
+        .leftJoin(usersT, eq(usersT.id, staffAssignments.userId))
+        .where(
+          and(
+            eq(staffAssignments.locationId, locationId),
+            eq(staffAssignments.role, "clinician"),
+          ),
+        );
 
-      if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
-      }
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const clinicians = (data ?? []).map((sa: any) => ({
+      const clinicians = rows.map((sa) => ({
         staff_assignment_id: sa.id,
         user_id: sa.user_id,
-        full_name: sa.users?.full_name ?? "Unknown",
+        full_name: sa.full_name ?? "Unknown",
       }));
 
       return NextResponse.json({ clinicians });
@@ -131,28 +141,23 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const supabase = createServiceClient();
+  const service = createServiceClient();
 
-  const { data: room, error } = await supabase
-    .from("rooms")
-    .insert({
-      location_id,
+  const [room] = await db
+    .insert(roomsT)
+    .values({
+      locationId: location_id,
       name,
-      room_type,
-      sort_order: sort_order ?? 0,
-      link_token: `link-${crypto.randomUUID().slice(0, 12)}`,
+      roomType: room_type,
+      sortOrder: sort_order ?? 0,
+      linkToken: `link-${crypto.randomUUID().slice(0, 12)}`,
     })
-    .select()
-    .single();
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+    .returning();
 
   // Insert clinician assignments if provided
   if (clinician_assignment_ids?.length > 0 && room) {
     const res = await updateClinicianAssignments(
-      supabase,
+      service,
       room.id,
       clinician_assignment_ids,
       location_id,
@@ -180,30 +185,23 @@ export async function PATCH(request: NextRequest) {
   const gate = await gateRoomMutation(id);
   if (!gate.ok) return gate.response;
 
-  const supabase = createServiceClient();
+  const service = createServiceClient();
 
   // Build update object with only provided fields
-  const updates: Record<string, unknown> = {};
+  const updates: Partial<typeof roomsT.$inferInsert> = {};
   if (name !== undefined) updates.name = name;
-  if (room_type !== undefined) updates.room_type = room_type;
-  if (sort_order !== undefined) updates.sort_order = sort_order;
-  if (body.payments_enabled !== undefined) updates.payments_enabled = body.payments_enabled;
+  if (room_type !== undefined) updates.roomType = room_type;
+  if (sort_order !== undefined) updates.sortOrder = sort_order;
+  if (body.payments_enabled !== undefined) updates.paymentsEnabled = body.payments_enabled;
 
   if (Object.keys(updates).length > 0) {
-    const { error } = await supabase
-      .from("rooms")
-      .update(updates)
-      .eq("id", id);
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+    await db.update(roomsT).set(updates).where(eq(roomsT.id, id));
   }
 
   // Replace clinician assignments if provided
   if (clinician_assignment_ids !== undefined) {
     const res = await updateClinicianAssignments(
-      supabase,
+      service,
       id,
       clinician_assignment_ids,
       gate.locationId,
@@ -230,17 +228,19 @@ export async function DELETE(request: NextRequest) {
   const gate = await gateRoomMutation(id);
   if (!gate.ok) return gate.response;
 
-  const supabase = createServiceClient();
-
   // Check for active sessions (anything not done or queued)
-  const { data: activeSessions } = await supabase
-    .from("sessions")
-    .select("id")
-    .eq("room_id", id)
-    .not("status", "in", '("done","queued")')
+  const activeSessions = await db
+    .select({ id: sessionsT.id })
+    .from(sessionsT)
+    .where(
+      and(
+        eq(sessionsT.roomId, id),
+        notInArray(sessionsT.status, ["done", "queued"]),
+      ),
+    )
     .limit(1);
 
-  if (activeSessions && activeSessions.length > 0) {
+  if (activeSessions.length > 0) {
     return NextResponse.json(
       {
         error:
@@ -251,11 +251,7 @@ export async function DELETE(request: NextRequest) {
   }
 
   // Delete room — clinician_room_assignments cascade automatically
-  const { error } = await supabase.from("rooms").delete().eq("id", id);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  await db.delete(roomsT).where(eq(roomsT.id, id));
 
   return NextResponse.json({ success: true });
 }

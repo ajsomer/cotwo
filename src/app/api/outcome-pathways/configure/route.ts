@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import { sql } from "drizzle-orm";
 import {
   requireStaffOrgAccess,
   assertFormsInOrg,
@@ -34,8 +35,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "org_id is required" }, { status: 400 });
     }
 
-    const supabase = createServiceClient();
-    const access = await requireStaffOrgAccess(supabase, org_id);
+    const access = await requireStaffOrgAccess(org_id);
     if (!access.ok) {
       return NextResponse.json(
         { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -60,19 +60,15 @@ export async function POST(request: NextRequest) {
     const referencedFormIds = blockList.flatMap((b: Record<string, unknown>) =>
       collectPathwayBlockFormIds(b)
     );
-    if (!(await assertFormsInOrg(supabase, referencedFormIds, access.orgId))) {
+    if (!(await assertFormsInOrg(referencedFormIds, access.orgId))) {
       return NextResponse.json(
         { error: "A referenced form does not belong to this organisation" },
         { status: 400 }
       );
     }
 
-    const { data, error } = await supabase.rpc("configure_outcome_pathway", {
-      p_org_id: org_id,
-      p_pathway_id: pathway_id ?? null,
-      p_name: name.trim(),
-      p_description: description ?? null,
-      p_blocks: blockList.map((b: Record<string, unknown>, i: number) => ({
+    const blocksJson = JSON.stringify(
+      blockList.map((b: Record<string, unknown>, i: number) => ({
         id: b.id ?? null,
         action_type: b.action_type,
         offset_minutes: b.offset_minutes ?? 0,
@@ -80,12 +76,20 @@ export async function POST(request: NextRequest) {
         config: b.config ?? {},
         sort_order: b.sort_order ?? i,
       })),
-    });
+    );
 
-    if (error) {
-      console.error("[configure-pathway] RPC error:", error.message);
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+    // Preserve the exact positional arg order of configure_outcome_pathway.
+    const result = await db.execute(sql`
+      select public.configure_outcome_pathway(
+        ${org_id}::uuid,
+        ${pathway_id ?? null}::uuid,
+        ${name.trim()}::text,
+        ${description ?? null}::text,
+        ${blocksJson}::jsonb
+      ) as result
+    `);
+
+    const data = (result.rows?.[0] as { result: unknown } | undefined)?.result ?? null;
 
     return NextResponse.json(data);
   } catch (err) {

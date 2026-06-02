@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
+import { signUpAction } from "../actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -37,34 +37,12 @@ export default function SignUpPage() {
     if (Object.keys(errs).length > 0) return;
 
     setLoading(true);
-    const supabase = createClient();
 
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { full_name: fullName.trim() },
-      },
-    });
+    const result = await signUpAction({ fullName, email, password });
 
-    if (error) {
+    if (!result.ok) {
       setLoading(false);
-      if (error.message.toLowerCase().includes("already registered")) {
-        setErrors({
-          email: "This email is already registered.",
-        });
-      } else {
-        setErrors({ form: error.message });
-      }
-      return;
-    }
-
-    // Check for fake user (email enumeration protection)
-    if (data.user && data.user.identities?.length === 0) {
-      setLoading(false);
-      setErrors({
-        email: "This email is already registered.",
-      });
+      setErrors({ [result.field ?? "form"]: result.error });
       return;
     }
 

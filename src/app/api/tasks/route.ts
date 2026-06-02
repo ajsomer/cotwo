@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { fetchReadinessSlice } from "@/lib/clinic/fetchers/readiness";
 import { requireStaffLocationAccess } from "@/lib/auth/staff-access";
 
-// GET /api/readiness?location_id=xxx&direction=pre_appointment|post_appointment
+// GET /api/tasks?location_id=xxx&direction=pre_appointment|post_appointment
 // Returns appointments with workflow actions for the readiness dashboard,
 // enriched with priority derivation, room/type names, and mode counts.
 export async function GET(request: NextRequest) {

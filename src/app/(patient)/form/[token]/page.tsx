@@ -1,4 +1,11 @@
-import { createServiceClient } from '@/lib/supabase/service';
+import { db } from '@/lib/db';
+import {
+  formAssignments,
+  forms as formsT,
+  patients as patientsT,
+  organisations as organisationsT,
+} from '@/lib/db/schema';
+import { eq } from 'drizzle-orm';
 import { FormFillClient } from '@/components/patient/form-fill-client';
 
 export default async function FormFillPage({
@@ -7,14 +14,19 @@ export default async function FormFillPage({
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
-  const supabase = createServiceClient();
 
   // Resolve assignment by token
-  const { data: assignment } = await supabase
-    .from('form_assignments')
-    .select('id, form_id, patient_id, schema_snapshot, status')
-    .eq('token', token)
-    .single();
+  const [assignment] = await db
+    .select({
+      id: formAssignments.id,
+      form_id: formAssignments.formId,
+      patient_id: formAssignments.patientId,
+      schema_snapshot: formAssignments.schemaSnapshot,
+      status: formAssignments.status,
+    })
+    .from(formAssignments)
+    .where(eq(formAssignments.token, token))
+    .limit(1);
 
   if (!assignment) {
     return (
@@ -48,43 +60,43 @@ export default async function FormFillPage({
   }
 
   // Get form name
-  const { data: form } = await supabase
-    .from('forms')
-    .select('name, org_id')
-    .eq('id', assignment.form_id)
-    .single();
+  const [form] = await db
+    .select({ name: formsT.name, org_id: formsT.orgId })
+    .from(formsT)
+    .where(eq(formsT.id, assignment.form_id))
+    .limit(1);
 
   // Get patient name
-  const { data: patient } = await supabase
-    .from('patients')
-    .select('first_name')
-    .eq('id', assignment.patient_id)
-    .single();
+  const [patient] = await db
+    .select({ first_name: patientsT.firstName })
+    .from(patientsT)
+    .where(eq(patientsT.id, assignment.patient_id))
+    .limit(1);
 
   // Get org branding
   let org: { name: string; logo_url: string | null } | null = null;
   if (form?.org_id) {
-    const { data: orgData } = await supabase
-      .from('organisations')
-      .select('name, logo_url')
-      .eq('id', form.org_id)
-      .single();
-    org = orgData;
+    const [orgData] = await db
+      .select({ name: organisationsT.name, logo_url: organisationsT.logoUrl })
+      .from(organisationsT)
+      .where(eq(organisationsT.id, form.org_id))
+      .limit(1);
+    org = orgData ?? null;
   }
 
   // Mark as opened (forward-only)
   if (assignment.status === 'pending' || assignment.status === 'sent') {
-    await supabase
-      .from('form_assignments')
-      .update({ status: 'opened', opened_at: new Date().toISOString() })
-      .eq('id', assignment.id);
+    await db
+      .update(formAssignments)
+      .set({ status: 'opened', openedAt: new Date().toISOString() })
+      .where(eq(formAssignments.id, assignment.id));
   }
 
   return (
     <FormFillClient
       token={token}
       formName={form?.name ?? 'Form'}
-      schema={assignment.schema_snapshot}
+      schema={assignment.schema_snapshot as Record<string, unknown>}
       patientFirstName={patient?.first_name ?? null}
       org={org}
     />

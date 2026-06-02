@@ -1,5 +1,14 @@
 import { cache } from "react";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  appointmentTypes as appointmentTypesT,
+  workflowTemplates as workflowTemplatesT,
+  outcomePathways as outcomePathwaysT,
+  typeWorkflowLinks,
+  workflowActionBlocks,
+  appointmentWorkflowRuns,
+} from "@/lib/db/schema";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import type {
   AppointmentTypeRow,
   OutcomePathwayRow,
@@ -18,53 +27,122 @@ export interface WorkflowsInitData {
   postWorkflowBlocks: Record<string, DbWorkflowActionBlock[]>;
 }
 
-export const fetchWorkflowsInit = cache(async (orgId: string): Promise<WorkflowsInitData> => {
-  const supabase = createServiceClient();
+const appointmentTypeCols = {
+  id: appointmentTypesT.id,
+  org_id: appointmentTypesT.orgId,
+  name: appointmentTypesT.name,
+  modality: appointmentTypesT.modality,
+  duration_minutes: appointmentTypesT.durationMinutes,
+  default_fee_cents: appointmentTypesT.defaultFeeCents,
+  pms_external_id: appointmentTypesT.pmsExternalId,
+  source: appointmentTypesT.source,
+  pms_provider: appointmentTypesT.pmsProvider,
+  created_at: appointmentTypesT.createdAt,
+  updated_at: appointmentTypesT.updatedAt,
+};
 
+const templateCols = {
+  id: workflowTemplatesT.id,
+  org_id: workflowTemplatesT.orgId,
+  name: workflowTemplatesT.name,
+  description: workflowTemplatesT.description,
+  direction: workflowTemplatesT.direction,
+  status: workflowTemplatesT.status,
+  terminal_type: workflowTemplatesT.terminalType,
+  at_risk_after_days: workflowTemplatesT.atRiskAfterDays,
+  overdue_after_days: workflowTemplatesT.overdueAfterDays,
+  created_at: workflowTemplatesT.createdAt,
+  updated_at: workflowTemplatesT.updatedAt,
+};
+
+const pathwayCols = {
+  id: outcomePathwaysT.id,
+  org_id: outcomePathwaysT.orgId,
+  name: outcomePathwaysT.name,
+  description: outcomePathwaysT.description,
+  workflow_template_id: outcomePathwaysT.workflowTemplateId,
+  archived_at: outcomePathwaysT.archivedAt,
+  created_at: outcomePathwaysT.createdAt,
+  updated_at: outcomePathwaysT.updatedAt,
+};
+
+const blockCols = {
+  id: workflowActionBlocks.id,
+  template_id: workflowActionBlocks.templateId,
+  action_type: workflowActionBlocks.actionType,
+  offset_minutes: workflowActionBlocks.offsetMinutes,
+  offset_direction: workflowActionBlocks.offsetDirection,
+  modality_filter: workflowActionBlocks.modalityFilter,
+  form_id: workflowActionBlocks.formId,
+  config: workflowActionBlocks.config,
+  sort_order: workflowActionBlocks.sortOrder,
+  precondition: workflowActionBlocks.precondition,
+  parent_action_block_id: workflowActionBlocks.parentActionBlockId,
+  created_at: workflowActionBlocks.createdAt,
+  updated_at: workflowActionBlocks.updatedAt,
+};
+
+export const fetchWorkflowsInit = cache(async (orgId: string): Promise<WorkflowsInitData> => {
   // Phase 1: the org-scoped roots. Templates give us the bounded set of
   // template IDs the dependent queries below scope to, so blocks/runs/links
   // never scan the whole platform's data.
-  const [typesRes, allTemplatesRes, pathwaysRes] = await Promise.all([
-    supabase.from("appointment_types").select("*").eq("org_id", orgId).order("name"),
-    supabase.from("workflow_templates").select("*").eq("org_id", orgId),
-    supabase.from("outcome_pathways").select("*").eq("org_id", orgId).order("name"),
+  const [types, allTemplates, pathwaysData] = await Promise.all([
+    db.select(appointmentTypeCols).from(appointmentTypesT).where(eq(appointmentTypesT.orgId, orgId)).orderBy(asc(appointmentTypesT.name)),
+    db.select(templateCols).from(workflowTemplatesT).where(eq(workflowTemplatesT.orgId, orgId)),
+    db.select(pathwayCols).from(outcomePathwaysT).where(eq(outcomePathwaysT.orgId, orgId)).orderBy(asc(outcomePathwaysT.name)),
   ]);
 
-  const types = typesRes.data ?? [];
   const typeIds = types.map((t) => t.id);
-  const orgTemplateIds = (allTemplatesRes.data ?? []).map((t) => t.id);
+  const orgTemplateIds = allTemplates.map((t) => t.id);
 
   // Phase 2: dependents, all scoped to this org's types/templates.
-  const [linksRes, allBlocksRes, runsRes] = await Promise.all([
-    supabase
-      .from("type_workflow_links")
-      .select("appointment_type_id, workflow_template_id")
-      .eq("direction", "pre_appointment")
-      .in("appointment_type_id", typeIds.length ? typeIds : ["00000000-0000-0000-0000-000000000000"]),
-    supabase
-      .from("workflow_action_blocks")
-      .select("*")
-      .in("template_id", orgTemplateIds.length ? orgTemplateIds : ["00000000-0000-0000-0000-000000000000"])
-      .order("sort_order"),
-    supabase
-      .from("appointment_workflow_runs")
-      .select("workflow_template_id")
-      .eq("status", "active")
-      .in("workflow_template_id", orgTemplateIds.length ? orgTemplateIds : ["00000000-0000-0000-0000-000000000000"]),
+  const [links, allBlocks, runs] = await Promise.all([
+    typeIds.length === 0
+      ? Promise.resolve([])
+      : db
+          .select({
+            appointment_type_id: typeWorkflowLinks.appointmentTypeId,
+            workflow_template_id: typeWorkflowLinks.workflowTemplateId,
+          })
+          .from(typeWorkflowLinks)
+          .where(
+            and(
+              eq(typeWorkflowLinks.direction, "pre_appointment"),
+              inArray(typeWorkflowLinks.appointmentTypeId, typeIds)
+            )
+          ),
+    orgTemplateIds.length === 0
+      ? Promise.resolve([])
+      : db
+          .select(blockCols)
+          .from(workflowActionBlocks)
+          .where(inArray(workflowActionBlocks.templateId, orgTemplateIds))
+          .orderBy(asc(workflowActionBlocks.sortOrder)),
+    orgTemplateIds.length === 0
+      ? Promise.resolve([])
+      : db
+          .select({ workflow_template_id: appointmentWorkflowRuns.workflowTemplateId })
+          .from(appointmentWorkflowRuns)
+          .where(
+            and(
+              eq(appointmentWorkflowRuns.status, "active"),
+              inArray(appointmentWorkflowRuns.workflowTemplateId, orgTemplateIds)
+            )
+          ),
   ]);
 
   // --- Pre-appointment ---
   const typeIdSet = new Set(typeIds);
-  const links = (linksRes.data ?? []).filter((l) => typeIdSet.has(l.appointment_type_id));
-  const linkByType = new Map(links.map((l) => [l.appointment_type_id, l.workflow_template_id]));
-  const preTemplateIds = new Set(links.map((l) => l.workflow_template_id));
+  const filteredLinks = links.filter((l) => typeIdSet.has(l.appointment_type_id));
+  const linkByType = new Map(filteredLinks.map((l) => [l.appointment_type_id, l.workflow_template_id]));
+  const preTemplateIds = new Set(filteredLinks.map((l) => l.workflow_template_id));
 
   const preWorkflowTemplates: Record<string, DbWorkflowTemplate> = {};
   const preWorkflowBlocks: Record<string, DbWorkflowActionBlock[]> = {};
-  for (const t of allTemplatesRes.data ?? []) {
+  for (const t of allTemplates) {
     if (preTemplateIds.has(t.id)) preWorkflowTemplates[t.id] = t as DbWorkflowTemplate;
   }
-  for (const b of allBlocksRes.data ?? []) {
+  for (const b of allBlocks) {
     if (preTemplateIds.has(b.template_id)) {
       if (!preWorkflowBlocks[b.template_id]) preWorkflowBlocks[b.template_id] = [];
       preWorkflowBlocks[b.template_id].push(b as DbWorkflowActionBlock);
@@ -72,7 +150,7 @@ export const fetchWorkflowsInit = cache(async (orgId: string): Promise<Workflows
   }
 
   const inFlightCounts: Record<string, number> = {};
-  for (const r of runsRes.data ?? []) {
+  for (const r of runs) {
     inFlightCounts[r.workflow_template_id] =
       (inFlightCounts[r.workflow_template_id] ?? 0) + 1;
   }
@@ -90,24 +168,23 @@ export const fetchWorkflowsInit = cache(async (orgId: string): Promise<Workflows
   });
 
   // --- Post-appointment (via outcome pathways) ---
-  const pathways = pathwaysRes.data ?? [];
   const postTemplateIds = new Set(
-    pathways.map((p) => p.workflow_template_id).filter(Boolean) as string[]
+    pathwaysData.map((p) => p.workflow_template_id).filter(Boolean) as string[]
   );
 
   const postWorkflowTemplates: Record<string, DbWorkflowTemplate> = {};
   const postWorkflowBlocks: Record<string, DbWorkflowActionBlock[]> = {};
-  for (const t of allTemplatesRes.data ?? []) {
+  for (const t of allTemplates) {
     if (postTemplateIds.has(t.id)) postWorkflowTemplates[t.id] = t as DbWorkflowTemplate;
   }
-  for (const b of allBlocksRes.data ?? []) {
+  for (const b of allBlocks) {
     if (postTemplateIds.has(b.template_id)) {
       if (!postWorkflowBlocks[b.template_id]) postWorkflowBlocks[b.template_id] = [];
       postWorkflowBlocks[b.template_id].push(b as DbWorkflowActionBlock);
     }
   }
 
-  const outcomePathways: OutcomePathwayRow[] = pathways.map((p) => {
+  const outcomePathways: OutcomePathwayRow[] = pathwaysData.map((p) => {
     const tid = p.workflow_template_id;
     const template = tid ? postWorkflowTemplates[tid] ?? null : null;
     const blocks = tid ? postWorkflowBlocks[tid] ?? [] : [];

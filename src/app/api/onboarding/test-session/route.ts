@@ -1,5 +1,22 @@
 import { getAuthenticatedUserId } from "@/lib/auth/staff-access";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  staffAssignments,
+  locations as locationsT,
+  users as usersT,
+  clinicianRoomAssignments,
+  rooms as roomsT,
+  appointmentTypes,
+  forms as formsT,
+  patients as patientsT,
+  patientPhoneNumbers,
+  appointments as appointmentsT,
+  sessions as sessionsT,
+  sessionParticipants,
+  intakePackageJourneys,
+  formAssignments,
+} from "@/lib/db/schema";
+import { and, eq } from "drizzle-orm";
 import { NextResponse, type NextRequest } from "next/server";
 
 export async function POST(request: NextRequest) {
@@ -11,28 +28,28 @@ export async function POST(request: NextRequest) {
   // the test session tab.
   const phone_number = "+61400000000";
 
-  const service = createServiceClient();
-
   // Resolve org + location + user details
-  const { data: sa } = await service
-    .from("staff_assignments")
-    .select("location_id, locations!inner(org_id, stripe_account_id)")
-    .eq("user_id", userId)
-    .limit(1)
-    .single();
+  const [sa] = await db
+    .select({
+      staff_assignment_id: staffAssignments.id,
+      location_id: staffAssignments.locationId,
+      org_id: locationsT.orgId,
+    })
+    .from(staffAssignments)
+    .innerJoin(locationsT, eq(locationsT.id, staffAssignments.locationId))
+    .where(eq(staffAssignments.userId, userId))
+    .limit(1);
 
   if (!sa) return NextResponse.json({ error: "No org found." }, { status: 400 });
 
-  type SaRow = { location_id: string; locations: { org_id: string; stripe_account_id: string | null } };
-  const { location_id: locationId, locations } = sa as unknown as SaRow;
-  const orgId = locations.org_id;
-  const paymentsEnabled = !!locations.stripe_account_id;
+  const locationId = sa.location_id;
+  const orgId = sa.org_id;
 
-  const { data: userRecord } = await service
-    .from("users")
-    .select("full_name")
-    .eq("id", userId)
-    .single();
+  const [userRecord] = await db
+    .select({ full_name: usersT.fullName })
+    .from(usersT)
+    .where(eq(usersT.id, userId))
+    .limit(1);
 
   const fullName = userRecord?.full_name ?? "Test User";
   const nameParts = fullName.trim().split(" ");
@@ -40,51 +57,47 @@ export async function POST(request: NextRequest) {
   const lastName = nameParts.slice(1).join(" ") || "";
 
   // Find the user's first room
-  const { data: roomAssignment } = await service
-    .from("clinician_room_assignments")
-    .select("room_id")
-    .eq("staff_assignment_id", (
-      await service
-        .from("staff_assignments")
-        .select("id")
-        .eq("user_id", userId)
-        .limit(1)
-        .single()
-    ).data?.id ?? "")
-    .limit(1)
-    .maybeSingle();
+  const [roomAssignment] = await db
+    .select({ room_id: clinicianRoomAssignments.roomId })
+    .from(clinicianRoomAssignments)
+    .where(eq(clinicianRoomAssignments.staffAssignmentId, sa.staff_assignment_id))
+    .limit(1);
 
   // Fall back to first room in the location
   let roomId: string;
   if (roomAssignment?.room_id) {
     roomId = roomAssignment.room_id;
   } else {
-    const { data: firstRoom } = await service
-      .from("rooms")
-      .select("id")
-      .eq("location_id", locationId)
-      .limit(1)
-      .single();
+    const [firstRoom] = await db
+      .select({ id: roomsT.id })
+      .from(roomsT)
+      .where(eq(roomsT.locationId, locationId))
+      .limit(1);
     if (!firstRoom) return NextResponse.json({ error: "No rooms found." }, { status: 400 });
     roomId = firstRoom.id;
   }
 
   // Find default appointment type
-  const { data: appointmentType } = await service
-    .from("appointment_types")
-    .select("id")
-    .eq("org_id", orgId)
-    .eq("name", "Initial Consultation")
-    .maybeSingle();
+  const [appointmentType] = await db
+    .select({ id: appointmentTypes.id })
+    .from(appointmentTypes)
+    .where(
+      and(
+        eq(appointmentTypes.orgId, orgId),
+        eq(appointmentTypes.name, "Initial Consultation"),
+      ),
+    )
+    .limit(1);
 
-  const { data: fallbackType } = appointmentType
-    ? { data: null }
-    : await service
-        .from("appointment_types")
-        .select("id")
-        .eq("org_id", orgId)
-        .limit(1)
-        .single();
+  const fallbackType = appointmentType
+    ? null
+    : (
+        await db
+          .select({ id: appointmentTypes.id })
+          .from(appointmentTypes)
+          .where(eq(appointmentTypes.orgId, orgId))
+          .limit(1)
+      )[0] ?? null;
 
   const appointmentTypeId = appointmentType?.id ?? fallbackType?.id;
   if (!appointmentTypeId) {
@@ -107,140 +120,147 @@ export async function POST(request: NextRequest) {
 
   let demoForm: { id: string } | null = null;
   {
-    const { data: existing } = await service
-      .from("forms")
-      .select("id, schema")
-      .eq("org_id", orgId)
-      .eq("is_platform_demo", true)
-      .maybeSingle();
+    const [existing] = await db
+      .select({ id: formsT.id, schema: formsT.schema })
+      .from(formsT)
+      .where(and(eq(formsT.orgId, orgId), eq(formsT.isPlatformDemo, true)))
+      .limit(1);
 
     if (existing) {
       demoForm = { id: existing.id };
       // Heal stale demo-form schemas (pre-SurveyJS shape)
-      const hasPages = existing.schema && typeof existing.schema === "object" && "pages" in existing.schema;
+      const schema = existing.schema as Record<string, unknown> | null;
+      const hasPages = schema && typeof schema === "object" && "pages" in schema;
       if (!hasPages) {
-        await service.from("forms").update({ schema: DEMO_SCHEMA }).eq("id", existing.id);
+        await db.update(formsT).set({ schema: DEMO_SCHEMA }).where(eq(formsT.id, existing.id));
       }
     } else {
-      const { data: seeded, error: seedErr } = await service
-        .from("forms")
-        .insert({
-          org_id: orgId,
-          name: "Coviu Demo Form",
-          description: null,
-          status: "published",
-          is_platform_demo: true,
-          schema: DEMO_SCHEMA,
-        })
-        .select("id")
-        .single();
-
-      if (seedErr || !seeded) {
+      try {
+        const [seeded] = await db
+          .insert(formsT)
+          .values({
+            orgId,
+            name: "Coviu Demo Form",
+            description: null,
+            status: "published",
+            isPlatformDemo: true,
+            schema: DEMO_SCHEMA,
+          })
+          .returning({ id: formsT.id });
+        demoForm = seeded;
+      } catch (seedErr) {
         console.error("[onboarding/test-session] Failed to seed demo form:", seedErr);
         return NextResponse.json({ error: "Failed to set up demo form." }, { status: 500 });
       }
-      demoForm = seeded;
     }
   }
 
   // 1. Create patient contact
-  const { data: patient, error: patientErr } = await service
-    .from("patients")
-    .insert({ org_id: orgId, first_name: firstName, last_name: lastName })
-    .select("id")
-    .single();
-
-  if (!patient) {
+  let patient: { id: string };
+  try {
+    [patient] = await db
+      .insert(patientsT)
+      .values({ orgId, firstName, lastName })
+      .returning({ id: patientsT.id });
+  } catch (patientErr) {
     console.error("[onboarding/test-session] patient insert failed:", patientErr);
     return NextResponse.json({ error: "Failed to create patient." }, { status: 500 });
   }
 
-  const { error: phoneErr } = await service.from("patient_phone_numbers").insert({
-    patient_id: patient.id,
-    phone_number: phone_number.trim(),
-    is_primary: true,
-  });
-  if (phoneErr) console.error("[onboarding/test-session] phone insert failed:", phoneErr);
+  try {
+    await db.insert(patientPhoneNumbers).values({
+      patientId: patient.id,
+      phoneNumber: phone_number.trim(),
+      isPrimary: true,
+    });
+  } catch (phoneErr) {
+    console.error("[onboarding/test-session] phone insert failed:", phoneErr);
+  }
 
   // 2. Create appointment (~5 minutes from now)
   const scheduledAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
-  const { data: appointment, error: apptErr } = await service
-    .from("appointments")
-    .insert({
-      org_id: orgId,
-      location_id: locationId,
-      room_id: roomId,
-      appointment_type_id: appointmentTypeId,
-      patient_id: patient.id,
-      scheduled_at: scheduledAt,
-      phone_number: phone_number.trim(),
-    })
-    .select("id")
-    .single();
-
-  if (!appointment) {
+  let appointment: { id: string };
+  try {
+    [appointment] = await db
+      .insert(appointmentsT)
+      .values({
+        orgId,
+        locationId,
+        roomId,
+        appointmentTypeId,
+        patientId: patient.id,
+        scheduledAt,
+        phoneNumber: phone_number.trim(),
+      })
+      .returning({ id: appointmentsT.id });
+  } catch (apptErr) {
     console.error("[onboarding/test-session] appointment insert failed:", apptErr);
     return NextResponse.json({ error: "Failed to create appointment." }, { status: 500 });
   }
 
   // 3. Create session
   const entryToken = crypto.randomUUID();
-  const { data: session, error: sessionErr } = await service
-    .from("sessions")
-    .insert({
-      appointment_id: appointment.id,
-      room_id: roomId,
-      location_id: locationId,
-      status: "queued",
-      is_onboarding_demo: true,
-      entry_token: entryToken,
-    })
-    .select("id")
-    .single();
-
-  if (!session) {
+  let session: { id: string };
+  try {
+    [session] = await db
+      .insert(sessionsT)
+      .values({
+        appointmentId: appointment.id,
+        roomId,
+        locationId,
+        status: "queued",
+        isOnboardingDemo: true,
+        entryToken,
+      })
+      .returning({ id: sessionsT.id });
+  } catch (sessionErr) {
     console.error("[onboarding/test-session] session insert failed:", sessionErr);
     return NextResponse.json({ error: "Failed to create session." }, { status: 500 });
   }
 
-  const { error: spErr } = await service.from("session_participants").insert({
-    session_id: session.id,
-    patient_id: patient.id,
-    role: "patient",
-  });
-  if (spErr) console.error("[onboarding/test-session] session_participants insert failed:", spErr);
+  try {
+    await db.insert(sessionParticipants).values({
+      sessionId: session.id,
+      patientId: patient.id,
+      role: "patient",
+    });
+  } catch (spErr) {
+    console.error("[onboarding/test-session] session_participants insert failed:", spErr);
+  }
 
   // 4. Create intake package journey
   const journeyToken = crypto.randomUUID();
-  const { data: journey, error: journeyErr } = await service
-    .from("intake_package_journeys")
-    .insert({
-      appointment_id: appointment.id,
-      journey_token: journeyToken,
-      status: "pending",
-      // Always include card capture in the demo so the user sees what it
-      // looks like, regardless of whether they connected Stripe at setup.
-      includes_card_capture: true,
-      includes_consent: false,
-      form_ids: [demoForm.id],
-      forms_completed: {},
-    })
-    .select("id, journey_token")
-    .single();
-
-  if (!journey) {
+  let journey: { id: string; journey_token: string };
+  try {
+    [journey] = await db
+      .insert(intakePackageJourneys)
+      .values({
+        appointmentId: appointment.id,
+        journeyToken,
+        status: "pending",
+        // Always include card capture in the demo so the user sees what it
+        // looks like, regardless of whether they connected Stripe at setup.
+        includesCardCapture: true,
+        includesConsent: false,
+        formIds: [demoForm.id],
+        formsCompleted: {},
+      })
+      .returning({ id: intakePackageJourneys.id, journey_token: intakePackageJourneys.journeyToken });
+  } catch (journeyErr) {
     console.error("[onboarding/test-session] journey insert failed:", journeyErr);
     return NextResponse.json({ error: "Failed to create intake journey." }, { status: 500 });
   }
 
   // 5. Create form assignment
-  const { error: faErr } = await service.from("form_assignments").insert({
-    form_id: demoForm.id,
-    patient_id: patient.id,
-    appointment_id: appointment.id,
-    assigned_by: userId,
-  });
-  if (faErr) console.error("[onboarding/test-session] form_assignments insert failed:", faErr);
+  try {
+    await db.insert(formAssignments).values({
+      formId: demoForm.id,
+      patientId: patient.id,
+      appointmentId: appointment.id,
+    });
+  } catch (faErr) {
+    console.error("[onboarding/test-session] form_assignments insert failed:", faErr);
+  }
 
   // 6. Build journey URL (SMS skipped — onboarding overlay opens it directly in a new tab)
   const appUrl =
@@ -249,10 +269,10 @@ export async function POST(request: NextRequest) {
   const journeyUrl = `${appUrl}/intake/${journey.journey_token}`;
 
   // 7. Advance onboarding stage
-  await service
-    .from("users")
-    .update({ onboarding_stage: "test_session_sent" })
-    .eq("id", userId);
+  await db
+    .update(usersT)
+    .set({ onboardingStage: "test_session_sent" })
+    .where(eq(usersT.id, userId));
 
   return NextResponse.json({
     session_id: session.id,

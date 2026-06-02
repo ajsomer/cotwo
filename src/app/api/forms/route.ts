@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import { forms as formsT, formAssignments } from "@/lib/db/schema";
+import { and, eq, ne } from "drizzle-orm";
 import { fetchForms } from "@/lib/clinic/fetchers/forms";
 import { defaultFormSchema, ensureIdentityPage } from "@/lib/survey/identity-page";
 import {
@@ -15,8 +17,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "org_id required" }, { status: 400 });
   }
 
-  const service = createServiceClient();
-  const access = await requireStaffOrgAccess(service, orgId);
+  const access = await requireStaffOrgAccess(orgId);
   if (!access.ok) {
     return NextResponse.json(
       { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -45,9 +46,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const supabase = createServiceClient();
-
-  const access = await requireStaffOrgAccess(supabase, org_id);
+  const access = await requireStaffOrgAccess(org_id);
   if (!access.ok) {
     return NextResponse.json(
       { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -63,20 +62,36 @@ export async function POST(request: NextRequest) {
     ? ensureIdentityPage(schema)
     : defaultFormSchema();
 
-  const { data: form, error } = await supabase
-    .from("forms")
-    .insert({
-      org_id,
-      name,
-      description: description ?? null,
-      schema: finalSchema,
-      status: "draft",
-    })
-    .select()
-    .single();
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  let form;
+  try {
+    [form] = await db
+      .insert(formsT)
+      .values({
+        orgId: org_id,
+        name,
+        description: description ?? null,
+        schema: finalSchema,
+        status: "draft",
+      })
+      .returning({
+        id: formsT.id,
+        org_id: formsT.orgId,
+        name: formsT.name,
+        description: formsT.description,
+        schema: formsT.schema,
+        status: formsT.status,
+        is_platform_demo: formsT.isPlatformDemo,
+        public_token: formsT.publicToken,
+        public_token_rotated_at: formsT.publicTokenRotatedAt,
+        public_token_rotated_by: formsT.publicTokenRotatedBy,
+        created_at: formsT.createdAt,
+        updated_at: formsT.updatedAt,
+      });
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Internal server error" },
+      { status: 500 }
+    );
   }
 
   return NextResponse.json({ form }, { status: 201 });
@@ -91,9 +106,7 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "id is required" }, { status: 400 });
   }
 
-  const supabase = createServiceClient();
-
-  const access = await requireStaffCanAccessForm(supabase, id);
+  const access = await requireStaffCanAccessForm(id);
   if (!access.ok) {
     return NextResponse.json(
       { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -101,7 +114,7 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
-  const updates: Record<string, unknown> = {};
+  const updates: Partial<typeof formsT.$inferInsert> = {};
   if (name !== undefined) updates.name = name;
   if (description !== undefined) updates.description = description;
   // Defensive: any schema write must contain the locked identity page.
@@ -114,10 +127,13 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "No fields to update" }, { status: 400 });
   }
 
-  const { error } = await supabase.from("forms").update(updates).eq("id", id);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  try {
+    await db.update(formsT).set(updates).where(eq(formsT.id, id));
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Internal server error" },
+      { status: 500 }
+    );
   }
 
   return NextResponse.json({ success: true });
@@ -131,9 +147,7 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "id is required" }, { status: 400 });
   }
 
-  const supabase = createServiceClient();
-
-  const access = await requireStaffCanAccessForm(supabase, id);
+  const access = await requireStaffCanAccessForm(id);
   if (!access.ok) {
     return NextResponse.json(
       { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -142,24 +156,28 @@ export async function DELETE(request: NextRequest) {
   }
 
   // Check for active (non-completed) assignments
-  const { data: activeAssignments } = await supabase
-    .from("form_assignments")
-    .select("id")
-    .eq("form_id", id)
-    .neq("status", "completed")
+  const activeAssignments = await db
+    .select({ id: formAssignments.id })
+    .from(formAssignments)
+    .where(
+      and(eq(formAssignments.formId, id), ne(formAssignments.status, "completed"))
+    )
     .limit(1);
 
-  if (activeAssignments && activeAssignments.length > 0) {
+  if (activeAssignments.length > 0) {
     return NextResponse.json(
       { error: "Cannot delete form with active assignments. Complete or remove assignments first." },
       { status: 409 }
     );
   }
 
-  const { error } = await supabase.from("forms").delete().eq("id", id);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  try {
+    await db.delete(formsT).where(eq(formsT.id, id));
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Internal server error" },
+      { status: 500 }
+    );
   }
 
   return NextResponse.json({ success: true });

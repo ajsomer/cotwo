@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  appointmentTypes,
+  typeWorkflowLinks,
+  workflowActionBlocks,
+  appointmentWorkflowRuns,
+} from "@/lib/db/schema";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import {
   requireStaffOrgAccess,
   requireStaffCanAccessAppointmentType,
@@ -14,9 +21,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "org_id required" }, { status: 400 });
   }
 
-  const supabase = createServiceClient();
-
-  const access = await requireStaffOrgAccess(supabase, orgId);
+  const access = await requireStaffOrgAccess(orgId);
   if (!access.ok) {
     return NextResponse.json(
       { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -26,53 +31,69 @@ export async function GET(request: NextRequest) {
 
   try {
     // Phase 1: this org's types, and (scoped to those types) their pre links.
-    const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
-    const typesRes = await supabase
-      .from("appointment_types")
-      .select("*")
-      .eq("org_id", orgId)
-      .order("name");
+    const types = await db
+      .select({
+        id: appointmentTypes.id,
+        org_id: appointmentTypes.orgId,
+        name: appointmentTypes.name,
+        modality: appointmentTypes.modality,
+        duration_minutes: appointmentTypes.durationMinutes,
+        default_fee_cents: appointmentTypes.defaultFeeCents,
+        pms_external_id: appointmentTypes.pmsExternalId,
+        source: appointmentTypes.source,
+        pms_provider: appointmentTypes.pmsProvider,
+        created_at: appointmentTypes.createdAt,
+        updated_at: appointmentTypes.updatedAt,
+      })
+      .from(appointmentTypes)
+      .where(eq(appointmentTypes.orgId, orgId))
+      .orderBy(asc(appointmentTypes.name));
 
-    if (typesRes.error) {
-      return NextResponse.json({ error: typesRes.error.message }, { status: 500 });
-    }
-
-    const types = typesRes.data ?? [];
     const typeIdList = types.map((t) => t.id);
 
-    const linksRes = await supabase
-      .from("type_workflow_links")
-      .select("appointment_type_id, workflow_template_id")
-      .eq("direction", "pre_appointment")
-      .in("appointment_type_id", typeIdList.length ? typeIdList : [ZERO_UUID]);
+    const links = typeIdList.length === 0 ? [] : await db
+      .select({
+        appointment_type_id: typeWorkflowLinks.appointmentTypeId,
+        workflow_template_id: typeWorkflowLinks.workflowTemplateId,
+      })
+      .from(typeWorkflowLinks)
+      .where(
+        and(
+          eq(typeWorkflowLinks.direction, "pre_appointment"),
+          inArray(typeWorkflowLinks.appointmentTypeId, typeIdList),
+        ),
+      );
 
-    const links = linksRes.data ?? [];
     const linkByType = new Map(links.map((l) => [l.appointment_type_id, l.workflow_template_id]));
     const templateIdList = [...new Set(links.map((l) => l.workflow_template_id))];
 
     // Phase 2: blocks + active runs, scoped to the derived template ids
     // instead of scanning every block/run on the platform.
     const [blocksRes, runsRes] = await Promise.all([
-      supabase
-        .from("workflow_action_blocks")
-        .select("template_id")
-        .in("template_id", templateIdList.length ? templateIdList : [ZERO_UUID]),
-      supabase
-        .from("appointment_workflow_runs")
-        .select("workflow_template_id")
-        .eq("status", "active")
-        .in("workflow_template_id", templateIdList.length ? templateIdList : [ZERO_UUID]),
+      templateIdList.length === 0 ? Promise.resolve([]) : db
+        .select({ template_id: workflowActionBlocks.templateId })
+        .from(workflowActionBlocks)
+        .where(inArray(workflowActionBlocks.templateId, templateIdList)),
+      templateIdList.length === 0 ? Promise.resolve([]) : db
+        .select({ workflow_template_id: appointmentWorkflowRuns.workflowTemplateId })
+        .from(appointmentWorkflowRuns)
+        .where(
+          and(
+            eq(appointmentWorkflowRuns.status, "active"),
+            inArray(appointmentWorkflowRuns.workflowTemplateId, templateIdList),
+          ),
+        ),
     ]);
 
     // Count blocks per template
     const blockCounts: Record<string, number> = {};
-    for (const b of blocksRes.data ?? []) {
+    for (const b of blocksRes ?? []) {
       blockCounts[b.template_id] = (blockCounts[b.template_id] || 0) + 1;
     }
 
     // Count in-flight runs per template
     const inFlightCounts: Record<string, number> = {};
-    for (const r of runsRes.data ?? []) {
+    for (const r of runsRes ?? []) {
       inFlightCounts[r.workflow_template_id] =
         (inFlightCounts[r.workflow_template_id] || 0) + 1;
     }
@@ -110,9 +131,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const supabase = createServiceClient();
-
-    const access = await requireStaffOrgAccess(supabase, org_id);
+    const access = await requireStaffOrgAccess(org_id);
     if (!access.ok) {
       return NextResponse.json(
         { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -120,22 +139,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { data, error } = await supabase
-      .from("appointment_types")
-      .insert({
-        org_id,
+    const [data] = await db
+      .insert(appointmentTypes)
+      .values({
+        orgId: org_id,
         name,
         modality: modality ?? "telehealth",
-        duration_minutes: duration_minutes ?? 30,
-        default_fee_cents: default_fee_cents ?? 0,
+        durationMinutes: duration_minutes ?? 30,
+        defaultFeeCents: default_fee_cents ?? 0,
         source: "coviu",
       })
-      .select("*")
-      .single();
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+      .returning({
+        id: appointmentTypes.id,
+        org_id: appointmentTypes.orgId,
+        name: appointmentTypes.name,
+        modality: appointmentTypes.modality,
+        duration_minutes: appointmentTypes.durationMinutes,
+        default_fee_cents: appointmentTypes.defaultFeeCents,
+        pms_external_id: appointmentTypes.pmsExternalId,
+        source: appointmentTypes.source,
+        pms_provider: appointmentTypes.pmsProvider,
+        created_at: appointmentTypes.createdAt,
+        updated_at: appointmentTypes.updatedAt,
+      });
 
     return NextResponse.json({ appointment_type: data }, { status: 201 });
   } catch (err) {
@@ -157,9 +183,7 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "id required" }, { status: 400 });
     }
 
-    const supabase = createServiceClient();
-
-    const access = await requireStaffCanAccessAppointmentType(supabase, id);
+    const access = await requireStaffCanAccessAppointmentType(id);
     if (!access.ok) {
       return NextResponse.json(
         { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -167,11 +191,11 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    const { data: existing } = await supabase
-      .from("appointment_types")
-      .select("source")
-      .eq("id", id)
-      .single();
+    const [existing] = await db
+      .select({ source: appointmentTypes.source })
+      .from(appointmentTypes)
+      .where(eq(appointmentTypes.id, id))
+      .limit(1);
 
     if (!existing) {
       return NextResponse.json(
@@ -180,18 +204,18 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    const updates: Record<string, unknown> = {};
+    const updates: Partial<typeof appointmentTypes.$inferInsert> = {};
 
     if (existing.source === "pms") {
       if (default_fee_cents !== undefined)
-        updates.default_fee_cents = default_fee_cents;
+        updates.defaultFeeCents = default_fee_cents;
       if (modality !== undefined) updates.modality = modality;
     } else {
       if (name !== undefined) updates.name = name;
       if (duration_minutes !== undefined)
-        updates.duration_minutes = duration_minutes;
+        updates.durationMinutes = duration_minutes;
       if (default_fee_cents !== undefined)
-        updates.default_fee_cents = default_fee_cents;
+        updates.defaultFeeCents = default_fee_cents;
       if (modality !== undefined) updates.modality = modality;
     }
 
@@ -202,14 +226,7 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    const { error } = await supabase
-      .from("appointment_types")
-      .update(updates)
-      .eq("id", id);
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+    await db.update(appointmentTypes).set(updates).where(eq(appointmentTypes.id, id));
 
     return NextResponse.json({ success: true });
   } catch (err) {
@@ -231,9 +248,7 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "id required" }, { status: 400 });
   }
 
-  const supabase = createServiceClient();
-
-  const access = await requireStaffCanAccessAppointmentType(supabase, id);
+  const access = await requireStaffCanAccessAppointmentType(id);
   if (!access.ok) {
     return NextResponse.json(
       { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -242,14 +257,7 @@ export async function DELETE(request: NextRequest) {
   }
 
   try {
-    const { error } = await supabase
-      .from("appointment_types")
-      .delete()
-      .eq("id", id);
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+    await db.delete(appointmentTypes).where(eq(appointmentTypes.id, id));
 
     return NextResponse.json({ success: true });
   } catch (err) {

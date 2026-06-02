@@ -1,5 +1,24 @@
 import { cache } from "react";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  appointmentWorkflowRuns,
+  appointments as appointmentsT,
+  appointmentActions,
+  workflowActionBlocks,
+  patients as patientsT,
+  users as usersT,
+  patientPhoneNumbers,
+  forms as formsT,
+  rooms as roomsT,
+  appointmentTypes,
+  workflowTemplates,
+  intakePackageJourneys,
+  sessions as sessionsT,
+  outcomePathways,
+  formAssignments,
+  formSubmissions,
+} from "@/lib/db/schema";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import {
   getReadinessPriority,
   sortByPriority,
@@ -27,7 +46,6 @@ export const fetchReadinessSlice = cache(async (
   locationId: string,
   direction: ReadinessDirection
 ): Promise<ReadinessSlice> => {
-  const supabase = createServiceClient();
   const now = new Date();
 
   // Active runs for THIS location only — scoped via the appointment's
@@ -35,13 +53,25 @@ export const fetchReadinessSlice = cache(async (
   // memory. This is a correctness fix: previously runs/counts weren't
   // location-scoped, so the count badges leaked other locations' workflow
   // runs in multi-location orgs.
-  const { data: allRuns } = await supabase
-    .from("appointment_workflow_runs")
-    .select(
-      "id, appointment_id, workflow_template_id, direction, status, appointments!inner(location_id)"
+  const allRuns = await db
+    .select({
+      id: appointmentWorkflowRuns.id,
+      appointment_id: appointmentWorkflowRuns.appointmentId,
+      workflow_template_id: appointmentWorkflowRuns.workflowTemplateId,
+      direction: appointmentWorkflowRuns.direction,
+      status: appointmentWorkflowRuns.status,
+    })
+    .from(appointmentWorkflowRuns)
+    .innerJoin(
+      appointmentsT,
+      eq(appointmentsT.id, appointmentWorkflowRuns.appointmentId)
     )
-    .eq("status", "active")
-    .eq("appointments.location_id", locationId);
+    .where(
+      and(
+        eq(appointmentWorkflowRuns.status, "active"),
+        eq(appointmentsT.locationId, locationId)
+      )
+    );
 
   const oppositeDirection: ReadinessDirection =
     direction === "pre_appointment" ? "post_appointment" : "pre_appointment";
@@ -74,11 +104,24 @@ export const fetchReadinessSlice = cache(async (
   }
 
   const appointmentIds = [...runsByAppointment.keys()];
-  const { data: appointmentsData } = await supabase
-    .from("appointments")
-    .select("id, scheduled_at, patient_id, clinician_id, location_id, phone_number, room_id, appointment_type_id")
-    .in("id", appointmentIds)
-    .eq("location_id", locationId);
+  const appointmentsData = await db
+    .select({
+      id: appointmentsT.id,
+      scheduled_at: appointmentsT.scheduledAt,
+      patient_id: appointmentsT.patientId,
+      clinician_id: appointmentsT.clinicianId,
+      location_id: appointmentsT.locationId,
+      phone_number: appointmentsT.phoneNumber,
+      room_id: appointmentsT.roomId,
+      appointment_type_id: appointmentsT.appointmentTypeId,
+    })
+    .from(appointmentsT)
+    .where(
+      and(
+        inArray(appointmentsT.id, appointmentIds),
+        eq(appointmentsT.locationId, locationId)
+      )
+    );
 
   if (!appointmentsData || appointmentsData.length === 0) {
     return { appointments: [], counts };
@@ -88,79 +131,104 @@ export const fetchReadinessSlice = cache(async (
   const appointmentMap = new Map(appointmentsData.map((a) => [a.id, a]));
 
   const runIds = locationApptIds.flatMap((id) => runsByAppointment.get(id) ?? []);
-  const { data: actions } = await supabase
-    .from("appointment_actions")
-    .select("id, appointment_id, action_block_id, workflow_run_id, status, scheduled_for, fired_at, completed_at, error_message, updated_at, session_id, config, form_id, resolved_at, resolved_by, resolution_note")
-    .in("workflow_run_id", runIds);
+  const actions = runIds.length === 0 ? [] : await db
+    .select({
+      id: appointmentActions.id,
+      appointment_id: appointmentActions.appointmentId,
+      action_block_id: appointmentActions.actionBlockId,
+      workflow_run_id: appointmentActions.workflowRunId,
+      status: appointmentActions.status,
+      scheduled_for: appointmentActions.scheduledFor,
+      fired_at: appointmentActions.firedAt,
+      completed_at: appointmentActions.completedAt,
+      error_message: appointmentActions.errorMessage,
+      updated_at: appointmentActions.updatedAt,
+      session_id: appointmentActions.sessionId,
+      config: appointmentActions.config,
+      form_id: appointmentActions.formId,
+      resolved_at: appointmentActions.resolvedAt,
+      resolved_by: appointmentActions.resolvedBy,
+      resolution_note: appointmentActions.resolutionNote,
+    })
+    .from(appointmentActions)
+    .where(inArray(appointmentActions.workflowRunId, runIds));
 
-  const blockIds = [...new Set((actions ?? []).map((a) => a.action_block_id))];
-  const { data: blocks } = await supabase
-    .from("workflow_action_blocks")
-    .select("id, action_type, config, form_id, offset_minutes, offset_direction")
-    .in("id", blockIds);
+  const blockIds = [...new Set((actions ?? []).map((a) => a.action_block_id))].filter(Boolean) as string[];
+  const blocks = blockIds.length === 0 ? [] : await db
+    .select({
+      id: workflowActionBlocks.id,
+      action_type: workflowActionBlocks.actionType,
+      config: workflowActionBlocks.config,
+      form_id: workflowActionBlocks.formId,
+      offset_minutes: workflowActionBlocks.offsetMinutes,
+      offset_direction: workflowActionBlocks.offsetDirection,
+    })
+    .from(workflowActionBlocks)
+    .where(inArray(workflowActionBlocks.id, blockIds));
 
   const blockMap = new Map((blocks ?? []).map((b) => [b.id, b]));
 
-  const patientIds = [...new Set(appointmentsData.map((a) => a.patient_id).filter(Boolean))];
-  const clinicianIds = [...new Set(appointmentsData.map((a) => a.clinician_id).filter(Boolean))];
-  const formIds = [...new Set((blocks ?? []).map((b) => b.form_id).filter(Boolean))];
-  const roomIds = [...new Set(appointmentsData.map((a) => a.room_id).filter(Boolean))];
-  const typeIds = [...new Set(appointmentsData.map((a) => a.appointment_type_id).filter(Boolean))];
+  const nonNull = (x: string | null): x is string => !!x;
+  const patientIds = [...new Set(appointmentsData.map((a) => a.patient_id).filter(nonNull))];
+  const clinicianIds = [...new Set(appointmentsData.map((a) => a.clinician_id).filter(nonNull))];
+  const formIds = [...new Set((blocks ?? []).map((b) => b.form_id).filter(nonNull))];
+  const roomIds = [...new Set(appointmentsData.map((a) => a.room_id).filter(nonNull))];
+  const typeIds = [...new Set(appointmentsData.map((a) => a.appointment_type_id).filter(nonNull))];
   const templateIds = [...new Set([...templateIdsByAppointment.values()])];
 
-  const sessionIds = [...new Set((actions ?? []).map((a) => a.session_id).filter(Boolean))];
-  const actionFormIds = [...new Set((actions ?? []).map((a) => a.form_id).filter(Boolean))];
+  const sessionIds = [...new Set((actions ?? []).map((a) => a.session_id).filter(nonNull))];
+  const actionFormIds = [...new Set((actions ?? []).map((a) => a.form_id).filter(nonNull))];
   const allFormIds = [...new Set([...formIds, ...actionFormIds])];
 
   const [patientsRes, cliniciansRes, phonesRes, formsRes, roomsRes, typesRes, templatesRes, journeysRes, sessionsRes] = await Promise.all([
     patientIds.length > 0
-      ? supabase.from("patients").select("id, first_name, last_name").in("id", patientIds)
-      : Promise.resolve({ data: [] }),
+      ? db.select({ id: patientsT.id, first_name: patientsT.firstName, last_name: patientsT.lastName }).from(patientsT).where(inArray(patientsT.id, patientIds))
+      : Promise.resolve([]),
     clinicianIds.length > 0
-      ? supabase.from("users").select("id, full_name").in("id", clinicianIds)
-      : Promise.resolve({ data: [] }),
+      ? db.select({ id: usersT.id, full_name: usersT.fullName }).from(usersT).where(inArray(usersT.id, clinicianIds))
+      : Promise.resolve([]),
     patientIds.length > 0
-      ? supabase.from("patient_phone_numbers").select("patient_id, phone_number").in("patient_id", patientIds).eq("is_primary", true)
-      : Promise.resolve({ data: [] }),
+      ? db.select({ patient_id: patientPhoneNumbers.patientId, phone_number: patientPhoneNumbers.phoneNumber }).from(patientPhoneNumbers).where(and(inArray(patientPhoneNumbers.patientId, patientIds), eq(patientPhoneNumbers.isPrimary, true)))
+      : Promise.resolve([]),
     allFormIds.length > 0
-      ? supabase.from("forms").select("id, name").in("id", allFormIds)
-      : Promise.resolve({ data: [] }),
+      ? db.select({ id: formsT.id, name: formsT.name }).from(formsT).where(inArray(formsT.id, allFormIds))
+      : Promise.resolve([]),
     roomIds.length > 0
-      ? supabase.from("rooms").select("id, name").in("id", roomIds)
-      : Promise.resolve({ data: [] }),
+      ? db.select({ id: roomsT.id, name: roomsT.name }).from(roomsT).where(inArray(roomsT.id, roomIds))
+      : Promise.resolve([]),
     typeIds.length > 0
-      ? supabase.from("appointment_types").select("id, name").in("id", typeIds)
-      : Promise.resolve({ data: [] }),
+      ? db.select({ id: appointmentTypes.id, name: appointmentTypes.name }).from(appointmentTypes).where(inArray(appointmentTypes.id, typeIds))
+      : Promise.resolve([]),
     templateIds.length > 0
-      ? supabase.from("workflow_templates").select("id, terminal_type, at_risk_after_days, overdue_after_days").in("id", templateIds)
-      : Promise.resolve({ data: [] }),
+      ? db.select({ id: workflowTemplates.id, terminal_type: workflowTemplates.terminalType, at_risk_after_days: workflowTemplates.atRiskAfterDays, overdue_after_days: workflowTemplates.overdueAfterDays }).from(workflowTemplates).where(inArray(workflowTemplates.id, templateIds))
+      : Promise.resolve([]),
     locationApptIds.length > 0
-      ? supabase.from("intake_package_journeys").select("appointment_id, status, form_ids, forms_completed, includes_card_capture, card_captured_at, includes_consent, consent_completed_at, created_at, completed_at").in("appointment_id", locationApptIds)
-      : Promise.resolve({ data: [] }),
+      ? db.select({ appointment_id: intakePackageJourneys.appointmentId, status: intakePackageJourneys.status, form_ids: intakePackageJourneys.formIds, forms_completed: intakePackageJourneys.formsCompleted, includes_card_capture: intakePackageJourneys.includesCardCapture, card_captured_at: intakePackageJourneys.cardCapturedAt, includes_consent: intakePackageJourneys.includesConsent, consent_completed_at: intakePackageJourneys.consentCompletedAt, created_at: intakePackageJourneys.createdAt, completed_at: intakePackageJourneys.completedAt }).from(intakePackageJourneys).where(inArray(intakePackageJourneys.appointmentId, locationApptIds))
+      : Promise.resolve([]),
     sessionIds.length > 0
-      ? supabase.from("sessions").select("id, session_ended_at, outcome_pathway_id").in("id", sessionIds)
-      : Promise.resolve({ data: [] }),
+      ? db.select({ id: sessionsT.id, session_ended_at: sessionsT.sessionEndedAt, outcome_pathway_id: sessionsT.outcomePathwayId }).from(sessionsT).where(inArray(sessionsT.id, sessionIds))
+      : Promise.resolve([]),
   ]);
 
-  const patientMap = new Map((patientsRes.data ?? []).map((p) => [p.id, p]));
-  const clinicianMap = new Map((cliniciansRes.data ?? []).map((c) => [c.id, c.full_name]));
-  const phoneMap = new Map((phonesRes.data ?? []).map((p) => [p.patient_id, p.phone_number]));
-  const formMap = new Map((formsRes.data ?? []).map((f) => [f.id, f.name]));
-  const roomMap = new Map((roomsRes.data ?? []).map((r) => [r.id, r.name]));
-  const typeMap = new Map((typesRes.data ?? []).map((t) => [t.id, t.name]));
-  const templateMap = new Map((templatesRes.data ?? []).map((t) => [t.id, t]));
-  const journeyMap = new Map((journeysRes.data ?? []).map((j) => [j.appointment_id, j]));
-  const sessionMap = new Map((sessionsRes.data ?? []).map((s) => [s.id, s]));
+  const patientMap = new Map((patientsRes ?? []).map((p) => [p.id, p]));
+  const clinicianMap = new Map((cliniciansRes ?? []).map((c) => [c.id, c.full_name]));
+  const phoneMap = new Map((phonesRes ?? []).map((p) => [p.patient_id, p.phone_number]));
+  const formMap = new Map((formsRes ?? []).map((f) => [f.id, f.name]));
+  const roomMap = new Map((roomsRes ?? []).map((r) => [r.id, r.name]));
+  const typeMap = new Map((typesRes ?? []).map((t) => [t.id, t.name]));
+  const templateMap = new Map((templatesRes ?? []).map((t) => [t.id, t]));
+  const journeyMap = new Map((journeysRes ?? []).map((j) => [j.appointment_id, j]));
+  const sessionMap = new Map((sessionsRes ?? []).map((s) => [s.id, s]));
 
   const pathwayIds = [...new Set(
-    (sessionsRes.data ?? []).map((s) => s.outcome_pathway_id).filter(Boolean)
-  )];
+    (sessionsRes ?? []).map((s) => s.outcome_pathway_id).filter(Boolean)
+  )] as string[];
   const pathwayNameMap = new Map<string, string>();
   if (pathwayIds.length > 0) {
-    const { data: pathways } = await supabase
-      .from("outcome_pathways")
-      .select("id, name")
-      .in("id", pathwayIds);
+    const pathways = await db
+      .select({ id: outcomePathways.id, name: outcomePathways.name })
+      .from(outcomePathways)
+      .where(inArray(outcomePathways.id, pathwayIds));
     for (const p of pathways ?? []) {
       pathwayNameMap.set(p.id, p.name);
     }
@@ -193,7 +261,7 @@ export const fetchReadinessSlice = cache(async (
   // configured form_ids — those may not be in formMap. Top up the map with
   // any unseen IDs from journey rows before we render rows.
   const journeyFormIds = new Set<string>();
-  for (const j of journeysRes.data ?? []) {
+  for (const j of journeysRes ?? []) {
     if (Array.isArray(j.form_ids)) {
       for (const fid of j.form_ids as string[]) {
         if (fid && !formMap.has(fid)) journeyFormIds.add(fid);
@@ -201,44 +269,57 @@ export const fetchReadinessSlice = cache(async (
     }
   }
   if (journeyFormIds.size > 0) {
-    const { data: extraForms } = await supabase
-      .from("forms")
-      .select("id, name")
-      .in("id", [...journeyFormIds]);
+    const extraForms = await db
+      .select({ id: formsT.id, name: formsT.name })
+      .from(formsT)
+      .where(inArray(formsT.id, [...journeyFormIds]));
     for (const f of extraForms ?? []) formMap.set(f.id, f.name);
   }
 
   if (locationApptIds.length > 0) {
     const [completedAssignmentsRes, intakeSubmissionsRes] = await Promise.all([
-      supabase
-        .from("form_assignments")
-        .select("submission_id, form_id, completed_at, appointment_id")
-        .in("appointment_id", locationApptIds)
-        .eq("status", "completed")
-        .not("submission_id", "is", null),
+      db
+        .select({
+          submission_id: formAssignments.submissionId,
+          form_id: formAssignments.formId,
+          completed_at: formAssignments.completedAt,
+          appointment_id: formAssignments.appointmentId,
+        })
+        .from(formAssignments)
+        .where(
+          and(
+            inArray(formAssignments.appointmentId, locationApptIds),
+            eq(formAssignments.status, "completed"),
+            isNotNull(formAssignments.submissionId)
+          )
+        ),
       // For intake-package submissions, scope to journey-configured form IDs
       // for each appointment that has a journey row.
       (async () => {
-        const journeyAppts = (journeysRes.data ?? []).filter(
+        const journeyAppts = (journeysRes ?? []).filter(
           (j) => Array.isArray(j.form_ids) && j.form_ids.length > 0,
         );
-        if (journeyAppts.length === 0) return { data: [] as Array<{ id: string; form_id: string; appointment_id: string; created_at: string }> };
-        // We need (appointment_id, form_id) pairs; build a single OR predicate.
-        const orFilters = journeyAppts.flatMap((j) =>
-          (j.form_ids as string[]).map(
-            (fid) => `and(appointment_id.eq.${j.appointment_id},form_id.eq.${fid})`,
-          ),
+        if (journeyAppts.length === 0) return [] as Array<{ id: string; form_id: string; appointment_id: string; created_at: string }>;
+        // (appointment_id, form_id) pairs as an OR of ANDs. Build the pair
+        // predicate as a SQL row-tuple IN list — clean and indexable.
+        const pairs = journeyAppts.flatMap((j) =>
+          (j.form_ids as string[]).map((fid) => sql`(${j.appointment_id}, ${fid})`),
         );
-        return supabase
-          .from("form_submissions")
-          .select("id, form_id, appointment_id, created_at")
-          .or(orFilters.join(","));
+        return db
+          .select({
+            id: formSubmissions.id,
+            form_id: formSubmissions.formId,
+            appointment_id: formSubmissions.appointmentId,
+            created_at: formSubmissions.createdAt,
+          })
+          .from(formSubmissions)
+          .where(sql`(${formSubmissions.appointmentId}, ${formSubmissions.formId}) IN (${sql.join(pairs, sql`, `)})`);
       })(),
     ]);
 
     const assignmentSubmissionIds = new Set<string>();
 
-    for (const row of completedAssignmentsRes.data ?? []) {
+    for (const row of completedAssignmentsRes ?? []) {
       if (!row.submission_id || !row.appointment_id) continue;
       assignmentSubmissionIds.add(row.submission_id);
       const list = completedSubsByAppt.get(row.appointment_id) ?? [];
@@ -252,11 +333,12 @@ export const fetchReadinessSlice = cache(async (
       completedSubsByAppt.set(row.appointment_id, list);
     }
 
-    for (const row of intakeSubmissionsRes.data ?? []) {
+    for (const row of intakeSubmissionsRes ?? []) {
       // Skip if the same submission was already added via the assignment path
       // (defensive — intake-package submissions don't have assignment rows by
       // design, but the union by submission_id keeps us safe).
       if (assignmentSubmissionIds.has(row.id)) continue;
+      if (!row.appointment_id || !row.form_id) continue;
       const journey = journeyMap.get(row.appointment_id);
       const formsCompleted = (journey?.forms_completed as Record<string, string> | null | undefined) ?? null;
       const completedAt = formsCompleted?.[row.form_id] ?? row.created_at;
@@ -379,7 +461,7 @@ export const fetchReadinessSlice = cache(async (
     }
 
     const actionLabel = isPostAppointment
-      ? getPostActionLabel(block?.action_type ?? "unknown", actionConfig, formName)
+      ? getPostActionLabel(block?.action_type ?? "unknown", actionConfig, formName ?? undefined)
       : getActionLabel(block?.action_type ?? "unknown", formName ?? undefined);
 
     group.actions.push({
@@ -445,7 +527,7 @@ function computePackageProgress(
         form_ids: string[];
         card_captured_at: string | null;
         consent_completed_at: string | null;
-        forms_completed: Record<string, string> | null;
+        forms_completed: unknown;
       }
     | undefined
 ): { totalItems: number; completedItems: number } {
@@ -466,7 +548,7 @@ function computePackageProgress(
   const formCount = journey.form_ids?.length ?? 0;
   total += formCount;
 
-  const formsCompleted = journey.forms_completed ?? {};
+  const formsCompleted = (journey.forms_completed as Record<string, string> | null) ?? {};
   completed += Object.keys(formsCompleted).length;
 
   return { totalItems: total, completedItems: completed };

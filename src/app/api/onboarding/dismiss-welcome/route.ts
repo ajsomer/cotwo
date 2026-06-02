@@ -1,17 +1,17 @@
 import { getAuthenticatedUserId } from "@/lib/auth/staff-access";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import { users as usersT } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 export async function POST() {
   const userId = await getAuthenticatedUserId();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const service = createServiceClient();
-
-  await service
-    .from("users")
-    .update({ has_seen_patient_journey: true })
-    .eq("id", userId);
+  await db
+    .update(usersT)
+    .set({ hasSeenPatientJourney: true })
+    .where(eq(usersT.id, userId));
 
   return NextResponse.json({ ok: true });
 }

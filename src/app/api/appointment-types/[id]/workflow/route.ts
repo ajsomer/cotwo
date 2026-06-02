@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  appointmentTypes,
+  typeWorkflowLinks,
+  workflowTemplates,
+} from "@/lib/db/schema";
+import { and, eq } from "drizzle-orm";
 import { requireStaffCanAccessAppointmentType } from "@/lib/auth/staff-access";
 
 // POST /api/appointment-types/[id]/workflow
@@ -11,10 +17,7 @@ export async function POST(
 ) {
   const { id: appointmentTypeId } = await params;
 
-  const supabase = createServiceClient();
-
   const access = await requireStaffCanAccessAppointmentType(
-    supabase,
     appointmentTypeId
   );
   if (!access.ok) {
@@ -26,11 +29,15 @@ export async function POST(
 
   try {
     // Verify the appointment type exists and get its org
-    const { data: apptType } = await supabase
-      .from("appointment_types")
-      .select("id, org_id, name")
-      .eq("id", appointmentTypeId)
-      .single();
+    const [apptType] = await db
+      .select({
+        id: appointmentTypes.id,
+        org_id: appointmentTypes.orgId,
+        name: appointmentTypes.name,
+      })
+      .from(appointmentTypes)
+      .where(eq(appointmentTypes.id, appointmentTypeId))
+      .limit(1);
 
     if (!apptType) {
       return NextResponse.json(
@@ -41,12 +48,16 @@ export async function POST(
 
     // Check if a pre-workflow already exists (the partial unique index
     // enforces this at DB level too, but a clear error is better)
-    const { data: existingLink } = await supabase
-      .from("type_workflow_links")
-      .select("id")
-      .eq("appointment_type_id", appointmentTypeId)
-      .eq("direction", "pre_appointment")
-      .maybeSingle();
+    const [existingLink] = await db
+      .select({ id: typeWorkflowLinks.id })
+      .from(typeWorkflowLinks)
+      .where(
+        and(
+          eq(typeWorkflowLinks.appointmentTypeId, appointmentTypeId),
+          eq(typeWorkflowLinks.direction, "pre_appointment"),
+        ),
+      )
+      .limit(1);
 
     if (existingLink) {
       return NextResponse.json(
@@ -56,37 +67,59 @@ export async function POST(
     }
 
     // Create the workflow template
-    const { data: template, error: templateError } = await supabase
-      .from("workflow_templates")
-      .insert({
-        org_id: apptType.org_id,
-        name: `Pre-workflow: ${apptType.name}`,
-        direction: "pre_appointment",
-        status: "draft",
-      })
-      .select("*")
-      .single();
-
-    if (templateError) {
+    let template: {
+      id: string;
+      org_id: string;
+      name: string;
+      description: string | null;
+      direction: string;
+      status: string;
+      terminal_type: string;
+      at_risk_after_days: number | null;
+      overdue_after_days: number | null;
+      created_at: string;
+      updated_at: string;
+    };
+    try {
+      [template] = await db
+        .insert(workflowTemplates)
+        .values({
+          orgId: apptType.org_id,
+          name: `Pre-workflow: ${apptType.name}`,
+          direction: "pre_appointment",
+          status: "draft",
+        })
+        .returning({
+          id: workflowTemplates.id,
+          org_id: workflowTemplates.orgId,
+          name: workflowTemplates.name,
+          description: workflowTemplates.description,
+          direction: workflowTemplates.direction,
+          status: workflowTemplates.status,
+          terminal_type: workflowTemplates.terminalType,
+          at_risk_after_days: workflowTemplates.atRiskAfterDays,
+          overdue_after_days: workflowTemplates.overdueAfterDays,
+          created_at: workflowTemplates.createdAt,
+          updated_at: workflowTemplates.updatedAt,
+        });
+    } catch (templateError) {
       return NextResponse.json(
-        { error: templateError.message },
+        { error: (templateError as Error).message },
         { status: 500 }
       );
     }
 
     // Create the junction link
-    const { error: linkError } = await supabase
-      .from("type_workflow_links")
-      .insert({
-        appointment_type_id: appointmentTypeId,
-        workflow_template_id: template.id,
+    try {
+      await db.insert(typeWorkflowLinks).values({
+        appointmentTypeId,
+        workflowTemplateId: template.id,
         direction: "pre_appointment",
       });
-
-    if (linkError) {
+    } catch (linkError) {
       // Clean up the template if link creation fails
-      await supabase.from("workflow_templates").delete().eq("id", template.id);
-      return NextResponse.json({ error: linkError.message }, { status: 500 });
+      await db.delete(workflowTemplates).where(eq(workflowTemplates.id, template.id));
+      return NextResponse.json({ error: (linkError as Error).message }, { status: 500 });
     }
 
     return NextResponse.json({ template }, { status: 201 });
@@ -109,10 +142,7 @@ export async function DELETE(
 ) {
   const { id: appointmentTypeId } = await params;
 
-  const supabase = createServiceClient();
-
   const access = await requireStaffCanAccessAppointmentType(
-    supabase,
     appointmentTypeId
   );
   if (!access.ok) {
@@ -123,15 +153,14 @@ export async function DELETE(
   }
 
   try {
-    const { error } = await supabase
-      .from("type_workflow_links")
-      .delete()
-      .eq("appointment_type_id", appointmentTypeId)
-      .eq("direction", "pre_appointment");
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+    await db
+      .delete(typeWorkflowLinks)
+      .where(
+        and(
+          eq(typeWorkflowLinks.appointmentTypeId, appointmentTypeId),
+          eq(typeWorkflowLinks.direction, "pre_appointment"),
+        ),
+      );
 
     return NextResponse.json({ success: true });
   } catch (err) {

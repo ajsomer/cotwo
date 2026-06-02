@@ -1,5 +1,7 @@
 import { getAuthenticatedUserId } from "@/lib/auth/staff-access";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import { users as usersT } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { NextResponse, type NextRequest } from "next/server";
 
 const STAGE_ORDER = ["not_started", "test_session_sent", "call_active", "call_completed"] as const;
@@ -16,13 +18,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid stage." }, { status: 400 });
   }
 
-  const service = createServiceClient();
-
-  const { data: userRecord } = await service
-    .from("users")
-    .select("onboarding_stage")
-    .eq("id", userId)
-    .single();
+  const [userRecord] = await db
+    .select({ onboarding_stage: usersT.onboardingStage })
+    .from(usersT)
+    .where(eq(usersT.id, userId))
+    .limit(1);
 
   const currentStage = userRecord?.onboarding_stage as OnboardingStage | undefined;
   const currentIndex = currentStage ? STAGE_ORDER.indexOf(currentStage) : 0;
@@ -33,10 +33,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, stage: currentStage });
   }
 
-  await service
-    .from("users")
-    .update({ onboarding_stage: to })
-    .eq("id", userId);
+  await db.update(usersT).set({ onboardingStage: to }).where(eq(usersT.id, userId));
 
   return NextResponse.json({ ok: true, stage: to });
 }

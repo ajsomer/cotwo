@@ -27,11 +27,11 @@ export function formSubmissionUrl(args: {
     form_name: args.formName,
   });
   if (args.submissionId) params.set("submission_id", args.submissionId);
-  return `/api/readiness/form-submission?${params.toString()}`;
+  return `/api/tasks/form-submission?${params.toString()}`;
 }
 
 export function intakeHandoffUrl(appointmentId: string): string {
-  return `/api/readiness/intake-handoff?appointment_id=${appointmentId}`;
+  return `/api/tasks/intake-handoff?appointment_id=${appointmentId}`;
 }
 
 export function standaloneSubmissionUrl(submissionId: string): string {

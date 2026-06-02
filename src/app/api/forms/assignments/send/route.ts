@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  formAssignments,
+  forms as formsT,
+  patients as patientsT,
+  patientPhoneNumbers,
+} from "@/lib/db/schema";
+import { and, eq } from "drizzle-orm";
 import { getSmsProvider } from "@/lib/sms";
 import { getBaseUrl } from "@/lib/utils/url";
 import { requireStaffCanAccessFormAssignment } from "@/lib/auth/staff-access";
@@ -16,10 +23,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const supabase = createServiceClient();
-
   const access = await requireStaffCanAccessFormAssignment(
-    supabase,
     assignment_id
   );
   if (!access.ok) {
@@ -31,13 +35,18 @@ export async function POST(request: NextRequest) {
 
   try {
     // Fetch assignment with form name and patient details
-    const { data: assignment, error: assignError } = await supabase
-      .from("form_assignments")
-      .select("id, token, status, patient_id, form_id")
-      .eq("id", assignment_id)
-      .single();
+    const [assignment] = await db
+      .select({
+        id: formAssignments.id,
+        token: formAssignments.token,
+        status: formAssignments.status,
+        patient_id: formAssignments.patientId,
+        form_id: formAssignments.formId,
+      })
+      .from(formAssignments)
+      .where(eq(formAssignments.id, assignment_id));
 
-    if (assignError || !assignment) {
+    if (!assignment) {
       return NextResponse.json({ error: "Assignment not found" }, { status: 404 });
     }
 
@@ -49,25 +58,29 @@ export async function POST(request: NextRequest) {
     }
 
     // Get form name
-    const { data: form } = await supabase
-      .from("forms")
-      .select("name")
-      .eq("id", assignment.form_id)
-      .single();
+    const [form] = await db
+      .select({ name: formsT.name })
+      .from(formsT)
+      .where(eq(formsT.id, assignment.form_id));
 
     // Get patient name and primary phone
-    const { data: patient } = await supabase
-      .from("patients")
-      .select("first_name, last_name")
-      .eq("id", assignment.patient_id)
-      .single();
+    const [patient] = await db
+      .select({
+        first_name: patientsT.firstName,
+        last_name: patientsT.lastName,
+      })
+      .from(patientsT)
+      .where(eq(patientsT.id, assignment.patient_id));
 
-    const { data: phoneRecord } = await supabase
-      .from("patient_phone_numbers")
-      .select("phone_number")
-      .eq("patient_id", assignment.patient_id)
-      .eq("is_primary", true)
-      .single();
+    const [phoneRecord] = await db
+      .select({ phone_number: patientPhoneNumbers.phoneNumber })
+      .from(patientPhoneNumbers)
+      .where(
+        and(
+          eq(patientPhoneNumbers.patientId, assignment.patient_id),
+          eq(patientPhoneNumbers.isPrimary, true)
+        )
+      );
 
     if (!phoneRecord) {
       return NextResponse.json(
@@ -93,15 +106,17 @@ export async function POST(request: NextRequest) {
     }
 
     // Update assignment status (forward-only: don't downgrade from opened)
-    const updates: Record<string, unknown> = { sent_at: new Date().toISOString() };
+    const updates: Partial<typeof formAssignments.$inferInsert> = {
+      sentAt: new Date().toISOString(),
+    };
     if (assignment.status === "pending") {
       updates.status = "sent";
     }
 
-    await supabase
-      .from("form_assignments")
-      .update(updates)
-      .eq("id", assignment_id);
+    await db
+      .update(formAssignments)
+      .set(updates)
+      .where(eq(formAssignments.id, assignment_id));
 
     return NextResponse.json({ success: true });
   } catch (err) {

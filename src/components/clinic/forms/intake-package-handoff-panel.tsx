@@ -115,7 +115,7 @@ export function IntakePackageHandoffPanel({
     setMarking(true);
     setError(null);
     try {
-      const res = await fetch("/api/readiness/mark-intake-transcribed", {
+      const res = await fetch("/api/tasks/mark-intake-transcribed", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action_id: actionId }),

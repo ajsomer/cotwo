@@ -1,4 +1,16 @@
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  forms as formsT,
+  formAssignments,
+  sessions as sessionsT,
+  intakePackageJourneys,
+  appointmentActions,
+  appointments as appointmentsT,
+  sessionParticipants,
+  files as filesT,
+  fileDeliveries,
+} from "@/lib/db/schema";
+import { and, eq } from "drizzle-orm";
 import { getSmsProvider } from "@/lib/sms";
 import { getBaseUrl } from "@/lib/utils/url";
 import type { ActionHandlerResult, ActionType } from "./types";
@@ -69,35 +81,36 @@ async function handleDeliverForm(ctx: HandlerContext): Promise<ActionHandlerResu
     return { status: "failed", error: "No form_id configured on this action" };
   }
 
-  const supabase = createServiceClient();
-
   // Get form details
-  const { data: form } = await supabase
-    .from("forms")
-    .select("id, name, schema, status")
-    .eq("id", ctx.formId)
-    .single();
+  const [form] = await db
+    .select({ id: formsT.id, name: formsT.name, schema: formsT.schema, status: formsT.status })
+    .from(formsT)
+    .where(eq(formsT.id, ctx.formId));
 
   if (!form) {
     return { status: "failed", error: `Form ${ctx.formId} not found` };
   }
 
   // Create form_assignment
-  const { data: assignment, error: assignError } = await supabase
-    .from("form_assignments")
-    .insert({
-      form_id: form.id,
-      patient_id: ctx.patientId,
-      appointment_id: ctx.appointmentId,
-      schema_snapshot: form.schema,
-      status: "sent",
-      sent_at: new Date().toISOString(),
-    })
-    .select("id, token")
-    .single();
+  let assignment: { id: string; token: string } | undefined;
+  try {
+    [assignment] = await db
+      .insert(formAssignments)
+      .values({
+        formId: form.id,
+        patientId: ctx.patientId,
+        appointmentId: ctx.appointmentId,
+        schemaSnapshot: form.schema,
+        status: "sent",
+        sentAt: new Date().toISOString(),
+      })
+      .returning({ id: formAssignments.id, token: formAssignments.token });
+  } catch (assignError) {
+    return { status: "failed", error: (assignError as Error)?.message ?? "Failed to create form assignment" };
+  }
 
-  if (assignError || !assignment) {
-    return { status: "failed", error: assignError?.message ?? "Failed to create form assignment" };
+  if (!assignment) {
+    return { status: "failed", error: "Failed to create form assignment" };
   }
 
   // Send SMS
@@ -163,15 +176,13 @@ async function handleSendSms(ctx: HandlerContext): Promise<ActionHandlerResult> 
 async function handleCaptureCard(ctx: HandlerContext): Promise<ActionHandlerResult> {
   // In the prototype, the card capture happens in the patient entry flow.
   // The workflow action sends a link to the entry flow where card capture is a step.
-  const supabase = createServiceClient();
 
   // Find the session for this appointment to get the entry token
-  const { data: session } = await supabase
-    .from("sessions")
-    .select("entry_token")
-    .eq("appointment_id", ctx.appointmentId)
-    .limit(1)
-    .single();
+  const [session] = await db
+    .select({ entry_token: sessionsT.entryToken })
+    .from(sessionsT)
+    .where(eq(sessionsT.appointmentId, ctx.appointmentId))
+    .limit(1);
 
   const url = session
     ? `${getBaseUrl()}/entry/${session.entry_token}`
@@ -201,8 +212,6 @@ async function handleCaptureCard(ctx: HandlerContext): Promise<ActionHandlerResu
  * proves ownership of the phone number the clinic asserted against.
  */
 async function handleIntakePackage(ctx: HandlerContext): Promise<ActionHandlerResult> {
-  const supabase = createServiceClient();
-
   if (!ctx.patientId) {
     return {
       status: "failed",
@@ -218,21 +227,25 @@ async function handleIntakePackage(ctx: HandlerContext): Promise<ActionHandlerRe
 
   const journeyToken = crypto.randomUUID();
 
-  const { data: journey, error: journeyError } = await supabase
-    .from("intake_package_journeys")
-    .insert({
-      appointment_id: ctx.appointmentId,
-      patient_id: ctx.patientId,
-      journey_token: journeyToken,
-      includes_card_capture: config.includes_card_capture ?? false,
-      includes_consent: config.includes_consent ?? false,
-      form_ids: config.form_ids ?? [],
-    })
-    .select("id")
-    .single();
+  let journey: { id: string } | undefined;
+  try {
+    [journey] = await db
+      .insert(intakePackageJourneys)
+      .values({
+        appointmentId: ctx.appointmentId,
+        patientId: ctx.patientId,
+        journeyToken,
+        includesCardCapture: config.includes_card_capture ?? false,
+        includesConsent: config.includes_consent ?? false,
+        formIds: config.form_ids ?? [],
+      })
+      .returning({ id: intakePackageJourneys.id });
+  } catch (journeyError) {
+    return { status: "failed", error: `Failed to create intake journey: ${(journeyError as Error)?.message}` };
+  }
 
-  if (journeyError || !journey) {
-    return { status: "failed", error: `Failed to create intake journey: ${journeyError?.message}` };
+  if (!journey) {
+    return { status: "failed", error: "Failed to create intake journey" };
   }
 
   const url = `${getBaseUrl()}/intake/${journeyToken}`;
@@ -257,17 +270,18 @@ async function handleIntakePackage(ctx: HandlerContext): Promise<ActionHandlerRe
  * and check completion status.
  */
 async function handleIntakeReminder(ctx: HandlerContext): Promise<ActionHandlerResult> {
-  const supabase = createServiceClient();
-
   // Check parent intake_package action status
   if (ctx.parentActionBlockId) {
-    const { data: parentAction } = await supabase
-      .from("appointment_actions")
-      .select("status")
-      .eq("appointment_id", ctx.appointmentId)
-      .eq("action_block_id", ctx.parentActionBlockId)
-      .limit(1)
-      .single();
+    const [parentAction] = await db
+      .select({ status: appointmentActions.status })
+      .from(appointmentActions)
+      .where(
+        and(
+          eq(appointmentActions.appointmentId, ctx.appointmentId),
+          eq(appointmentActions.actionBlockId, ctx.parentActionBlockId)
+        )
+      )
+      .limit(1);
 
     if (parentAction?.status === "completed") {
       return { status: "sent", resultData: { note: "skipped — package already completed" } };
@@ -275,12 +289,11 @@ async function handleIntakeReminder(ctx: HandlerContext): Promise<ActionHandlerR
   }
 
   // Fetch the journey to get the token
-  const { data: journey } = await supabase
-    .from("intake_package_journeys")
-    .select("journey_token, status")
-    .eq("appointment_id", ctx.appointmentId)
-    .limit(1)
-    .single();
+  const [journey] = await db
+    .select({ journey_token: intakePackageJourneys.journeyToken, status: intakePackageJourneys.status })
+    .from(intakePackageJourneys)
+    .where(eq(intakePackageJourneys.appointmentId, ctx.appointmentId))
+    .limit(1);
 
   if (!journey) {
     return {
@@ -314,13 +327,16 @@ async function handleIntakeReminder(ctx: HandlerContext): Promise<ActionHandlerR
 
 /** Create a session on the run sheet and send the patient their join link. */
 async function handleAddToRunsheet(ctx: HandlerContext): Promise<ActionHandlerResult> {
-  const supabase = createServiceClient();
-
-  const { data: appointment } = await supabase
-    .from("appointments")
-    .select("id, room_id, location_id, patient_id, phone_number")
-    .eq("id", ctx.appointmentId)
-    .single();
+  const [appointment] = await db
+    .select({
+      id: appointmentsT.id,
+      room_id: appointmentsT.roomId,
+      location_id: appointmentsT.locationId,
+      patient_id: appointmentsT.patientId,
+      phone_number: appointmentsT.phoneNumber,
+    })
+    .from(appointmentsT)
+    .where(eq(appointmentsT.id, ctx.appointmentId));
 
   if (!appointment) {
     return { status: "failed", error: "Appointment not found" };
@@ -332,26 +348,30 @@ async function handleAddToRunsheet(ctx: HandlerContext): Promise<ActionHandlerRe
 
   const entryToken = crypto.randomUUID();
 
-  const { data: session, error: sessionError } = await supabase
-    .from("sessions")
-    .insert({
-      appointment_id: appointment.id,
-      room_id: appointment.room_id,
-      location_id: appointment.location_id,
-      status: "queued",
-      entry_token: entryToken,
-    })
-    .select("id")
-    .single();
+  let session: { id: string } | undefined;
+  try {
+    [session] = await db
+      .insert(sessionsT)
+      .values({
+        appointmentId: appointment.id,
+        roomId: appointment.room_id,
+        locationId: appointment.location_id,
+        status: "queued",
+        entryToken,
+      })
+      .returning({ id: sessionsT.id });
+  } catch (sessionError) {
+    return { status: "failed", error: `Failed to create session: ${(sessionError as Error)?.message}` };
+  }
 
-  if (sessionError || !session) {
-    return { status: "failed", error: `Failed to create session: ${sessionError?.message}` };
+  if (!session) {
+    return { status: "failed", error: "Failed to create session" };
   }
 
   if (appointment.patient_id) {
-    await supabase.from("session_participants").insert({
-      session_id: session.id,
-      patient_id: appointment.patient_id,
+    await db.insert(sessionParticipants).values({
+      sessionId: session.id,
+      patientId: appointment.patient_id,
       role: "patient",
     });
   }
@@ -385,14 +405,11 @@ async function handleAddToRunsheet(ctx: HandlerContext): Promise<ActionHandlerRe
 
 /** Send the contact verification flow link to the patient. */
 async function handleVerifyContact(ctx: HandlerContext): Promise<ActionHandlerResult> {
-  const supabase = createServiceClient();
-
-  const { data: session } = await supabase
-    .from("sessions")
-    .select("entry_token")
-    .eq("appointment_id", ctx.appointmentId)
-    .limit(1)
-    .single();
+  const [session] = await db
+    .select({ entry_token: sessionsT.entryToken })
+    .from(sessionsT)
+    .where(eq(sessionsT.appointmentId, ctx.appointmentId))
+    .limit(1);
 
   const url = session
     ? `${getBaseUrl()}/entry/${session.entry_token}`
@@ -417,14 +434,11 @@ async function handleSendFile(ctx: HandlerContext): Promise<ActionHandlerResult>
     return { status: "failed", error: "No file_id configured on this action" };
   }
 
-  const supabase = createServiceClient();
-
   // Get file details
-  const { data: file } = await supabase
-    .from("files")
-    .select("id, name, storage_path")
-    .eq("id", fileId)
-    .single();
+  const [file] = await db
+    .select({ id: filesT.id, name: filesT.name, storage_path: filesT.storagePath })
+    .from(filesT)
+    .where(eq(filesT.id, fileId));
 
   if (!file) {
     return { status: "failed", error: `File ${fileId} not found` };
@@ -432,23 +446,27 @@ async function handleSendFile(ctx: HandlerContext): Promise<ActionHandlerResult>
 
   // Create file_delivery with unique token
   const token = crypto.randomUUID();
-  const { data: delivery, error: deliveryError } = await supabase
-    .from("file_deliveries")
-    .insert({
-      file_id: file.id,
-      patient_id: ctx.patientId,
-      session_id: ctx.sessionId,
-      token,
-      sent_at: new Date().toISOString(),
-    })
-    .select("id")
-    .single();
-
-  if (deliveryError || !delivery) {
+  let delivery: { id: string } | undefined;
+  try {
+    [delivery] = await db
+      .insert(fileDeliveries)
+      .values({
+        fileId: file.id,
+        patientId: ctx.patientId,
+        sessionId: ctx.sessionId,
+        token,
+        sentAt: new Date().toISOString(),
+      })
+      .returning({ id: fileDeliveries.id });
+  } catch (deliveryError) {
     return {
       status: "failed",
-      error: deliveryError?.message ?? "Failed to create file delivery",
+      error: (deliveryError as Error)?.message ?? "Failed to create file delivery",
     };
+  }
+
+  if (!delivery) {
+    return { status: "failed", error: "Failed to create file delivery" };
   }
 
   // Build the patient-facing URL

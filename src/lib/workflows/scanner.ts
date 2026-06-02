@@ -1,4 +1,11 @@
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  typeWorkflowLinks,
+  workflowActionBlocks,
+  appointmentWorkflowRuns,
+  appointmentActions,
+} from "@/lib/db/schema";
+import { and, asc, eq } from "drizzle-orm";
 import { executeScheduledActions } from "./engine";
 
 /**
@@ -26,47 +33,63 @@ export async function scheduleWorkflowForAppointment(
   appointmentTypeId: string,
   scheduledAt: string | null
 ): Promise<void> {
-  const supabase = createServiceClient();
-
   // 1. Look up pre-workflow link
-  const { data: link } = await supabase
-    .from("type_workflow_links")
-    .select("workflow_template_id")
-    .eq("appointment_type_id", appointmentTypeId)
-    .eq("direction", "pre_appointment")
-    .maybeSingle();
+  const [link] = await db
+    .select({ workflow_template_id: typeWorkflowLinks.workflowTemplateId })
+    .from(typeWorkflowLinks)
+    .where(
+      and(
+        eq(typeWorkflowLinks.appointmentTypeId, appointmentTypeId),
+        eq(typeWorkflowLinks.direction, "pre_appointment")
+      )
+    )
+    .limit(1);
 
   if (!link) {
     return;
   }
 
   // 2. Fetch action blocks
-  const { data: blocks } = await supabase
-    .from("workflow_action_blocks")
-    .select("id, action_type, offset_minutes, offset_direction, parent_action_block_id, config")
-    .eq("template_id", link.workflow_template_id)
-    .order("sort_order");
+  const blocks = await db
+    .select({
+      id: workflowActionBlocks.id,
+      action_type: workflowActionBlocks.actionType,
+      offset_minutes: workflowActionBlocks.offsetMinutes,
+      offset_direction: workflowActionBlocks.offsetDirection,
+      parent_action_block_id: workflowActionBlocks.parentActionBlockId,
+      config: workflowActionBlocks.config,
+    })
+    .from(workflowActionBlocks)
+    .where(eq(workflowActionBlocks.templateId, link.workflow_template_id))
+    .orderBy(asc(workflowActionBlocks.sortOrder));
 
-  if (!blocks || blocks.length === 0) {
+  if (blocks.length === 0) {
     return;
   }
 
   // 3. Create workflow run
-  const { data: run, error: runError } = await supabase
-    .from("appointment_workflow_runs")
-    .insert({
-      appointment_id: appointmentId,
-      workflow_template_id: link.workflow_template_id,
-      direction: "pre_appointment",
-      status: "active",
-    })
-    .select("id")
-    .single();
-
-  if (runError || !run) {
+  let run: { id: string } | undefined;
+  try {
+    [run] = await db
+      .insert(appointmentWorkflowRuns)
+      .values({
+        appointmentId,
+        workflowTemplateId: link.workflow_template_id,
+        direction: "pre_appointment",
+        status: "active",
+      })
+      .returning({ id: appointmentWorkflowRuns.id });
+  } catch (runError) {
     console.error(
       `[WORKFLOW SCANNER] Failed to create workflow run for appointment ${appointmentId}:`,
-      runError?.message
+      (runError as Error)?.message
+    );
+    return;
+  }
+
+  if (!run) {
+    console.error(
+      `[WORKFLOW SCANNER] Failed to create workflow run for appointment ${appointmentId}: no row returned`
     );
     return;
   }
@@ -79,11 +102,11 @@ export async function scheduleWorkflowForAppointment(
   const intakePackageScheduledFor = now;
 
   const actionRows: Array<{
-    appointment_id: string;
-    action_block_id: string;
-    workflow_run_id: string;
-    status: string;
-    scheduled_for: string;
+    appointmentId: string;
+    actionBlockId: string;
+    workflowRunId: string;
+    status: "scheduled" | "dropped";
+    scheduledFor: string;
   }> = [];
 
   for (const block of blocks) {
@@ -105,11 +128,11 @@ export async function scheduleWorkflowForAppointment(
           `[WORKFLOW SCANNER] add_to_runsheet block on appointment with no scheduled_at. Dropping.`
         );
         actionRows.push({
-          appointment_id: appointmentId,
-          action_block_id: block.id,
-          workflow_run_id: run.id,
+          appointmentId,
+          actionBlockId: block.id,
+          workflowRunId: run.id,
           status: "dropped",
-          scheduled_for: new Date(now).toISOString(),
+          scheduledFor: new Date(now).toISOString(),
         });
         continue;
       }
@@ -123,34 +146,32 @@ export async function scheduleWorkflowForAppointment(
     // 5. Drop actions that fall after appointment time (for run_sheet workflows)
     if (apptTime && block.action_type !== "add_to_runsheet" && scheduledFor > apptTime) {
       actionRows.push({
-        appointment_id: appointmentId,
-        action_block_id: block.id,
-        workflow_run_id: run.id,
+        appointmentId,
+        actionBlockId: block.id,
+        workflowRunId: run.id,
         status: "dropped",
-        scheduled_for: new Date(scheduledFor).toISOString(),
+        scheduledFor: new Date(scheduledFor).toISOString(),
       });
       continue;
     }
 
     actionRows.push({
-      appointment_id: appointmentId,
-      action_block_id: block.id,
-      workflow_run_id: run.id,
+      appointmentId,
+      actionBlockId: block.id,
+      workflowRunId: run.id,
       status: "scheduled",
-      scheduled_for: new Date(scheduledFor).toISOString(),
+      scheduledFor: new Date(scheduledFor).toISOString(),
     });
   }
 
   // 6. Insert all action rows
   if (actionRows.length > 0) {
-    const { error: actionsError } = await supabase
-      .from("appointment_actions")
-      .insert(actionRows);
-
-    if (actionsError) {
+    try {
+      await db.insert(appointmentActions).values(actionRows);
+    } catch (actionsError) {
       console.error(
         `[WORKFLOW SCANNER] Failed to create actions for run ${run.id}:`,
-        actionsError.message
+        (actionsError as Error).message
       );
       return;
     }

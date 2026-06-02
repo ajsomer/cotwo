@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  formSubmissions,
+  forms as formsT,
+  formAssignments,
+  patients as patientsT,
+} from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import {
   assertStaffCanAccessPatient,
   requireAuthenticatedUser,
@@ -21,19 +28,23 @@ export async function GET(
   }
 
   try {
-    const supabase = createServiceClient();
+    const [submission] = await db
+      .select({
+        id: formSubmissions.id,
+        form_id: formSubmissions.formId,
+        patient_id: formSubmissions.patientId,
+        appointment_id: formSubmissions.appointmentId,
+        responses: formSubmissions.responses,
+        created_at: formSubmissions.createdAt,
+      })
+      .from(formSubmissions)
+      .where(eq(formSubmissions.id, id));
 
-    const { data: submission, error } = await supabase
-      .from("form_submissions")
-      .select("id, form_id, patient_id, appointment_id, responses, created_at")
-      .eq("id", id)
-      .single();
-
-    if (error || !submission) {
+    if (!submission) {
       return NextResponse.json({ error: "Submission not found" }, { status: 404 });
     }
 
-    const access = await assertStaffCanAccessPatient(supabase, submission.patient_id);
+    const access = await assertStaffCanAccessPatient(submission.patient_id);
     if (!access.ok) {
       // 404 (not 403) on the org-mismatch case — same shape as the
       // submission-not-found branch above, no existence leak.
@@ -41,30 +52,37 @@ export async function GET(
     }
 
     const [formRes, assignmentRes, patientRes] = await Promise.all([
-      supabase
-        .from("forms")
-        .select("name")
-        .eq("id", submission.form_id)
-        .single(),
-      supabase
-        .from("form_assignments")
-        .select("schema_snapshot, completed_at")
-        .eq("submission_id", id)
-        .single(),
-      supabase
-        .from("patients")
-        .select("first_name, last_name")
-        .eq("id", submission.patient_id)
-        .single(),
+      db
+        .select({ name: formsT.name })
+        .from(formsT)
+        .where(eq(formsT.id, submission.form_id)),
+      db
+        .select({
+          schema_snapshot: formAssignments.schemaSnapshot,
+          completed_at: formAssignments.completedAt,
+        })
+        .from(formAssignments)
+        .where(eq(formAssignments.submissionId, id)),
+      db
+        .select({
+          first_name: patientsT.firstName,
+          last_name: patientsT.lastName,
+        })
+        .from(patientsT)
+        .where(eq(patientsT.id, submission.patient_id)),
     ]);
 
+    const form = formRes[0];
+    const assignment = assignmentRes[0];
+    const patient = patientRes[0];
+
     return NextResponse.json({
-      form_name: formRes.data?.name ?? "Form",
-      patient_name: patientRes.data
-        ? `${patientRes.data.first_name} ${patientRes.data.last_name}`
+      form_name: form?.name ?? "Form",
+      patient_name: patient
+        ? `${patient.first_name} ${patient.last_name}`
         : "Patient",
-      completed_at: assignmentRes.data?.completed_at ?? submission.created_at,
-      schema: assignmentRes.data?.schema_snapshot ?? {},
+      completed_at: assignment?.completed_at ?? submission.created_at,
+      schema: assignment?.schema_snapshot ?? {},
       responses: submission.responses,
     });
   } catch (err) {

@@ -1,4 +1,11 @@
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  formAssignments,
+  paymentMethods,
+  patientPhoneNumbers,
+  appointments as appointmentsT,
+} from "@/lib/db/schema";
+import { and, eq, gt, ne, isNotNull } from "drizzle-orm";
 import type { PreconditionConfig } from "./types";
 
 /**
@@ -15,60 +22,70 @@ export async function evaluatePrecondition(
   // null = always fires
   if (!precondition) return true;
 
-  const supabase = createServiceClient();
-
   switch (precondition.type) {
     case "form_not_completed": {
       // Check if the patient has a completed form_assignment for this form
-      const { data } = await supabase
-        .from("form_assignments")
-        .select("id")
-        .eq("patient_id", patientId)
-        .eq("form_id", precondition.form_id)
-        .eq("status", "completed")
+      const data = await db
+        .select({ id: formAssignments.id })
+        .from(formAssignments)
+        .where(
+          and(
+            eq(formAssignments.patientId, patientId),
+            eq(formAssignments.formId, precondition.form_id),
+            eq(formAssignments.status, "completed")
+          )
+        )
         .limit(1);
 
       // Fire if NO completed assignment exists
-      return (data ?? []).length === 0;
+      return data.length === 0;
     }
 
     case "card_not_on_file": {
       // Check if the patient has any payment methods
-      const { data } = await supabase
-        .from("payment_methods")
-        .select("id")
-        .eq("patient_id", patientId)
+      const data = await db
+        .select({ id: paymentMethods.id })
+        .from(paymentMethods)
+        .where(eq(paymentMethods.patientId, patientId))
         .limit(1);
 
       // Fire if NO payment methods exist
-      return (data ?? []).length === 0;
+      return data.length === 0;
     }
 
     case "contact_not_verified": {
       // Check if the patient has a verified phone number
-      const { data } = await supabase
-        .from("patient_phone_numbers")
-        .select("verified_at")
-        .eq("patient_id", patientId)
-        .not("verified_at", "is", null)
+      const data = await db
+        .select({ verified_at: patientPhoneNumbers.verifiedAt })
+        .from(patientPhoneNumbers)
+        .where(
+          and(
+            eq(patientPhoneNumbers.patientId, patientId),
+            isNotNull(patientPhoneNumbers.verifiedAt)
+          )
+        )
         .limit(1);
 
       // Fire if NO verified phone numbers exist
-      return (data ?? []).length === 0;
+      return data.length === 0;
     }
 
     case "no_future_appointment": {
       // Check if the patient has any future appointments
-      const { data } = await supabase
-        .from("appointments")
-        .select("id")
-        .eq("patient_id", patientId)
-        .gt("scheduled_at", new Date().toISOString())
-        .neq("id", appointmentId) // exclude the current appointment
+      const data = await db
+        .select({ id: appointmentsT.id })
+        .from(appointmentsT)
+        .where(
+          and(
+            eq(appointmentsT.patientId, patientId),
+            gt(appointmentsT.scheduledAt, new Date().toISOString()),
+            ne(appointmentsT.id, appointmentId) // exclude the current appointment
+          )
+        )
         .limit(1);
 
       // Fire if NO future appointments exist
-      return (data ?? []).length === 0;
+      return data.length === 0;
     }
 
     default:

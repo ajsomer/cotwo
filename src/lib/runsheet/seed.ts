@@ -1,40 +1,48 @@
 "use server";
 
-import { createClient as createServerClient } from "@supabase/supabase-js";
+import { db } from "@/lib/db";
+import {
+  sessionParticipants,
+  payments,
+  sessions as sessionsT,
+  appointments as appointmentsT,
+  paymentMethods,
+  patientPhoneNumbers,
+  patients as patientsT,
+  phoneVerifications,
+  appointmentTypes,
+  staffAssignments,
+  locations as locationsT,
+  organisations as organisationsT,
+  rooms as roomsT,
+} from "@/lib/db/schema";
+import { and, eq, inArray } from "drizzle-orm";
 import { getAuthenticatedUserId } from "@/lib/auth/staff-access";
 
 /**
  * Seeds the database with demo data for the run sheet.
- * Uses the service role client to bypass RLS.
+ * Authorization is enforced in app code (RLS was dropped in the Neon migration).
  *
  * Resolves the authenticated user's org and location dynamically.
  * Does NOT create or modify rooms, org, location, users, or staff assignments.
  * Only populates session-related data (patients, appointments, sessions, etc.)
  * for whatever rooms already exist at the user's location.
  */
+
 /**
  * Removes all session-related data from the database.
  * Preserves rooms, org, location, users, staff assignments, and appointment types.
  */
 export async function nukeSessions() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!supabaseUrl || !serviceRoleKey) {
-    return { success: false, error: "Missing SUPABASE_SERVICE_ROLE_KEY" };
-  }
-
-  const supabase = createServerClient(supabaseUrl, serviceRoleKey);
-
   try {
-    await supabase.from("session_participants").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    await supabase.from("payments").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    await supabase.from("sessions").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    await supabase.from("appointments").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    await supabase.from("payment_methods").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    await supabase.from("patient_phone_numbers").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    await supabase.from("patients").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    await supabase.from("phone_verifications").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    await db.delete(sessionParticipants);
+    await db.delete(payments);
+    await db.delete(sessionsT);
+    await db.delete(appointmentsT);
+    await db.delete(paymentMethods);
+    await db.delete(patientPhoneNumbers);
+    await db.delete(patientsT);
+    await db.delete(phoneVerifications);
     return { success: true };
   } catch (err) {
     console.error("[NUKE] Failed:", err);
@@ -43,13 +51,6 @@ export async function nukeSessions() {
 }
 
 export async function seedDemoData() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!supabaseUrl || !serviceRoleKey) {
-    return { success: false, error: "Missing SUPABASE_SERVICE_ROLE_KEY" };
-  }
-
   // Get the authenticated user's org and location (local cookie verification).
   const userId = await getAuthenticatedUserId();
 
@@ -57,105 +58,127 @@ export async function seedDemoData() {
     return { success: false, error: "Not authenticated" };
   }
 
-  const supabase = createServerClient(supabaseUrl, serviceRoleKey);
-
   // Resolve the user's staff assignment to find their org and location
-  const { data: assignment, error: assignmentError } = await supabase
-    .from("staff_assignments")
-    .select(`
-      location_id,
-      locations!inner (
-        id,
-        org_id,
-        timezone,
-        organisations!inner (
-          id,
-          timezone
-        )
-      )
-    `)
-    .eq("user_id", userId)
-    .limit(1)
-    .single();
+  const [assignment] = await db
+    .select({
+      location_id: staffAssignments.locationId,
+      org_id: locationsT.orgId,
+      location_timezone: locationsT.timezone,
+      org_timezone: organisationsT.timezone,
+    })
+    .from(staffAssignments)
+    .innerJoin(locationsT, eq(locationsT.id, staffAssignments.locationId))
+    .innerJoin(organisationsT, eq(organisationsT.id, locationsT.orgId))
+    .where(eq(staffAssignments.userId, userId))
+    .limit(1);
 
-  if (assignmentError || !assignment) {
+  if (!assignment) {
     return { success: false, error: "No staff assignment found. Complete clinic setup first." };
   }
 
-  const loc = assignment.locations as unknown as Record<string, unknown>;
-  const org = loc.organisations as unknown as Record<string, unknown>;
-  const LOCATION_ID = loc.id as string;
-  const ORG_ID = org.id as string;
-  const TIMEZONE = (loc.timezone as string) ?? "Australia/Sydney";
+  const LOCATION_ID = assignment.location_id;
+  const ORG_ID = assignment.org_id;
+  const TIMEZONE = assignment.location_timezone ?? "Australia/Sydney";
 
   try {
     // Clean existing session data (preserves rooms, org, location, staff)
-    await supabase.from("session_participants").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    await supabase.from("payments").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    await supabase.from("sessions").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    await supabase.from("appointments").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    await supabase.from("payment_methods").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    await supabase.from("patient_phone_numbers").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    await supabase.from("patients").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    await db.delete(sessionParticipants);
+    await db.delete(payments);
+    await db.delete(sessionsT);
+    await db.delete(appointmentsT);
+    await db.delete(paymentMethods);
+    await db.delete(patientPhoneNumbers);
+    await db.delete(patientsT);
+
     // Upsert appointment types for this org (spec: 5 default types)
-    await supabase.from("appointment_types").upsert([
-      { id: "00000000-0000-0000-0000-000000003001", org_id: ORG_ID, name: "Initial Consultation", modality: "telehealth", duration_minutes: 60, default_fee_cents: 22000, source: "coviu" },
-      { id: "00000000-0000-0000-0000-000000003002", org_id: ORG_ID, name: "Follow-up Consultation", modality: "telehealth", duration_minutes: 45, default_fee_cents: 18000, source: "coviu" },
-      { id: "00000000-0000-0000-0000-000000003003", org_id: ORG_ID, name: "Review Appointment", modality: "in_person", duration_minutes: 30, default_fee_cents: 15000, source: "coviu" },
-      { id: "00000000-0000-0000-0000-000000003004", org_id: ORG_ID, name: "Telehealth Consultation", modality: "telehealth", duration_minutes: 45, default_fee_cents: 18000, source: "coviu" },
-      { id: "00000000-0000-0000-0000-000000003005", org_id: ORG_ID, name: "Brief Check-in", modality: "telehealth", duration_minutes: 15, default_fee_cents: 9000, source: "coviu" },
-    ]);
+    await db
+      .insert(appointmentTypes)
+      .values([
+        { id: "00000000-0000-0000-0000-000000003001", orgId: ORG_ID, name: "Initial Consultation", modality: "telehealth", durationMinutes: 60, defaultFeeCents: 22000, source: "coviu" },
+        { id: "00000000-0000-0000-0000-000000003002", orgId: ORG_ID, name: "Follow-up Consultation", modality: "telehealth", durationMinutes: 45, defaultFeeCents: 18000, source: "coviu" },
+        { id: "00000000-0000-0000-0000-000000003003", orgId: ORG_ID, name: "Review Appointment", modality: "in_person", durationMinutes: 30, defaultFeeCents: 15000, source: "coviu" },
+        { id: "00000000-0000-0000-0000-000000003004", orgId: ORG_ID, name: "Telehealth Consultation", modality: "telehealth", durationMinutes: 45, defaultFeeCents: 18000, source: "coviu" },
+        { id: "00000000-0000-0000-0000-000000003005", orgId: ORG_ID, name: "Brief Check-in", modality: "telehealth", durationMinutes: 15, defaultFeeCents: 9000, source: "coviu" },
+      ])
+      .onConflictDoUpdate({
+        target: appointmentTypes.id,
+        set: {
+          orgId: ORG_ID,
+        },
+      });
 
     const patientData = [
-      { id: "00000000-0000-0000-0000-000000004001", org_id: ORG_ID, first_name: "Emily", last_name: "Chen", date_of_birth: "1992-03-15" },
-      { id: "00000000-0000-0000-0000-000000004002", org_id: ORG_ID, first_name: "Marcus", last_name: "Williams", date_of_birth: "1985-07-22" },
-      { id: "00000000-0000-0000-0000-000000004003", org_id: ORG_ID, first_name: "Sophie", last_name: "Taylor", date_of_birth: "1998-11-08" },
-      { id: "00000000-0000-0000-0000-000000004004", org_id: ORG_ID, first_name: "David", last_name: "Park", date_of_birth: "1976-01-30" },
-      { id: "00000000-0000-0000-0000-000000004005", org_id: ORG_ID, first_name: "Olivia", last_name: "Brown", date_of_birth: "2001-06-14" },
-      { id: "00000000-0000-0000-0000-000000004006", org_id: ORG_ID, first_name: "James", last_name: "Morrison", date_of_birth: "1990-09-25" },
-      { id: "00000000-0000-0000-0000-000000004007", org_id: ORG_ID, first_name: "Anika", last_name: "Patel", date_of_birth: "1988-04-12" },
-      { id: "00000000-0000-0000-0000-000000004008", org_id: ORG_ID, first_name: "Ryan", last_name: "Hughes", date_of_birth: "1995-12-03" },
+      { id: "00000000-0000-0000-0000-000000004001", orgId: ORG_ID, firstName: "Emily", lastName: "Chen", dateOfBirth: "1992-03-15" },
+      { id: "00000000-0000-0000-0000-000000004002", orgId: ORG_ID, firstName: "Marcus", lastName: "Williams", dateOfBirth: "1985-07-22" },
+      { id: "00000000-0000-0000-0000-000000004003", orgId: ORG_ID, firstName: "Sophie", lastName: "Taylor", dateOfBirth: "1998-11-08" },
+      { id: "00000000-0000-0000-0000-000000004004", orgId: ORG_ID, firstName: "David", lastName: "Park", dateOfBirth: "1976-01-30" },
+      { id: "00000000-0000-0000-0000-000000004005", orgId: ORG_ID, firstName: "Olivia", lastName: "Brown", dateOfBirth: "2001-06-14" },
+      { id: "00000000-0000-0000-0000-000000004006", orgId: ORG_ID, firstName: "James", lastName: "Morrison", dateOfBirth: "1990-09-25" },
+      { id: "00000000-0000-0000-0000-000000004007", orgId: ORG_ID, firstName: "Anika", lastName: "Patel", dateOfBirth: "1988-04-12" },
+      { id: "00000000-0000-0000-0000-000000004008", orgId: ORG_ID, firstName: "Ryan", lastName: "Hughes", dateOfBirth: "1995-12-03" },
     ];
-    await supabase.from("patients").upsert(patientData);
+    await db
+      .insert(patientsT)
+      .values(patientData)
+      .onConflictDoUpdate({
+        target: patientsT.id,
+        set: { orgId: ORG_ID },
+      });
 
-    await supabase.from("patient_phone_numbers").upsert(
-      patientData.map((p, i) => ({
-        id: `00000000-0000-0000-0000-00000000b0${(i + 1).toString().padStart(2, "0")}`,
-        patient_id: p.id,
-        phone_number: `+6141234500${i + 1}`,
-        is_primary: true,
-      }))
-    );
+    await db
+      .insert(patientPhoneNumbers)
+      .values(
+        patientData.map((p, i) => ({
+          id: `00000000-0000-0000-0000-00000000b0${(i + 1).toString().padStart(2, "0")}`,
+          patientId: p.id,
+          phoneNumber: `+6141234500${i + 1}`,
+          isPrimary: true,
+        }))
+      )
+      .onConflictDoUpdate({
+        target: patientPhoneNumbers.id,
+        set: { isPrimary: true },
+      });
 
-    await supabase.from("payment_methods").upsert([
-      { id: "00000000-0000-0000-0000-00000000c001", patient_id: "00000000-0000-0000-0000-000000004001", stripe_payment_method_id: "pm_test_001", card_last_four: "4242", card_brand: "Visa", card_expiry: "12/27", is_default: true },
-      { id: "00000000-0000-0000-0000-00000000c002", patient_id: "00000000-0000-0000-0000-000000004002", stripe_payment_method_id: "pm_test_002", card_last_four: "5555", card_brand: "Mastercard", card_expiry: "08/26", is_default: true },
-      { id: "00000000-0000-0000-0000-00000000c003", patient_id: "00000000-0000-0000-0000-000000004004", stripe_payment_method_id: "pm_test_004", card_last_four: "1234", card_brand: "Visa", card_expiry: "03/28", is_default: true },
-    ]);
+    await db
+      .insert(paymentMethods)
+      .values([
+        { id: "00000000-0000-0000-0000-00000000c001", patientId: "00000000-0000-0000-0000-000000004001", stripePaymentMethodId: "pm_test_001", cardLastFour: "4242", cardBrand: "Visa", cardExpiry: "12/27", isDefault: true },
+        { id: "00000000-0000-0000-0000-00000000c002", patientId: "00000000-0000-0000-0000-000000004002", stripePaymentMethodId: "pm_test_002", cardLastFour: "5555", cardBrand: "Mastercard", cardExpiry: "08/26", isDefault: true },
+        { id: "00000000-0000-0000-0000-00000000c003", patientId: "00000000-0000-0000-0000-000000004004", stripePaymentMethodId: "pm_test_004", cardLastFour: "1234", cardBrand: "Visa", cardExpiry: "03/28", isDefault: true },
+      ])
+      .onConflictDoUpdate({
+        target: paymentMethods.id,
+        set: { isDefault: true },
+      });
 
     // ========================================================================
     // Read existing rooms at the user's location and generate time-aware sessions
     // ========================================================================
-    const { data: rooms } = await supabase
-      .from("rooms")
-      .select("id, room_type, sort_order")
-      .eq("location_id", LOCATION_ID)
-      .order("sort_order", { ascending: true });
+    const rooms = await db
+      .select({ id: roomsT.id, room_type: roomsT.roomType, sort_order: roomsT.sortOrder })
+      .from(roomsT)
+      .where(eq(roomsT.locationId, LOCATION_ID))
+      .orderBy(roomsT.sortOrder);
 
     if (!rooms || rooms.length === 0) {
       return { success: true, warning: "No rooms found — sessions not seeded. Create rooms in Settings first." };
     }
 
     // Find clinicians assigned to this location for realistic session data
-    const { data: clinicians } = await supabase
-      .from("staff_assignments")
-      .select("user_id")
-      .eq("location_id", LOCATION_ID)
-      .in("role", ["clinician", "clinic_owner"]);
+    const clinicians = await db
+      .select({ user_id: staffAssignments.userId })
+      .from(staffAssignments)
+      .where(
+        and(
+          eq(staffAssignments.locationId, LOCATION_ID),
+          inArray(staffAssignments.role, ["clinician", "clinic_owner"])
+        )
+      );
 
-    const clinicianIds = (clinicians ?? []).map((c) => c.user_id as string);
-    if (clinicianIds.length === 0) {
-      clinicianIds.push(userId); // fallback to the current user
+    const filteredClinicianIds = clinicians.map((c) => c.user_id);
+    if (filteredClinicianIds.length === 0) {
+      filteredClinicianIds.push(userId); // fallback to the current user
     }
 
     // Determine current time in the clinic's timezone
@@ -202,7 +225,7 @@ export async function seedDemoData() {
 
     for (let roomIdx = 0; roomIdx < rooms.length; roomIdx++) {
       const room = rooms[roomIdx];
-      const clinicianId = clinicianIds[roomIdx % clinicianIds.length];
+      const clinicianId = filteredClinicianIds[roomIdx % filteredClinicianIds.length];
 
       // Spread slots for this room: every N slots, offset by room index
       const roomSlots: number[] = [];
@@ -225,7 +248,7 @@ export async function seedDemoData() {
         const sessionId = `00000000-0000-0000-0000-000000006${suffix}`;
         const participantId = `00000000-0000-0000-0000-00000000e${suffix}`;
 
-        let status: string;
+        let status: "queued" | "done" | "complete" | "in_session";
         let notificationSent = true;
         let patientArrived = false;
         let patientArrivedAt: string | null = null;
@@ -278,40 +301,66 @@ export async function seedDemoData() {
         }
 
         // Insert appointment
-        await supabase.from("appointments").upsert({
-          id: apptId,
-          org_id: ORG_ID,
-          patient_id: patientId,
-          clinician_id: clinicianId,
-          appointment_type_id: typeId,
-          room_id: room.id,
-          location_id: LOCATION_ID,
-          scheduled_at: scheduledAt.toISOString(),
-          phone_number: phone,
-        });
+        await db
+          .insert(appointmentsT)
+          .values({
+            id: apptId,
+            orgId: ORG_ID,
+            patientId: patientId,
+            clinicianId: clinicianId,
+            appointmentTypeId: typeId,
+            roomId: room.id,
+            locationId: LOCATION_ID,
+            scheduledAt: scheduledAt.toISOString(),
+            phoneNumber: phone,
+          })
+          .onConflictDoUpdate({
+            target: appointmentsT.id,
+            set: {
+              scheduledAt: scheduledAt.toISOString(),
+              roomId: room.id,
+              clinicianId: clinicianId,
+            },
+          });
 
         // Insert session
-        await supabase.from("sessions").upsert({
-          id: sessionId,
-          appointment_id: apptId,
-          room_id: room.id,
-          location_id: LOCATION_ID,
-          status,
-          notification_sent: notificationSent,
-          notification_sent_at: notificationSent ? new Date(scheduledAt.getTime() - 120 * 60_000).toISOString() : null,
-          patient_arrived: patientArrived,
-          patient_arrived_at: patientArrivedAt,
-          session_started_at: sessionStartedAt,
-          session_ended_at: sessionEndedAt,
-          created_at: now.toISOString(),
-        });
+        await db
+          .insert(sessionsT)
+          .values({
+            id: sessionId,
+            appointmentId: apptId,
+            roomId: room.id,
+            locationId: LOCATION_ID,
+            status,
+            notificationSent: notificationSent,
+            notificationSentAt: notificationSent ? new Date(scheduledAt.getTime() - 120 * 60_000).toISOString() : null,
+            patientArrived: patientArrived,
+            patientArrivedAt: patientArrivedAt,
+            sessionStartedAt: sessionStartedAt,
+            sessionEndedAt: sessionEndedAt,
+            createdAt: now.toISOString(),
+          })
+          .onConflictDoUpdate({
+            target: sessionsT.id,
+            set: {
+              status,
+              notificationSent: notificationSent,
+              patientArrived: patientArrived,
+            },
+          });
 
         // Insert participant
-        await supabase.from("session_participants").upsert({
-          id: participantId,
-          session_id: sessionId,
-          patient_id: patientId,
-        });
+        await db
+          .insert(sessionParticipants)
+          .values({
+            id: participantId,
+            sessionId: sessionId,
+            patientId: patientId,
+          })
+          .onConflictDoUpdate({
+            target: sessionParticipants.id,
+            set: { patientId: patientId },
+          });
       }
     }
 

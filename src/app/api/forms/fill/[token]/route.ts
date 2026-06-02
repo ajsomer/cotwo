@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  formAssignments,
+  forms as formsT,
+  patients as patientsT,
+  organisations,
+  formSubmissions,
+} from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 
 // GET /api/forms/fill/[token] — resolve assignment for patient form fill
 export async function GET(
@@ -9,15 +17,19 @@ export async function GET(
   const { token } = await params;
 
   try {
-    const supabase = createServiceClient();
+    const [assignment] = await db
+      .select({
+        id: formAssignments.id,
+        form_id: formAssignments.formId,
+        patient_id: formAssignments.patientId,
+        schema_snapshot: formAssignments.schemaSnapshot,
+        status: formAssignments.status,
+        completed_at: formAssignments.completedAt,
+      })
+      .from(formAssignments)
+      .where(eq(formAssignments.token, token));
 
-    const { data: assignment, error } = await supabase
-      .from("form_assignments")
-      .select("id, form_id, patient_id, schema_snapshot, status, completed_at")
-      .eq("token", token)
-      .single();
-
-    if (error || !assignment) {
+    if (!assignment) {
       return NextResponse.json({ error: "Form not found" }, { status: 404 });
     }
 
@@ -29,36 +41,33 @@ export async function GET(
     }
 
     // Get form name
-    const { data: form } = await supabase
-      .from("forms")
-      .select("name, org_id")
-      .eq("id", assignment.form_id)
-      .single();
+    const [form] = await db
+      .select({ name: formsT.name, org_id: formsT.orgId })
+      .from(formsT)
+      .where(eq(formsT.id, assignment.form_id));
 
     // Get patient name
-    const { data: patient } = await supabase
-      .from("patients")
-      .select("first_name")
-      .eq("id", assignment.patient_id)
-      .single();
+    const [patient] = await db
+      .select({ first_name: patientsT.firstName })
+      .from(patientsT)
+      .where(eq(patientsT.id, assignment.patient_id));
 
     // Get org branding
-    let org = null;
+    let org: { name: string; logo_url: string | null } | null = null;
     if (form?.org_id) {
-      const { data: orgData } = await supabase
-        .from("organisations")
-        .select("name, logo_url")
-        .eq("id", form.org_id)
-        .single();
-      org = orgData;
+      const [orgData] = await db
+        .select({ name: organisations.name, logo_url: organisations.logoUrl })
+        .from(organisations)
+        .where(eq(organisations.id, form.org_id));
+      org = orgData ?? null;
     }
 
     // Transition status: pending/sent → opened
     if (assignment.status === "pending" || assignment.status === "sent") {
-      await supabase
-        .from("form_assignments")
-        .update({ status: "opened", opened_at: new Date().toISOString() })
-        .eq("id", assignment.id);
+      await db
+        .update(formAssignments)
+        .set({ status: "opened", openedAt: new Date().toISOString() })
+        .where(eq(formAssignments.id, assignment.id));
     }
 
     return NextResponse.json({
@@ -92,15 +101,18 @@ export async function POST(
   }
 
   try {
-    const supabase = createServiceClient();
+    const [assignment] = await db
+      .select({
+        id: formAssignments.id,
+        form_id: formAssignments.formId,
+        patient_id: formAssignments.patientId,
+        appointment_id: formAssignments.appointmentId,
+        status: formAssignments.status,
+      })
+      .from(formAssignments)
+      .where(eq(formAssignments.token, token));
 
-    const { data: assignment, error: assignError } = await supabase
-      .from("form_assignments")
-      .select("id, form_id, patient_id, appointment_id, status")
-      .eq("token", token)
-      .single();
-
-    if (assignError || !assignment) {
+    if (!assignment) {
       return NextResponse.json({ error: "Form not found" }, { status: 404 });
     }
 
@@ -112,30 +124,33 @@ export async function POST(
     }
 
     // Create submission
-    const { data: submission, error: subError } = await supabase
-      .from("form_submissions")
-      .insert({
-        form_id: assignment.form_id,
-        patient_id: assignment.patient_id,
-        appointment_id: assignment.appointment_id,
-        responses,
-      })
-      .select("id")
-      .single();
-
-    if (subError) {
-      return NextResponse.json({ error: subError.message }, { status: 500 });
+    let submission;
+    try {
+      [submission] = await db
+        .insert(formSubmissions)
+        .values({
+          formId: assignment.form_id,
+          patientId: assignment.patient_id,
+          appointmentId: assignment.appointment_id,
+          responses,
+        })
+        .returning({ id: formSubmissions.id });
+    } catch (err) {
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : "Internal server error" },
+        { status: 500 }
+      );
     }
 
     // Update assignment to completed
-    await supabase
-      .from("form_assignments")
-      .update({
+    await db
+      .update(formAssignments)
+      .set({
         status: "completed",
-        completed_at: new Date().toISOString(),
-        submission_id: submission.id,
+        completedAt: new Date().toISOString(),
+        submissionId: submission.id,
       })
-      .eq("id", assignment.id);
+      .where(eq(formAssignments.id, assignment.id));
 
     return NextResponse.json({ success: true, submission_id: submission.id });
   } catch (err) {

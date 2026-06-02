@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServiceClient } from '@/lib/supabase/service';
+import { db } from '@/lib/db';
+import {
+  intakePackageJourneys,
+  appointments as appointmentsT,
+  patients as patientsT,
+  patientPhoneNumbers,
+} from '@/lib/db/schema';
+import { and, eq } from 'drizzle-orm';
 import { normalisePhone } from '@/lib/phone/normalise';
 
 /**
@@ -39,39 +46,48 @@ export async function POST(
     );
   }
 
-  const supabase = createServiceClient();
-
-  // Resolve journey + org context
-  const { data: journey } = await supabase
-    .from('intake_package_journeys')
-    .select('id, appointment_id, patient_id, appointments!inner (org_id)')
-    .eq('journey_token', token)
-    .single();
+  // Resolve journey + org context (org via the appointment, inner join).
+  const [journey] = await db
+    .select({
+      id: intakePackageJourneys.id,
+      appointment_id: intakePackageJourneys.appointmentId,
+      patient_id: intakePackageJourneys.patientId,
+      org_id: appointmentsT.orgId,
+    })
+    .from(intakePackageJourneys)
+    .innerJoin(
+      appointmentsT,
+      eq(appointmentsT.id, intakePackageJourneys.appointmentId)
+    )
+    .where(eq(intakePackageJourneys.journeyToken, token));
 
   if (!journey) {
     return NextResponse.json({ error: 'Journey not found' }, { status: 404 });
   }
 
-  const orgId = (journey as unknown as { appointments: { org_id: string } })
-    .appointments.org_id;
+  const orgId = journey.org_id;
 
   // Fast path: picker selection. Attach the selected contact and return.
   if (selected_patient_id) {
-    const { data: contact } = await supabase
-      .from('patients')
-      .select('id, first_name, last_name')
-      .eq('id', selected_patient_id)
-      .eq('org_id', orgId)
-      .single();
+    const [contact] = await db
+      .select({
+        id: patientsT.id,
+        first_name: patientsT.firstName,
+        last_name: patientsT.lastName,
+      })
+      .from(patientsT)
+      .where(
+        and(eq(patientsT.id, selected_patient_id), eq(patientsT.orgId, orgId))
+      );
 
     if (!contact) {
       return NextResponse.json({ status: 'no_match' });
     }
 
-    await supabase
-      .from('intake_package_journeys')
-      .update({ patient_id: contact.id })
-      .eq('id', journey.id);
+    await db
+      .update(intakePackageJourneys)
+      .set({ patientId: contact.id })
+      .where(eq(intakePackageJourneys.id, journey.id));
 
     return NextResponse.json({ status: 'matched', contact });
   }
@@ -79,21 +95,25 @@ export async function POST(
   // Resolve contacts for this phone number within this org. Match on the
   // canonical E.164 form so it lines up with how the number was stored.
   const matchPhone = normalisePhone(phone_number) ?? phone_number;
-  const { data: phoneLinks } = await supabase
-    .from('patient_phone_numbers')
-    .select('patient_id, patients!inner (id, first_name, last_name, org_id)')
-    .eq('phone_number', matchPhone)
-    .eq('patients.org_id', orgId);
+  const links = await db
+    .select({
+      id: patientsT.id,
+      first_name: patientsT.firstName,
+      last_name: patientsT.lastName,
+    })
+    .from(patientPhoneNumbers)
+    .innerJoin(patientsT, eq(patientsT.id, patientPhoneNumbers.patientId))
+    .where(
+      and(
+        eq(patientPhoneNumbers.phoneNumber, matchPhone),
+        eq(patientsT.orgId, orgId)
+      )
+    );
 
-  type PhoneLink = {
-    patient_id: string;
-    patients: { id: string; first_name: string; last_name: string; org_id: string };
-  };
-  const links = (phoneLinks ?? []) as unknown as PhoneLink[];
   const contacts = links.map((l) => ({
-    id: l.patients.id,
-    first_name: l.patients.first_name,
-    last_name: l.patients.last_name,
+    id: l.id,
+    first_name: l.first_name,
+    last_name: l.last_name,
   }));
 
   if (contacts.length === 0) {
@@ -106,10 +126,10 @@ export async function POST(
 
   // Single match: attach to journey and return.
   const contact = contacts[0];
-  await supabase
-    .from('intake_package_journeys')
-    .update({ patient_id: contact.id })
-    .eq('id', journey.id);
+  await db
+    .update(intakePackageJourneys)
+    .set({ patientId: contact.id })
+    .where(eq(intakePackageJourneys.id, journey.id));
 
   return NextResponse.json({ status: 'matched', contact });
 }

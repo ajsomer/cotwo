@@ -1,4 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { db } from "@/lib/db";
+import { clinicianRoomAssignments } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { assertStaffAssignmentsInLocation } from "@/lib/auth/staff-access";
 
 /**
@@ -29,29 +32,25 @@ export async function updateClinicianAssignments(
   // Validate BEFORE the destructive delete so a bad id can't wipe existing
   // assignments.
   const valid = await assertStaffAssignmentsInLocation(
-    service,
     staffAssignmentIds,
     locationId,
   );
   if (!valid) return { ok: false };
 
-  await service
-    .from("clinician_room_assignments")
-    .delete()
-    .eq("room_id", roomId);
+  await db
+    .delete(clinicianRoomAssignments)
+    .where(eq(clinicianRoomAssignments.roomId, roomId));
 
   if (staffAssignmentIds.length === 0) return { ok: true };
 
-  const rows = staffAssignmentIds.map((staff_assignment_id) => ({
-    staff_assignment_id,
-    room_id: roomId,
+  const rows = staffAssignmentIds.map((staffAssignmentId) => ({
+    staffAssignmentId,
+    roomId,
   }));
 
-  const { error } = await service
-    .from("clinician_room_assignments")
-    .insert(rows);
-
-  if (error) {
+  try {
+    await db.insert(clinicianRoomAssignments).values(rows);
+  } catch (error) {
     console.error("Failed to set clinician assignments:", error);
   }
 

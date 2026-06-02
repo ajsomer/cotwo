@@ -1,5 +1,21 @@
 import { cache } from 'react';
-import { createServiceClient } from '@/lib/supabase/service';
+import { db } from '@/lib/db';
+import {
+  appointments as appointmentsT,
+  appointmentTypes as appointmentTypesT,
+  sessions as sessionsT,
+  sessionParticipants,
+  patients as patientsT,
+  paymentMethods,
+  rooms as roomsT,
+  payments as paymentsT,
+  users as usersT,
+  staffAssignments,
+  clinicianRoomAssignments,
+  locations as locationsT,
+  organisations as organisationsT,
+} from '@/lib/db/schema';
+import { and, eq, gte, lte, inArray, isNull, or } from 'drizzle-orm';
 import type { RunsheetSession, Room } from '@/lib/supabase/types';
 
 /**
@@ -10,7 +26,6 @@ export const fetchRunsheetSessions = cache(async (
   locationId: string,
   date?: Date
 ): Promise<RunsheetSession[]> => {
-  const supabase = createServiceClient();
   const targetDate = date ?? new Date();
 
   // Start and end of the target day in UTC
@@ -25,172 +40,212 @@ export const fetchRunsheetSessions = cache(async (
   // hide it tomorrow. So: first resolve the appointments scheduled for the day
   // at this location, then match sessions to those. On-demand sessions have no
   // appointment and legitimately key off their own created_at.
-  const { data: dayAppointments } = await supabase
-    .from('appointments')
-    .select('id')
-    .eq('location_id', locationId)
-    .gte('scheduled_at', startOfDay.toISOString())
-    .lte('scheduled_at', endOfDay.toISOString());
+  const dayAppointments = await db
+    .select({ id: appointmentsT.id })
+    .from(appointmentsT)
+    .where(
+      and(
+        eq(appointmentsT.locationId, locationId),
+        gte(appointmentsT.scheduledAt, startOfDay.toISOString()),
+        lte(appointmentsT.scheduledAt, endOfDay.toISOString())
+      )
+    );
 
-  const dayAppointmentIds = (dayAppointments ?? []).map((a) => a.id);
+  const dayAppointmentIds = dayAppointments.map((a) => a.id);
 
-  // sessions for today = (scheduled appts today) OR (on-demand created today).
-  // PostgREST .or() on a foreign key + null check, scoped to this location.
-  const apptInClause = dayAppointmentIds.length
-    ? `appointment_id.in.(${dayAppointmentIds.join(',')})`
-    : null;
-  const onDemandClause = `and(appointment_id.is.null,created_at.gte.${startOfDay.toISOString()},created_at.lte.${endOfDay.toISOString()})`;
-  const orFilter = apptInClause
-    ? `${apptInClause},${onDemandClause}`
+  // sessions for today = (scheduled appts today) OR (on-demand created today),
+  // scoped to this location.
+  const onDemandClause = and(
+    isNull(sessionsT.appointmentId),
+    gte(sessionsT.createdAt, startOfDay.toISOString()),
+    lte(sessionsT.createdAt, endOfDay.toISOString())
+  );
+  const dayClause = dayAppointmentIds.length
+    ? or(inArray(sessionsT.appointmentId, dayAppointmentIds), onDemandClause)
     : onDemandClause;
 
-  const { data, error } = await supabase
-    .from('sessions')
-    .select(`
-      id,
-      status,
-      entry_token,
-      video_call_id,
-      notification_sent,
-      notification_sent_at,
-      patient_arrived,
-      patient_arrived_at,
-      session_started_at,
-      session_ended_at,
-      created_at,
-      appointment_id,
-      room_id,
-      appointments!left (
-        id,
-        scheduled_at,
-        status,
-        phone_number,
-        appointment_type_id,
-        clinician_id,
-        appointment_types!left (
-          id,
-          name,
-          modality,
-          duration_minutes,
-          default_fee_cents
-        ),
-        users!appointments_clinician_id_fkey (
-          id,
-          full_name
-        )
-      ),
-      session_participants!left (
-        patients!inner (
-          id,
-          first_name,
-          last_name,
-          payment_methods!left (
-            id,
-            card_last_four,
-            card_brand,
-            is_default
-          )
-        )
-      ),
-      rooms!left (
-        id,
-        name,
-        room_type,
-        sort_order
-      ),
-      payments!left (
-        status,
-        amount_cents
-      )
-    `)
-    .eq('location_id', locationId)
-    .or(orFilter);
+  const sessionRows = await db
+    .select({
+      id: sessionsT.id,
+      status: sessionsT.status,
+      entry_token: sessionsT.entryToken,
+      video_call_id: sessionsT.videoCallId,
+      notification_sent: sessionsT.notificationSent,
+      notification_sent_at: sessionsT.notificationSentAt,
+      patient_arrived: sessionsT.patientArrived,
+      patient_arrived_at: sessionsT.patientArrivedAt,
+      session_started_at: sessionsT.sessionStartedAt,
+      session_ended_at: sessionsT.sessionEndedAt,
+      created_at: sessionsT.createdAt,
+      appointment_id: sessionsT.appointmentId,
+      room_id: sessionsT.roomId,
+    })
+    .from(sessionsT)
+    .where(and(eq(sessionsT.locationId, locationId), dayClause));
 
-  if (error) {
-    console.error('Failed to fetch runsheet sessions:', error);
-    return [];
+  if (sessionRows.length === 0) return [];
+
+  const sessionIds = sessionRows.map((s) => s.id);
+  const apptIds = [...new Set(sessionRows.map((s) => s.appointment_id).filter((x): x is string => !!x))];
+  const roomIds = [...new Set(sessionRows.map((s) => s.room_id).filter((x): x is string => !!x))];
+
+  // Appointments + their type + clinician.
+  const apptRows = apptIds.length === 0 ? [] : await db
+    .select({
+      id: appointmentsT.id,
+      scheduled_at: appointmentsT.scheduledAt,
+      status: appointmentsT.status,
+      phone_number: appointmentsT.phoneNumber,
+      appointment_type_id: appointmentsT.appointmentTypeId,
+      clinician_id: appointmentsT.clinicianId,
+      type_name: appointmentTypesT.name,
+      type_modality: appointmentTypesT.modality,
+      type_duration_minutes: appointmentTypesT.durationMinutes,
+      type_default_fee_cents: appointmentTypesT.defaultFeeCents,
+      clinician_name: usersT.fullName,
+    })
+    .from(appointmentsT)
+    .leftJoin(appointmentTypesT, eq(appointmentTypesT.id, appointmentsT.appointmentTypeId))
+    .leftJoin(usersT, eq(usersT.id, appointmentsT.clinicianId))
+    .where(inArray(appointmentsT.id, apptIds));
+  const apptMap = new Map(apptRows.map((a) => [a.id, a]));
+
+  // Session participants → patient (one patient per session in MVP).
+  const participantRows = await db
+    .select({
+      session_id: sessionParticipants.sessionId,
+      patient_id: patientsT.id,
+      first_name: patientsT.firstName,
+      last_name: patientsT.lastName,
+    })
+    .from(sessionParticipants)
+    .innerJoin(patientsT, eq(patientsT.id, sessionParticipants.patientId))
+    .where(inArray(sessionParticipants.sessionId, sessionIds));
+  const patientBySession = new Map(participantRows.map((p) => [p.session_id, p]));
+
+  // Payment methods for the matched patients.
+  const patientIds = [...new Set(participantRows.map((p) => p.patient_id))];
+  const cardRows = patientIds.length === 0 ? [] : await db
+    .select({
+      patient_id: paymentMethods.patientId,
+      card_last_four: paymentMethods.cardLastFour,
+      card_brand: paymentMethods.cardBrand,
+      is_default: paymentMethods.isDefault,
+    })
+    .from(paymentMethods)
+    .where(inArray(paymentMethods.patientId, patientIds));
+  const cardsByPatient = new Map<string, typeof cardRows>();
+  for (const c of cardRows) {
+    const list = cardsByPatient.get(c.patient_id) ?? [];
+    list.push(c);
+    cardsByPatient.set(c.patient_id, list);
   }
 
-  // Transform the nested Supabase response into flat RunsheetSession rows
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (data ?? []).map((row: any): RunsheetSession => {
-    const appointment = row.appointments as Record<string, unknown> | null;
-    const appointmentType = appointment?.appointment_types as Record<string, unknown> | null;
-    const clinician = appointment?.users as Record<string, unknown> | null;
-    const participants = row.session_participants as Array<Record<string, unknown>> | null;
-    const patient = participants?.[0]?.patients as Record<string, unknown> | null;
-    const paymentMethods = patient?.payment_methods as Array<Record<string, unknown>> | null;
-    const defaultCard = paymentMethods?.find((pm) => pm.is_default) ?? paymentMethods?.[0];
-    const room = row.rooms as Record<string, unknown> | null;
-    const payments = row.payments as Array<Record<string, unknown>> | null;
+  // Rooms.
+  const roomRows = roomIds.length === 0 ? [] : await db
+    .select({
+      id: roomsT.id,
+      name: roomsT.name,
+      room_type: roomsT.roomType,
+      sort_order: roomsT.sortOrder,
+    })
+    .from(roomsT)
+    .where(inArray(roomsT.id, roomIds));
+  const roomMap = new Map(roomRows.map((r) => [r.id, r]));
+
+  // Payments by session.
+  const paymentRows = await db
+    .select({
+      session_id: paymentsT.sessionId,
+      status: paymentsT.status,
+      amount_cents: paymentsT.amountCents,
+    })
+    .from(paymentsT)
+    .where(inArray(paymentsT.sessionId, sessionIds));
+  const paymentsBySession = new Map<string, typeof paymentRows>();
+  for (const p of paymentRows) {
+    if (!p.session_id) continue;
+    const list = paymentsBySession.get(p.session_id) ?? [];
+    list.push(p);
+    paymentsBySession.set(p.session_id, list);
+  }
+
+  return sessionRows.map((row): RunsheetSession => {
+    const appointment = row.appointment_id ? apptMap.get(row.appointment_id) ?? null : null;
+    const patient = patientBySession.get(row.id) ?? null;
+    const cards = patient ? cardsByPatient.get(patient.patient_id) ?? [] : [];
+    const defaultCard = cards.find((pm) => pm.is_default) ?? cards[0];
+    const room = row.room_id ? roomMap.get(row.room_id) ?? null : null;
+    const payments = paymentsBySession.get(row.id) ?? [];
     // Pick the most relevant payment: completed first, then any other.
-    const completedPayment = payments?.find((p) => p.status === 'completed') ?? payments?.[0] ?? null;
+    const completedPayment = payments.find((p) => p.status === 'completed') ?? payments[0] ?? null;
 
     return {
-      session_id: row.id as string,
+      session_id: row.id,
       status: row.status as RunsheetSession['status'],
       entry_token: row.entry_token as string,
-      video_call_id: row.video_call_id as string | null,
-      notification_sent: row.notification_sent as boolean,
-      notification_sent_at: row.notification_sent_at as string | null,
-      patient_arrived: row.patient_arrived as boolean,
-      patient_arrived_at: row.patient_arrived_at as string | null,
-      session_started_at: row.session_started_at as string | null,
-      session_ended_at: row.session_ended_at as string | null,
-      session_created_at: row.created_at as string,
+      video_call_id: row.video_call_id,
+      notification_sent: row.notification_sent,
+      notification_sent_at: row.notification_sent_at,
+      patient_arrived: row.patient_arrived,
+      patient_arrived_at: row.patient_arrived_at,
+      session_started_at: row.session_started_at,
+      session_ended_at: row.session_ended_at,
+      session_created_at: row.created_at,
 
-      appointment_id: appointment?.id as string | null ?? null,
-      scheduled_at: appointment?.scheduled_at as string | null ?? null,
-      appointment_status: appointment?.status as string | null ?? null,
-      phone_number: appointment?.phone_number as string | null ?? null,
+      appointment_id: appointment?.id ?? null,
+      scheduled_at: appointment?.scheduled_at ?? null,
+      appointment_status: appointment?.status ?? null,
+      phone_number: appointment?.phone_number ?? null,
 
-      appointment_type_id: appointmentType?.id as string | null ?? null,
-      type_name: appointmentType?.name as string | null ?? null,
+      appointment_type_id: appointment?.appointment_type_id ?? null,
+      type_name: appointment?.type_name ?? null,
       // On-demand sessions (joined via room link, no appointment) are always
       // telehealth by definition — room links are telehealth only.
-      modality: (appointmentType?.modality as RunsheetSession['modality'])
+      modality: (appointment?.type_modality as RunsheetSession['modality'])
         ?? (appointment ? null : 'telehealth'),
-      duration_minutes: appointmentType?.duration_minutes as number | null ?? null,
-      default_fee_cents: appointmentType?.default_fee_cents as number | null ?? null,
+      duration_minutes: appointment?.type_duration_minutes ?? null,
+      default_fee_cents: appointment?.type_default_fee_cents ?? null,
 
-      patient_id: patient?.id as string | null ?? null,
-      patient_first_name: patient?.first_name as string | null ?? null,
-      patient_last_name: patient?.last_name as string | null ?? null,
+      patient_id: patient?.patient_id ?? null,
+      patient_first_name: patient?.first_name ?? null,
+      patient_last_name: patient?.last_name ?? null,
 
-      room_id: room?.id as string | null ?? null,
-      room_name: room?.name as string | null ?? null,
-      room_type: room?.room_type as RunsheetSession['room_type'] ?? null,
-      room_sort_order: room?.sort_order as number | null ?? null,
+      room_id: room?.id ?? null,
+      room_name: room?.name ?? null,
+      room_type: (room?.room_type as RunsheetSession['room_type']) ?? null,
+      room_sort_order: room?.sort_order ?? null,
 
-      clinician_id: clinician?.id as string | null ?? null,
-      clinician_name: clinician?.full_name as string | null ?? null,
+      clinician_id: appointment?.clinician_id ?? null,
+      clinician_name: appointment?.clinician_name ?? null,
 
       has_card_on_file: !!defaultCard,
-      card_last_four: defaultCard?.card_last_four as string | null ?? null,
-      card_brand: defaultCard?.card_brand as string | null ?? null,
+      card_last_four: defaultCard?.card_last_four ?? null,
+      card_brand: defaultCard?.card_brand ?? null,
 
-      payment_status: completedPayment?.status as RunsheetSession['payment_status'] ?? null,
-      payment_amount_cents: completedPayment?.amount_cents as number | null ?? null,
+      payment_status: (completedPayment?.status as RunsheetSession['payment_status']) ?? null,
+      payment_amount_cents: completedPayment?.amount_cents ?? null,
     };
   });
 });
 
 /** Fetch all rooms at a location, ordered by sort_order. */
 export const fetchLocationRooms = cache(async (locationId: string): Promise<Room[]> => {
-  const supabase = createServiceClient();
+  const data = await db
+    .select({
+      id: roomsT.id,
+      location_id: roomsT.locationId,
+      name: roomsT.name,
+      room_type: roomsT.roomType,
+      link_token: roomsT.linkToken,
+      sort_order: roomsT.sortOrder,
+      payments_enabled: roomsT.paymentsEnabled,
+    })
+    .from(roomsT)
+    .where(eq(roomsT.locationId, locationId))
+    .orderBy(roomsT.sortOrder);
 
-  const { data, error } = await supabase
-    .from('rooms')
-    .select('id, location_id, name, room_type, link_token, sort_order, payments_enabled')
-    .eq('location_id', locationId)
-    .order('sort_order', { ascending: true });
-
-  if (error) {
-    console.error('Failed to fetch location rooms:', error);
-    return [];
-  }
-
-  return (data ?? []) as Room[];
+  return data as Room[];
 });
 
 /** Fetch room IDs a clinician is assigned to at a location. */
@@ -198,63 +253,73 @@ export const fetchClinicianRoomIds = cache(async (
   userId: string,
   locationId: string
 ): Promise<string[]> => {
-  const supabase = createServiceClient();
-
-  const { data, error } = await supabase
-    .from('clinician_room_assignments')
-    .select(`
-      room_id,
-      staff_assignments!inner (
-        user_id,
-        location_id
+  const data = await db
+    .select({ room_id: clinicianRoomAssignments.roomId })
+    .from(clinicianRoomAssignments)
+    .innerJoin(
+      staffAssignments,
+      eq(staffAssignments.id, clinicianRoomAssignments.staffAssignmentId)
+    )
+    .where(
+      and(
+        eq(staffAssignments.userId, userId),
+        eq(staffAssignments.locationId, locationId)
       )
-    `)
-    .eq('staff_assignments.user_id', userId)
-    .eq('staff_assignments.location_id', locationId);
+    );
 
-  if (error) {
-    console.error('Failed to fetch clinician room IDs:', error);
-    return [];
-  }
-
-  return (data ?? []).map((row: Record<string, unknown>) => row.room_id as string);
+  return data.map((row) => row.room_id);
 });
 
 /** Fetch staff assignments for a user (to determine role and locations). */
 export const fetchUserStaffAssignments = cache(async (userId: string) => {
-  const supabase = createServiceClient();
+  const rows = await db
+    .select({
+      id: staffAssignments.id,
+      user_id: staffAssignments.userId,
+      location_id: staffAssignments.locationId,
+      role: staffAssignments.role,
+      employment_type: staffAssignments.employmentType,
+      stripe_account_id: staffAssignments.stripeAccountId,
+      loc_id: locationsT.id,
+      loc_name: locationsT.name,
+      loc_org_id: locationsT.orgId,
+      loc_timezone: locationsT.timezone,
+      org_id: organisationsT.id,
+      org_name: organisationsT.name,
+      org_slug: organisationsT.slug,
+      org_tier: organisationsT.tier,
+      org_logo_url: organisationsT.logoUrl,
+      org_stripe_routing: organisationsT.stripeRouting,
+      org_timezone: organisationsT.timezone,
+    })
+    .from(staffAssignments)
+    .innerJoin(locationsT, eq(locationsT.id, staffAssignments.locationId))
+    .innerJoin(organisationsT, eq(organisationsT.id, locationsT.orgId))
+    .where(eq(staffAssignments.userId, userId));
 
-  const { data, error } = await supabase
-    .from('staff_assignments')
-    .select(`
-      id,
-      user_id,
-      location_id,
-      role,
-      employment_type,
-      stripe_account_id,
-      locations!inner (
-        id,
-        name,
-        org_id,
-        timezone,
-        organisations!inner (
-          id,
-          name,
-          slug,
-          tier,
-          logo_url,
-          stripe_routing,
-          timezone
-        )
-      )
-    `)
-    .eq('user_id', userId);
-
-  if (error) {
-    console.error('Failed to fetch staff assignments:', error);
-    return [];
-  }
-
-  return data ?? [];
+  // Re-nest into the shape the old Supabase join returned: assignment row with
+  // a nested `locations` object carrying a nested `organisations` object.
+  return rows.map((r) => ({
+    id: r.id,
+    user_id: r.user_id,
+    location_id: r.location_id,
+    role: r.role,
+    employment_type: r.employment_type,
+    stripe_account_id: r.stripe_account_id,
+    locations: {
+      id: r.loc_id,
+      name: r.loc_name,
+      org_id: r.loc_org_id,
+      timezone: r.loc_timezone,
+      organisations: {
+        id: r.org_id,
+        name: r.org_name,
+        slug: r.org_slug,
+        tier: r.org_tier,
+        logo_url: r.org_logo_url,
+        stripe_routing: r.org_stripe_routing,
+        timezone: r.org_timezone,
+      },
+    },
+  }));
 });

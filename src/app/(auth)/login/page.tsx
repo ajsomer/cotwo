@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
+import { signInAction } from "../actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -20,15 +20,11 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
 
-    const supabase = createClient();
-    const { error: authError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    const result = await signInAction({ email, password });
 
-    if (authError) {
+    if (!result.ok) {
       setLoading(false);
-      setError("Invalid email or password.");
+      setError(result.error);
       return;
     }
 
@@ -38,23 +34,11 @@ export default function LoginPage() {
   }
 
   async function handleForgotPassword() {
-    if (!email.trim()) {
-      setError("Enter your email address first.");
-      return;
-    }
-
-    const supabase = createClient();
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(
-      email,
-      { redirectTo: `${window.location.origin}/auth/callback` }
-    );
-
-    if (resetError) {
-      setError(resetError.message);
-      return;
-    }
-
-    setResetSent(true);
+    // Password reset is not wired up in this prototype's Neon Auth setup.
+    // Staff accounts are managed directly; surface a clear message rather
+    // than a broken flow.
+    setError("Password reset isn't available in this prototype — contact an admin.");
+    setResetSent(false);
   }
 
   return (

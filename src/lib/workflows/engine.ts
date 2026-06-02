@@ -1,4 +1,16 @@
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  appointmentActions,
+  workflowActionBlocks,
+  appointments as appointmentsT,
+  patients as patientsT,
+  patientPhoneNumbers,
+  organisations as organisationsT,
+  users as usersT,
+  sessions as sessionsT,
+  appointmentWorkflowRuns,
+} from "@/lib/db/schema";
+import { and, eq, inArray, lte, notInArray } from "drizzle-orm";
 import type { PreconditionConfig, ActionType } from "./types";
 import { evaluatePrecondition } from "./preconditions";
 import { executeHandler } from "./handlers";
@@ -31,77 +43,106 @@ interface ScanResult {
 export async function executeScheduledActions(
   options: { appointmentId?: string } = {}
 ): Promise<ScanResult> {
-  const supabase = createServiceClient();
   const result: ScanResult = { fired: 0, skipped: 0, failed: 0 };
 
   // Step 1: Claim — atomically move scheduled → firing
-  let claimQuery = supabase
-    .from("appointment_actions")
-    .update({ status: "firing" })
-    .eq("status", "scheduled")
-    .lte("scheduled_for", new Date().toISOString());
-
-  if (options.appointmentId) {
-    claimQuery = claimQuery.eq("appointment_id", options.appointmentId);
-  }
-
-  const { data: claimed, error: claimError } = await claimQuery.select(
-    "id, appointment_id, action_block_id, workflow_run_id, scheduled_for, session_id, config, form_id"
+  const claimWhere = and(
+    eq(appointmentActions.status, "scheduled"),
+    lte(appointmentActions.scheduledFor, new Date().toISOString()),
+    options.appointmentId
+      ? eq(appointmentActions.appointmentId, options.appointmentId)
+      : undefined
   );
 
-  if (claimError) {
-    console.error("[WORKFLOW ENGINE] Claim failed:", claimError.message);
+  let actions: Array<{
+    id: string;
+    appointment_id: string;
+    action_block_id: string;
+    workflow_run_id: string | null;
+    scheduled_for: string;
+    session_id: string | null;
+    config: unknown;
+    form_id: string | null;
+  }>;
+  try {
+    actions = await db
+      .update(appointmentActions)
+      .set({ status: "firing" })
+      .where(claimWhere)
+      .returning({
+        id: appointmentActions.id,
+        appointment_id: appointmentActions.appointmentId,
+        action_block_id: appointmentActions.actionBlockId,
+        workflow_run_id: appointmentActions.workflowRunId,
+        scheduled_for: appointmentActions.scheduledFor,
+        session_id: appointmentActions.sessionId,
+        config: appointmentActions.config,
+        form_id: appointmentActions.formId,
+      });
+  } catch (claimError) {
+    console.error("[WORKFLOW ENGINE] Claim failed:", (claimError as Error).message);
     return result;
   }
 
-  const actions = claimed ?? [];
   if (actions.length === 0) return result;
 
   // Fetch action block details for all claimed actions
   const blockIds = [...new Set(actions.map((a) => a.action_block_id))];
-  const { data: blocks } = await supabase
-    .from("workflow_action_blocks")
-    .select("id, action_type, config, precondition, form_id, parent_action_block_id")
-    .in("id", blockIds);
+  const blocks = blockIds.length === 0 ? [] : await db
+    .select({
+      id: workflowActionBlocks.id,
+      action_type: workflowActionBlocks.actionType,
+      config: workflowActionBlocks.config,
+      precondition: workflowActionBlocks.precondition,
+      form_id: workflowActionBlocks.formId,
+      parent_action_block_id: workflowActionBlocks.parentActionBlockId,
+    })
+    .from(workflowActionBlocks)
+    .where(inArray(workflowActionBlocks.id, blockIds));
 
-  const blockMap = new Map(
-    (blocks ?? []).map((b) => [b.id, b])
-  );
+  const blockMap = new Map(blocks.map((b) => [b.id, b]));
 
   // Fetch appointment details for all claimed actions
   const appointmentIds = [...new Set(actions.map((a) => a.appointment_id))];
-  const { data: appointments } = await supabase
-    .from("appointments")
-    .select("id, patient_id, scheduled_at, clinician_id, org_id, phone_number")
-    .in("id", appointmentIds);
+  const appointments = appointmentIds.length === 0 ? [] : await db
+    .select({
+      id: appointmentsT.id,
+      patient_id: appointmentsT.patientId,
+      scheduled_at: appointmentsT.scheduledAt,
+      clinician_id: appointmentsT.clinicianId,
+      org_id: appointmentsT.orgId,
+      phone_number: appointmentsT.phoneNumber,
+    })
+    .from(appointmentsT)
+    .where(inArray(appointmentsT.id, appointmentIds));
 
-  const apptMap = new Map(
-    (appointments ?? []).map((a) => [a.id, a])
-  );
+  const apptMap = new Map(appointments.map((a) => [a.id, a]));
 
   // Fetch patient details
   const patientIds = [...new Set(
-    (appointments ?? []).map((a) => a.patient_id).filter(Boolean)
-  )] as string[];
+    appointments.map((a) => a.patient_id).filter((x): x is string => !!x)
+  )];
 
   const patientMap = new Map<string, { first_name: string; phone_number: string }>();
   if (patientIds.length > 0) {
-    const { data: patients } = await supabase
-      .from("patients")
-      .select("id, first_name")
-      .in("id", patientIds);
+    const patients = await db
+      .select({ id: patientsT.id, first_name: patientsT.firstName })
+      .from(patientsT)
+      .where(inArray(patientsT.id, patientIds));
 
-    const { data: phones } = await supabase
-      .from("patient_phone_numbers")
-      .select("patient_id, phone_number")
-      .in("patient_id", patientIds)
-      .eq("is_primary", true);
+    const phones = await db
+      .select({ patient_id: patientPhoneNumbers.patientId, phone_number: patientPhoneNumbers.phoneNumber })
+      .from(patientPhoneNumbers)
+      .where(
+        and(
+          inArray(patientPhoneNumbers.patientId, patientIds),
+          eq(patientPhoneNumbers.isPrimary, true)
+        )
+      );
 
-    const phoneMap = new Map(
-      (phones ?? []).map((p) => [p.patient_id, p.phone_number])
-    );
+    const phoneMap = new Map(phones.map((p) => [p.patient_id, p.phone_number]));
 
-    for (const p of patients ?? []) {
+    for (const p of patients) {
       patientMap.set(p.id, {
         first_name: p.first_name,
         phone_number: phoneMap.get(p.id) ?? "",
@@ -111,45 +152,45 @@ export async function executeScheduledActions(
 
   // Fetch org names for clinic_name interpolation
   const orgIds = [...new Set(
-    (appointments ?? []).map((a) => a.org_id).filter(Boolean)
+    appointments.map((a) => a.org_id).filter((x): x is string => !!x)
   )];
   const orgNameMap = new Map<string, string>();
   if (orgIds.length > 0) {
-    const { data: orgs } = await supabase
-      .from("organisations")
-      .select("id, name")
-      .in("id", orgIds);
-    for (const o of orgs ?? []) {
+    const orgs = await db
+      .select({ id: organisationsT.id, name: organisationsT.name })
+      .from(organisationsT)
+      .where(inArray(organisationsT.id, orgIds));
+    for (const o of orgs) {
       orgNameMap.set(o.id, o.name);
     }
   }
 
   // Fetch clinician names
   const clinicianIds = [...new Set(
-    (appointments ?? []).map((a) => a.clinician_id).filter(Boolean)
-  )] as string[];
+    appointments.map((a) => a.clinician_id).filter((x): x is string => !!x)
+  )];
   const clinicianNameMap = new Map<string, string>();
   if (clinicianIds.length > 0) {
-    const { data: clinicians } = await supabase
-      .from("users")
-      .select("id, full_name")
-      .in("id", clinicianIds);
-    for (const c of clinicians ?? []) {
+    const clinicians = await db
+      .select({ id: usersT.id, full_name: usersT.fullName })
+      .from(usersT)
+      .where(inArray(usersT.id, clinicianIds));
+    for (const c of clinicians) {
       clinicianNameMap.set(c.id, c.full_name);
     }
   }
 
   // Fetch session data for post-appointment actions
   const sessionIds = [...new Set(
-    actions.map((a) => a.session_id).filter(Boolean)
-  )] as string[];
+    actions.map((a) => a.session_id).filter((x): x is string => !!x)
+  )];
   const sessionMap = new Map<string, { session_ended_at: string | null }>();
   if (sessionIds.length > 0) {
-    const { data: sessions } = await supabase
-      .from("sessions")
-      .select("id, session_ended_at")
-      .in("id", sessionIds);
-    for (const s of sessions ?? []) {
+    const sessions = await db
+      .select({ id: sessionsT.id, session_ended_at: sessionsT.sessionEndedAt })
+      .from(sessionsT)
+      .where(inArray(sessionsT.id, sessionIds));
+    for (const s of sessions) {
       sessionMap.set(s.id, { session_ended_at: s.session_ended_at });
     }
   }
@@ -163,28 +204,28 @@ export async function executeScheduledActions(
       console.error(
         `[WORKFLOW ENGINE] Missing block or appointment for action ${action.id}. Marking failed.`
       );
-      await supabase
-        .from("appointment_actions")
-        .update({
+      await db
+        .update(appointmentActions)
+        .set({
           status: "failed",
-          fired_at: new Date().toISOString(),
-          error_message: "Missing action block or appointment data",
+          firedAt: new Date().toISOString(),
+          errorMessage: "Missing action block or appointment data",
         })
-        .eq("id", action.id);
+        .where(eq(appointmentActions.id, action.id));
       result.failed++;
       continue;
     }
 
     const patientId = appt.patient_id;
     if (!patientId) {
-      await supabase
-        .from("appointment_actions")
-        .update({
+      await db
+        .update(appointmentActions)
+        .set({
           status: "failed",
-          fired_at: new Date().toISOString(),
-          error_message: "No patient linked to appointment",
+          firedAt: new Date().toISOString(),
+          errorMessage: "No patient linked to appointment",
         })
-        .eq("id", action.id);
+        .where(eq(appointmentActions.id, action.id));
       result.failed++;
       continue;
     }
@@ -194,14 +235,14 @@ export async function executeScheduledActions(
 
     // Task actions don't need a phone number (staff-facing, no SMS sent)
     if (!isTaskAction && !patient?.phone_number) {
-      await supabase
-        .from("appointment_actions")
-        .update({
+      await db
+        .update(appointmentActions)
+        .set({
           status: "failed",
-          fired_at: new Date().toISOString(),
-          error_message: "No phone number on file for patient",
+          firedAt: new Date().toISOString(),
+          errorMessage: "No phone number on file for patient",
         })
-        .eq("id", action.id);
+        .where(eq(appointmentActions.id, action.id));
       result.failed++;
       continue;
     }
@@ -215,13 +256,13 @@ export async function executeScheduledActions(
     );
 
     if (!shouldFire) {
-      await supabase
-        .from("appointment_actions")
-        .update({
+      await db
+        .update(appointmentActions)
+        .set({
           status: "skipped",
-          fired_at: new Date().toISOString(),
+          firedAt: new Date().toISOString(),
         })
-        .eq("id", action.id);
+        .where(eq(appointmentActions.id, action.id));
       result.skipped++;
       continue;
     }
@@ -262,24 +303,26 @@ export async function executeScheduledActions(
       console.error(
         `[WORKFLOW ENGINE] Action ${action.id} (${block.action_type}) failed: ${handlerResult.error}`
       );
-      await supabase
-        .from("appointment_actions")
-        .update({
+      await db
+        .update(appointmentActions)
+        .set({
           status: "failed",
-          fired_at: new Date().toISOString(),
-          error_message: handlerResult.error,
+          firedAt: new Date().toISOString(),
+          errorMessage: handlerResult.error,
         })
-        .eq("id", action.id);
+        .where(eq(appointmentActions.id, action.id));
       result.failed++;
     } else {
-      await supabase
-        .from("appointment_actions")
-        .update({
-          status: handlerResult.status,
-          fired_at: new Date().toISOString(),
+      await db
+        .update(appointmentActions)
+        .set({
+          // Handler statuses are a superset of the DB enum (e.g. "fired");
+          // write the value as-is, matching the prior Supabase behaviour.
+          status: handlerResult.status as typeof appointmentActions.status.enumValues[number],
+          firedAt: new Date().toISOString(),
           result: (handlerResult.resultData as Record<string, unknown>) ?? null,
         })
-        .eq("id", action.id);
+        .where(eq(appointmentActions.id, action.id));
       result.fired++;
     }
   }
@@ -287,25 +330,29 @@ export async function executeScheduledActions(
   // Step 3: Check workflow run completion
   // Collect unique workflow run IDs from processed actions
   const runIds = [...new Set(
-    actions.map((a) => a.workflow_run_id).filter(Boolean)
-  )] as string[];
+    actions.map((a) => a.workflow_run_id).filter((x): x is string => !!x)
+  )];
 
   for (const runId of runIds) {
-    const terminalStatuses = ["completed", "failed", "cancelled", "skipped", "dropped"];
-    const { data: remaining } = await supabase
-      .from("appointment_actions")
-      .select("id")
-      .eq("workflow_run_id", runId)
-      .not("status", "in", `(${terminalStatuses.join(",")})`);
+    const terminalStatuses: Array<typeof appointmentActions.status.enumValues[number]> = ["completed", "failed", "cancelled", "skipped", "dropped"];
+    const remaining = await db
+      .select({ id: appointmentActions.id })
+      .from(appointmentActions)
+      .where(
+        and(
+          eq(appointmentActions.workflowRunId, runId),
+          notInArray(appointmentActions.status, terminalStatuses)
+        )
+      );
 
-    if (remaining && remaining.length === 0) {
-      await supabase
-        .from("appointment_workflow_runs")
-        .update({
+    if (remaining.length === 0) {
+      await db
+        .update(appointmentWorkflowRuns)
+        .set({
           status: "complete",
-          completed_at: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
         })
-        .eq("id", runId);
+        .where(eq(appointmentWorkflowRuns.id, runId));
     }
   }
 
@@ -334,73 +381,86 @@ export async function fireActionNow(
   | { status: "skipped"; reason: string }
   | { status: "failed"; error: string }
 > {
-  const supabase = createServiceClient();
-
   // Atomic claim: only transition scheduled → firing. If another process
   // already claimed it, or it's already terminal, return skipped.
-  const { data: claimed } = await supabase
-    .from("appointment_actions")
-    .update({ status: "firing" })
-    .eq("id", actionId)
-    .eq("status", "scheduled")
-    .select("id, appointment_id, action_block_id, session_id, config, form_id")
-    .maybeSingle();
+  const [claimed] = await db
+    .update(appointmentActions)
+    .set({ status: "firing" })
+    .where(and(eq(appointmentActions.id, actionId), eq(appointmentActions.status, "scheduled")))
+    .returning({
+      id: appointmentActions.id,
+      appointment_id: appointmentActions.appointmentId,
+      action_block_id: appointmentActions.actionBlockId,
+      session_id: appointmentActions.sessionId,
+      config: appointmentActions.config,
+      form_id: appointmentActions.formId,
+    });
 
   if (!claimed) {
     return { status: "skipped", reason: "action not in scheduled state" };
   }
 
-  const { data: block } = await supabase
-    .from("workflow_action_blocks")
-    .select("id, action_type, config, form_id, parent_action_block_id")
-    .eq("id", claimed.action_block_id)
-    .single();
+  const [block] = await db
+    .select({
+      id: workflowActionBlocks.id,
+      action_type: workflowActionBlocks.actionType,
+      config: workflowActionBlocks.config,
+      form_id: workflowActionBlocks.formId,
+      parent_action_block_id: workflowActionBlocks.parentActionBlockId,
+    })
+    .from(workflowActionBlocks)
+    .where(eq(workflowActionBlocks.id, claimed.action_block_id));
   if (!block) {
-    await supabase
-      .from("appointment_actions")
-      .update({ status: "failed", fired_at: new Date().toISOString(), error_message: "missing block" })
-      .eq("id", actionId);
+    await db
+      .update(appointmentActions)
+      .set({ status: "failed", firedAt: new Date().toISOString(), errorMessage: "missing block" })
+      .where(eq(appointmentActions.id, actionId));
     return { status: "failed", error: "missing block" };
   }
 
-  const { data: appt } = await supabase
-    .from("appointments")
-    .select("id, patient_id, scheduled_at, clinician_id, org_id, phone_number")
-    .eq("id", claimed.appointment_id)
-    .single();
+  const [appt] = await db
+    .select({
+      id: appointmentsT.id,
+      patient_id: appointmentsT.patientId,
+      scheduled_at: appointmentsT.scheduledAt,
+      clinician_id: appointmentsT.clinicianId,
+      org_id: appointmentsT.orgId,
+      phone_number: appointmentsT.phoneNumber,
+    })
+    .from(appointmentsT)
+    .where(eq(appointmentsT.id, claimed.appointment_id));
   if (!appt || !appt.patient_id) {
-    await supabase
-      .from("appointment_actions")
-      .update({ status: "failed", fired_at: new Date().toISOString(), error_message: "missing appointment or patient" })
-      .eq("id", actionId);
+    await db
+      .update(appointmentActions)
+      .set({ status: "failed", firedAt: new Date().toISOString(), errorMessage: "missing appointment or patient" })
+      .where(eq(appointmentActions.id, actionId));
     return { status: "failed", error: "missing appointment or patient" };
   }
 
-  const { data: patient } = await supabase
-    .from("patients")
-    .select("first_name")
-    .eq("id", appt.patient_id)
-    .single();
-  const { data: phone } = await supabase
-    .from("patient_phone_numbers")
-    .select("phone_number")
-    .eq("patient_id", appt.patient_id)
-    .eq("is_primary", true)
-    .maybeSingle();
+  const [patient] = await db
+    .select({ first_name: patientsT.firstName })
+    .from(patientsT)
+    .where(eq(patientsT.id, appt.patient_id));
+  const [phone] = await db
+    .select({ phone_number: patientPhoneNumbers.phoneNumber })
+    .from(patientPhoneNumbers)
+    .where(
+      and(
+        eq(patientPhoneNumbers.patientId, appt.patient_id),
+        eq(patientPhoneNumbers.isPrimary, true)
+      )
+    )
+    .limit(1);
 
-  const { data: org } = appt.org_id
-    ? await supabase.from("organisations").select("name").eq("id", appt.org_id).single()
-    : { data: null };
-  const { data: clinician } = appt.clinician_id
-    ? await supabase.from("users").select("full_name").eq("id", appt.clinician_id).single()
-    : { data: null };
+  const org = appt.org_id
+    ? (await db.select({ name: organisationsT.name }).from(organisationsT).where(eq(organisationsT.id, appt.org_id)))[0] ?? null
+    : null;
+  const clinician = appt.clinician_id
+    ? (await db.select({ full_name: usersT.fullName }).from(usersT).where(eq(usersT.id, appt.clinician_id)))[0] ?? null
+    : null;
 
   const sessionData = claimed.session_id
-    ? (await supabase
-        .from("sessions")
-        .select("session_ended_at")
-        .eq("id", claimed.session_id)
-        .single()).data
+    ? (await db.select({ session_ended_at: sessionsT.sessionEndedAt }).from(sessionsT).where(eq(sessionsT.id, claimed.session_id)))[0] ?? null
     : null;
 
   const actionConfig = claimed.session_id
@@ -425,25 +485,27 @@ export async function fireActionNow(
   });
 
   if (handlerResult.status === "failed") {
-    await supabase
-      .from("appointment_actions")
-      .update({
+    await db
+      .update(appointmentActions)
+      .set({
         status: "failed",
-        fired_at: new Date().toISOString(),
-        error_message: handlerResult.error,
+        firedAt: new Date().toISOString(),
+        errorMessage: handlerResult.error,
       })
-      .eq("id", actionId);
+      .where(eq(appointmentActions.id, actionId));
     return { status: "failed", error: handlerResult.error };
   }
 
-  await supabase
-    .from("appointment_actions")
-    .update({
-      status: handlerResult.status,
-      fired_at: new Date().toISOString(),
+  await db
+    .update(appointmentActions)
+    .set({
+      // Handler statuses are a superset of the DB enum (e.g. "fired"); write
+      // the value as-is, matching the prior Supabase behaviour.
+      status: handlerResult.status as typeof appointmentActions.status.enumValues[number],
+      firedAt: new Date().toISOString(),
       result: (handlerResult.resultData as Record<string, unknown>) ?? null,
     })
-    .eq("id", actionId);
+    .where(eq(appointmentActions.id, actionId));
 
   return {
     status: "fired",

@@ -86,7 +86,7 @@ export function AddPatientPanel({
         room_id: roomId,
       };
 
-      const res = await fetch("/api/readiness/add-patient", {
+      const res = await fetch("/api/tasks/add-patient", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

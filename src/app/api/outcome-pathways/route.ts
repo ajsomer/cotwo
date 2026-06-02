@@ -1,9 +1,56 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  outcomePathways,
+  workflowTemplates,
+  workflowActionBlocks,
+} from "@/lib/db/schema";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import {
   requireStaffOrgAccess,
   requireStaffCanAccessOutcomePathway,
 } from "@/lib/auth/staff-access";
+
+const pathwayColumns = {
+  id: outcomePathways.id,
+  org_id: outcomePathways.orgId,
+  name: outcomePathways.name,
+  description: outcomePathways.description,
+  workflow_template_id: outcomePathways.workflowTemplateId,
+  archived_at: outcomePathways.archivedAt,
+  created_at: outcomePathways.createdAt,
+  updated_at: outcomePathways.updatedAt,
+};
+
+const templateColumns = {
+  id: workflowTemplates.id,
+  org_id: workflowTemplates.orgId,
+  name: workflowTemplates.name,
+  description: workflowTemplates.description,
+  direction: workflowTemplates.direction,
+  status: workflowTemplates.status,
+  terminal_type: workflowTemplates.terminalType,
+  at_risk_after_days: workflowTemplates.atRiskAfterDays,
+  overdue_after_days: workflowTemplates.overdueAfterDays,
+  created_at: workflowTemplates.createdAt,
+  updated_at: workflowTemplates.updatedAt,
+};
+
+const blockColumns = {
+  id: workflowActionBlocks.id,
+  template_id: workflowActionBlocks.templateId,
+  action_type: workflowActionBlocks.actionType,
+  offset_minutes: workflowActionBlocks.offsetMinutes,
+  offset_direction: workflowActionBlocks.offsetDirection,
+  modality_filter: workflowActionBlocks.modalityFilter,
+  form_id: workflowActionBlocks.formId,
+  config: workflowActionBlocks.config,
+  sort_order: workflowActionBlocks.sortOrder,
+  precondition: workflowActionBlocks.precondition,
+  parent_action_block_id: workflowActionBlocks.parentActionBlockId,
+  created_at: workflowActionBlocks.createdAt,
+  updated_at: workflowActionBlocks.updatedAt,
+};
 
 // GET /api/outcome-pathways?org_id=xxx
 // Returns outcome pathways with their linked workflow template and action blocks
@@ -14,9 +61,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "org_id required" }, { status: 400 });
   }
 
-  const supabase = createServiceClient();
-
-  const access = await requireStaffOrgAccess(supabase, orgId);
+  const access = await requireStaffOrgAccess(orgId);
   if (!access.ok) {
     return NextResponse.json(
       { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -27,21 +72,15 @@ export async function GET(request: NextRequest) {
   try {
     const includeArchived = request.nextUrl.searchParams.get("include_archived") === "true";
 
-    let query = supabase
-      .from("outcome_pathways")
-      .select("*")
-      .eq("org_id", orgId)
-      .order("name");
-
-    if (!includeArchived) {
-      query = query.is("archived_at", null);
-    }
-
-    const { data: pathways, error } = await query;
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+    const pathways = await db
+      .select(pathwayColumns)
+      .from(outcomePathways)
+      .where(
+        includeArchived
+          ? eq(outcomePathways.orgId, orgId)
+          : and(eq(outcomePathways.orgId, orgId), isNull(outcomePathways.archivedAt)),
+      )
+      .orderBy(asc(outcomePathways.name));
 
     // Fetch linked workflow templates and their action blocks
     const templateIds = (pathways ?? [])
@@ -52,20 +91,20 @@ export async function GET(request: NextRequest) {
     const blocksByTemplate: Record<string, unknown[]> = {};
 
     if (templateIds.length > 0) {
-      const { data: templateData } = await supabase
-        .from("workflow_templates")
-        .select("*")
-        .in("id", templateIds);
+      const templateData = await db
+        .select(templateColumns)
+        .from(workflowTemplates)
+        .where(inArray(workflowTemplates.id, templateIds));
 
       for (const t of templateData ?? []) {
         templates[t.id] = t;
       }
 
-      const { data: blocks } = await supabase
-        .from("workflow_action_blocks")
-        .select("*")
-        .in("template_id", templateIds)
-        .order("sort_order");
+      const blocks = await db
+        .select(blockColumns)
+        .from(workflowActionBlocks)
+        .where(inArray(workflowActionBlocks.templateId, templateIds))
+        .orderBy(asc(workflowActionBlocks.sortOrder));
 
       for (const b of blocks ?? []) {
         if (!blocksByTemplate[b.template_id]) {
@@ -114,9 +153,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const supabase = createServiceClient();
-
-    const access = await requireStaffOrgAccess(supabase, org_id);
+    const access = await requireStaffOrgAccess(org_id);
     if (!access.ok) {
       return NextResponse.json(
         { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -128,40 +165,38 @@ export async function POST(request: NextRequest) {
 
     // Optionally create a linked workflow template
     if (create_workflow) {
-      const { data: template, error: templateError } = await supabase
-        .from("workflow_templates")
-        .insert({
-          org_id,
-          name: `Post-workflow: ${name}`,
-          direction: "post_appointment",
-          status: "draft",
-        })
-        .select("id")
-        .single();
-
-      if (templateError) {
+      try {
+        const [template] = await db
+          .insert(workflowTemplates)
+          .values({
+            orgId: org_id,
+            name: `Post-workflow: ${name}`,
+            direction: "post_appointment",
+            status: "draft",
+          })
+          .returning({ id: workflowTemplates.id });
+        workflowTemplateId = template.id;
+      } catch (templateError) {
         return NextResponse.json(
-          { error: templateError.message },
+          { error: (templateError as Error).message },
           { status: 500 }
         );
       }
-
-      workflowTemplateId = template.id;
     }
 
-    const { data: pathway, error } = await supabase
-      .from("outcome_pathways")
-      .insert({
-        org_id,
-        name,
-        description: description ?? null,
-        workflow_template_id: workflowTemplateId,
-      })
-      .select("*")
-      .single();
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    let pathway;
+    try {
+      [pathway] = await db
+        .insert(outcomePathways)
+        .values({
+          orgId: org_id,
+          name,
+          description: description ?? null,
+          workflowTemplateId,
+        })
+        .returning(pathwayColumns);
+    } catch (err) {
+      return NextResponse.json({ error: (err as Error).message }, { status: 500 });
     }
 
     return NextResponse.json(
@@ -195,9 +230,7 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "id required" }, { status: 400 });
     }
 
-    const supabase = createServiceClient();
-
-    const access = await requireStaffCanAccessOutcomePathway(supabase, id);
+    const access = await requireStaffCanAccessOutcomePathway(id);
     if (!access.ok) {
       return NextResponse.json(
         { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -205,10 +238,10 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    const updates: Record<string, unknown> = {};
+    const updates: Partial<typeof outcomePathways.$inferInsert> = {};
     if (name !== undefined) updates.name = name;
     if (description !== undefined) updates.description = description;
-    if (body.archived_at !== undefined) updates.archived_at = body.archived_at;
+    if (body.archived_at !== undefined) updates.archivedAt = body.archived_at;
 
     if (Object.keys(updates).length === 0) {
       return NextResponse.json(
@@ -217,14 +250,7 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    const { error } = await supabase
-      .from("outcome_pathways")
-      .update(updates)
-      .eq("id", id);
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+    await db.update(outcomePathways).set(updates).where(eq(outcomePathways.id, id));
 
     return NextResponse.json({ success: true });
   } catch (err) {
@@ -245,9 +271,7 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "id required" }, { status: 400 });
   }
 
-  const supabase = createServiceClient();
-
-  const access = await requireStaffCanAccessOutcomePathway(supabase, id);
+  const access = await requireStaffCanAccessOutcomePathway(id);
   if (!access.ok) {
     return NextResponse.json(
       { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -256,14 +280,10 @@ export async function DELETE(request: NextRequest) {
   }
 
   try {
-    const { error } = await supabase
-      .from("outcome_pathways")
-      .update({ archived_at: new Date().toISOString() })
-      .eq("id", id);
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+    await db
+      .update(outcomePathways)
+      .set({ archivedAt: new Date().toISOString() })
+      .where(eq(outcomePathways.id, id));
 
     return NextResponse.json({ success: true });
   } catch (err) {

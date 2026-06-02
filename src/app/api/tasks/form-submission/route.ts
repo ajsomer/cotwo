@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import { formSubmissions, forms as formsT } from "@/lib/db/schema";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { extractFieldsFromSchema } from "@/lib/forms/extract-fields";
 import { requireStaffCanAccessAppointment } from "@/lib/auth/staff-access";
 
 /**
- * GET /api/readiness/form-submission?appointment_id=xxx&form_name=yyy
+ * GET /api/tasks/form-submission?appointment_id=xxx&form_name=yyy
  *
  * Fetches a form submission for the given appointment, returns the responses
  * mapped to field labels from the form schema.
@@ -18,8 +20,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "appointment_id required" }, { status: 400 });
   }
 
-  const supabase = createServiceClient();
-  const access = await requireStaffCanAccessAppointment(supabase, appointmentId);
+  const access = await requireStaffCanAccessAppointment(appointmentId);
   if (!access.ok) {
     return NextResponse.json(
       { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -29,28 +30,27 @@ export async function GET(request: NextRequest) {
 
   try {
     if (submissionId) {
-      const { data: exactSubmission } = await supabase
-        .from("form_submissions")
-        .select(
-          `
-          id,
-          form_id,
-          responses,
-          created_at,
-          forms!inner(id, name, schema)
-        `,
+      const [exactSubmission] = await db
+        .select({
+          id: formSubmissions.id,
+          form_id: formSubmissions.formId,
+          responses: formSubmissions.responses,
+          created_at: formSubmissions.createdAt,
+          form_schema: formsT.schema,
+        })
+        .from(formSubmissions)
+        .innerJoin(formsT, eq(formsT.id, formSubmissions.formId))
+        .where(
+          and(
+            eq(formSubmissions.id, submissionId),
+            eq(formSubmissions.appointmentId, appointmentId)
+          )
         )
-        .eq("id", submissionId)
-        .eq("appointment_id", appointmentId)
-        .maybeSingle();
+        .limit(1);
 
-      const form = Array.isArray(exactSubmission?.forms)
-        ? exactSubmission?.forms[0]
-        : exactSubmission?.forms;
-
-      if (exactSubmission && form?.schema) {
+      if (exactSubmission && exactSubmission.form_schema) {
         const fields = extractFieldsFromSchema(
-          form.schema as Record<string, unknown>,
+          exactSubmission.form_schema as Record<string, unknown>,
           exactSubmission.responses as Record<string, unknown>,
         );
         return NextResponse.json({
@@ -62,13 +62,18 @@ export async function GET(request: NextRequest) {
     }
 
     // Find form submissions for this appointment
-    const { data: submissions } = await supabase
-      .from("form_submissions")
-      .select("id, form_id, responses, created_at")
-      .eq("appointment_id", appointmentId)
-      .order("created_at", { ascending: false });
+    const submissions = await db
+      .select({
+        id: formSubmissions.id,
+        form_id: formSubmissions.formId,
+        responses: formSubmissions.responses,
+        created_at: formSubmissions.createdAt,
+      })
+      .from(formSubmissions)
+      .where(eq(formSubmissions.appointmentId, appointmentId))
+      .orderBy(desc(formSubmissions.createdAt));
 
-    if (!submissions || submissions.length === 0) {
+    if (submissions.length === 0) {
       return NextResponse.json({ fields: [], submitted_at: null });
     }
 
@@ -77,19 +82,19 @@ export async function GET(request: NextRequest) {
 
     if (formName) {
       const formIds = [...new Set(submissions.map((s) => s.form_id))];
-      const { data: forms } = await supabase
-        .from("forms")
-        .select("id, name, schema")
-        .in("id", formIds);
+      const forms = formIds.length === 0 ? [] : await db
+        .select({ id: formsT.id, name: formsT.name, schema: formsT.schema })
+        .from(formsT)
+        .where(inArray(formsT.id, formIds));
 
-      const matchingForm = forms?.find((f) => f.name === formName);
+      const matchingForm = forms.find((f) => f.name === formName);
       if (matchingForm) {
         const matchingSub = submissions.find((s) => s.form_id === matchingForm.id);
         if (matchingSub) submission = matchingSub;
       }
 
       // Get form schema for field labels
-      const form = matchingForm ?? forms?.[0];
+      const form = matchingForm ?? forms[0];
       if (form?.schema) {
         const fields = extractFieldsFromSchema(
           form.schema as Record<string, unknown>,
@@ -104,11 +109,11 @@ export async function GET(request: NextRequest) {
     }
 
     // Fallback: get form schema for the submission's form
-    const { data: form } = await supabase
-      .from("forms")
-      .select("schema")
-      .eq("id", submission.form_id)
-      .single();
+    const [form] = await db
+      .select({ schema: formsT.schema })
+      .from(formsT)
+      .where(eq(formsT.id, submission.form_id))
+      .limit(1);
 
     if (form?.schema) {
       const fields = extractFieldsFromSchema(

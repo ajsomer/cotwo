@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import { forms as formsT } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { requireStaffCanAccessForm } from "@/lib/auth/staff-access";
 
 // GET /api/forms/[id]
@@ -9,9 +11,7 @@ export async function GET(
 ) {
   const { id } = await params;
 
-  const supabase = createServiceClient();
-
-  const access = await requireStaffCanAccessForm(supabase, id);
+  const access = await requireStaffCanAccessForm(id);
   if (!access.ok) {
     return NextResponse.json(
       { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -20,13 +20,25 @@ export async function GET(
   }
 
   try {
-    const { data: form, error } = await supabase
-      .from("forms")
-      .select("*")
-      .eq("id", id)
-      .single();
+    const [form] = await db
+      .select({
+        id: formsT.id,
+        org_id: formsT.orgId,
+        name: formsT.name,
+        description: formsT.description,
+        schema: formsT.schema,
+        status: formsT.status,
+        is_platform_demo: formsT.isPlatformDemo,
+        public_token: formsT.publicToken,
+        public_token_rotated_at: formsT.publicTokenRotatedAt,
+        public_token_rotated_by: formsT.publicTokenRotatedBy,
+        created_at: formsT.createdAt,
+        updated_at: formsT.updatedAt,
+      })
+      .from(formsT)
+      .where(eq(formsT.id, id));
 
-    if (error || !form) {
+    if (!form) {
       return NextResponse.json({ error: "Form not found" }, { status: 404 });
     }
 

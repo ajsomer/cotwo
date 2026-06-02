@@ -1,83 +1,23 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import Link from "next/link";
 
+// Password reset via email link is not wired up in this prototype's Neon Auth
+// setup. Staff accounts are managed directly. This page remains so the route
+// doesn't 404, but points the user back to login.
 export default function ResetPasswordPage() {
-  const router = useRouter();
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-
-    if (password.length < 8) {
-      setError("Password must be at least 8 characters.");
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      setError("Passwords do not match.");
-      return;
-    }
-
-    setLoading(true);
-    const supabase = createClient();
-    const { error: updateError } = await supabase.auth.updateUser({
-      password,
-    });
-
-    if (updateError) {
-      setLoading(false);
-      setError(updateError.message);
-      return;
-    }
-
-    router.push("/runsheet");
-  }
-
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <h1 className="text-xl font-semibold text-gray-800 text-center mb-6">
-        Set a new password
+    <div className="space-y-4 text-center">
+      <h1 className="text-xl font-semibold text-gray-800 mb-2">
+        Password reset unavailable
       </h1>
-
-      {error && <p className="text-sm text-red-500 text-center">{error}</p>}
-
-      <Input
-        label="New password"
-        type="password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        autoComplete="new-password"
-        placeholder="Min 8 characters"
-        autoFocus
-        disabled={loading}
-      />
-
-      <Input
-        label="Confirm new password"
-        type="password"
-        value={confirmPassword}
-        onChange={(e) => setConfirmPassword(e.target.value)}
-        autoComplete="new-password"
-        disabled={loading}
-      />
-
-      <Button
-        type="submit"
-        variant="primary"
-        className="w-full"
-        disabled={loading}
-      >
-        {loading ? "Updating..." : "Update password"}
-      </Button>
-    </form>
+      <p className="text-sm text-gray-500">
+        Password reset isn&apos;t available in this prototype. Contact an
+        administrator to reset your account.
+      </p>
+      <Link href="/login" className="text-teal-500 hover:underline text-sm">
+        Back to login
+      </Link>
+    </div>
   );
 }

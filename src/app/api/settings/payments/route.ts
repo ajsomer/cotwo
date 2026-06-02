@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  locations as locationsT,
+  organisations as organisationsT,
+  staffAssignments,
+} from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { fetchPaymentConfig } from "@/lib/clinic/fetchers/payments";
 import { requireStaffLocationAccess } from "@/lib/auth/staff-access";
 
@@ -44,8 +50,6 @@ export async function PATCH(request: NextRequest) {
   const body = await request.json();
   const { action } = body;
 
-  const supabase = createServiceClient();
-
   try {
     switch (action) {
       case "set_routing": {
@@ -72,11 +76,11 @@ export async function PATCH(request: NextRequest) {
         }
 
         // Get org_id from location
-        const { data: loc } = await supabase
-          .from("locations")
-          .select("org_id")
-          .eq("id", location_id)
-          .single();
+        const [loc] = await db
+          .select({ org_id: locationsT.orgId })
+          .from(locationsT)
+          .where(eq(locationsT.id, location_id))
+          .limit(1);
 
         if (!loc) {
           return NextResponse.json(
@@ -85,14 +89,10 @@ export async function PATCH(request: NextRequest) {
           );
         }
 
-        const { error } = await supabase
-          .from("organisations")
-          .update({ stripe_routing: routing_mode })
-          .eq("id", loc.org_id);
-
-        if (error) {
-          return NextResponse.json({ error: error.message }, { status: 500 });
-        }
+        await db
+          .update(organisationsT)
+          .set({ stripeRouting: routing_mode })
+          .where(eq(organisationsT.id, loc.org_id));
 
         return NextResponse.json({ success: true });
       }
@@ -119,14 +119,10 @@ export async function PATCH(request: NextRequest) {
             );
           }
 
-          const { error } = await supabase
-            .from("locations")
-            .update({ stripe_account_id: testAccountId })
-            .eq("id", location_id);
-
-          if (error) {
-            return NextResponse.json({ error: error.message }, { status: 500 });
-          }
+          await db
+            .update(locationsT)
+            .set({ stripeAccountId: testAccountId })
+            .where(eq(locationsT.id, location_id));
 
           return NextResponse.json({
             success: true,
@@ -143,19 +139,14 @@ export async function PATCH(request: NextRequest) {
           }
 
           const saAccess = await requireStaffAssignmentLocationAccess(
-            supabase,
             staff_assignment_id,
           );
           if (!saAccess.ok) return saAccess.response;
 
-          const { error } = await supabase
-            .from("staff_assignments")
-            .update({ stripe_account_id: testAccountId })
-            .eq("id", staff_assignment_id);
-
-          if (error) {
-            return NextResponse.json({ error: error.message }, { status: 500 });
-          }
+          await db
+            .update(staffAssignments)
+            .set({ stripeAccountId: testAccountId })
+            .where(eq(staffAssignments.id, staff_assignment_id));
 
           return NextResponse.json({
             success: true,
@@ -188,14 +179,10 @@ export async function PATCH(request: NextRequest) {
             );
           }
 
-          const { error } = await supabase
-            .from("locations")
-            .update({ stripe_account_id: null })
-            .eq("id", location_id);
-
-          if (error) {
-            return NextResponse.json({ error: error.message }, { status: 500 });
-          }
+          await db
+            .update(locationsT)
+            .set({ stripeAccountId: null })
+            .where(eq(locationsT.id, location_id));
 
           return NextResponse.json({ success: true });
         }
@@ -209,19 +196,14 @@ export async function PATCH(request: NextRequest) {
           }
 
           const saAccess = await requireStaffAssignmentLocationAccess(
-            supabase,
             staff_assignment_id,
           );
           if (!saAccess.ok) return saAccess.response;
 
-          const { error } = await supabase
-            .from("staff_assignments")
-            .update({ stripe_account_id: null })
-            .eq("id", staff_assignment_id);
-
-          if (error) {
-            return NextResponse.json({ error: error.message }, { status: 500 });
-          }
+          await db
+            .update(staffAssignments)
+            .set({ stripeAccountId: null })
+            .where(eq(staffAssignments.id, staff_assignment_id));
 
           return NextResponse.json({ success: true });
         }
@@ -251,17 +233,16 @@ export async function PATCH(request: NextRequest) {
 // Resolve the assignment's location with the service client, then run the
 // standard location gate so the caller must be staff at that location.
 async function requireStaffAssignmentLocationAccess(
-  supabase: ReturnType<typeof createServiceClient>,
   staffAssignmentId: string,
 ): Promise<
   | { ok: true }
   | { ok: false; response: NextResponse }
 > {
-  const { data: assignment } = await supabase
-    .from("staff_assignments")
-    .select("location_id")
-    .eq("id", staffAssignmentId)
-    .maybeSingle();
+  const [assignment] = await db
+    .select({ location_id: staffAssignments.locationId })
+    .from(staffAssignments)
+    .where(eq(staffAssignments.id, staffAssignmentId))
+    .limit(1);
 
   if (!assignment) {
     return {

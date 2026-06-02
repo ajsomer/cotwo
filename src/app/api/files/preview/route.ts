@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
 
   const supabase = createServiceClient();
 
-  const access = await requireStaffOrgAccess(supabase, orgId);
+  const access = await requireStaffOrgAccess(orgId);
   if (!access.ok) {
     return NextResponse.json(
       { error: access.status === 401 ? "Unauthorized" : "Not found" },

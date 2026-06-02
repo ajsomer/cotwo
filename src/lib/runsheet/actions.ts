@@ -1,6 +1,15 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
+import { db } from "@/lib/db";
+import {
+  sessions as sessionsT,
+  appointments as appointmentsT,
+  sessionParticipants,
+  payments as paymentsT,
+  appointmentActions,
+  appointmentWorkflowRuns,
+} from "@/lib/db/schema";
+import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { getSmsProvider } from "@/lib/sms";
 import {
   broadcastSessionChange,
@@ -10,58 +19,46 @@ import {
 
 /** Call a late patient — logs to console for prototype. */
 export async function callPatient(sessionId: string) {
-  const supabase = await createClient();
-
-  // Get patient phone number
-  const { data: session } = await supabase
-    .from("sessions")
-    .select(
-      `
-      id,
-      appointments!left (
-        phone_number,
-        patients!left (
-          first_name,
-          last_name
-        )
-      ),
-      session_participants!left (
-        patients!inner (
-          first_name,
-          last_name,
-          patient_phone_numbers!left (
-            phone_number,
-            is_primary
-          )
-        )
-      )
-    `
-    )
-    .eq("id", sessionId)
-    .single();
+  const [session] = await db
+    .select({ id: sessionsT.id, appointment_id: sessionsT.appointmentId })
+    .from(sessionsT)
+    .where(eq(sessionsT.id, sessionId));
 
   if (!session) return { success: false, error: "Session not found" };
 
-  const appointment = session.appointments as unknown as Record<string, unknown> | null;
-  const phone = appointment?.phone_number as string | null;
+  let phone: string | null = null;
+  if (session.appointment_id) {
+    const [appt] = await db
+      .select({ phone_number: appointmentsT.phoneNumber })
+      .from(appointmentsT)
+      .where(eq(appointmentsT.id, session.appointment_id));
+    phone = appt?.phone_number ?? null;
+  }
 
   return { success: true, phone };
 }
 
 /** Send a nudge SMS to an upcoming patient who hasn't responded. */
 export async function nudgePatient(sessionId: string) {
-  const supabase = await createClient();
-
-  const { data: session } = await supabase
-    .from("sessions")
-    .select("id, entry_token, appointments!left (phone_number)")
-    .eq("id", sessionId)
-    .single();
+  const [session] = await db
+    .select({
+      id: sessionsT.id,
+      entry_token: sessionsT.entryToken,
+      appointment_id: sessionsT.appointmentId,
+    })
+    .from(sessionsT)
+    .where(eq(sessionsT.id, sessionId));
 
   if (!session) return { success: false, error: "Session not found" };
 
-  const appointment = session.appointments as unknown as Record<string, unknown> | null;
-  const phone = appointment?.phone_number as string | null;
+  let phone: string | null = null;
+  if (session.appointment_id) {
+    const [appt] = await db
+      .select({ phone_number: appointmentsT.phoneNumber })
+      .from(appointmentsT)
+      .where(eq(appointmentsT.id, session.appointment_id));
+    phone = appt?.phone_number ?? null;
+  }
 
   // Send nudge SMS via provider
   if (phone && session.entry_token) {
@@ -75,34 +72,31 @@ export async function nudgePatient(sessionId: string) {
   }
 
   // Update notification_sent_at to track the nudge
-  await supabase
-    .from("sessions")
-    .update({ notification_sent_at: new Date().toISOString() })
-    .eq("id", sessionId);
+  await db
+    .update(sessionsT)
+    .set({ notificationSentAt: new Date().toISOString() })
+    .where(eq(sessionsT.id, sessionId));
 
   return { success: true };
 }
 
 /** Admit a waiting patient — start the video session. */
 export async function admitPatient(sessionId: string) {
-  const supabase = await createClient();
-
   // Transition: waiting -> in_session
-  const { data: updated, error } = await supabase
-    .from("sessions")
-    .update({
-      status: "in_session",
-      session_started_at: new Date().toISOString(),
-      video_call_id: `session-${sessionId}`, // Deterministic LiveKit room name
-    })
-    .eq("id", sessionId)
-    .eq("status", "waiting")
-    .select("location_id")
-    .single();
-
-  if (error) {
+  let updated: { location_id: string } | undefined;
+  try {
+    [updated] = await db
+      .update(sessionsT)
+      .set({
+        status: "in_session",
+        sessionStartedAt: new Date().toISOString(),
+        videoCallId: `session-${sessionId}`, // Deterministic LiveKit room name
+      })
+      .where(and(eq(sessionsT.id, sessionId), eq(sessionsT.status, "waiting")))
+      .returning({ location_id: sessionsT.locationId });
+  } catch (error) {
     console.error("[ADMIT] Failed:", error);
-    return { success: false, error: error.message };
+    return { success: false, error: (error as Error).message };
   }
 
   await broadcastSessionStatus(sessionId, "in_session");
@@ -117,22 +111,19 @@ export async function admitPatient(sessionId: string) {
 
 /** Mark a session as complete (clinician ends the session). */
 export async function markSessionComplete(sessionId: string) {
-  const supabase = await createClient();
-
-  const { data: updated, error } = await supabase
-    .from("sessions")
-    .update({
-      status: "complete",
-      session_ended_at: new Date().toISOString(),
-    })
-    .eq("id", sessionId)
-    .eq("status", "in_session")
-    .select("location_id")
-    .single();
-
-  if (error) {
+  let updated: { location_id: string } | undefined;
+  try {
+    [updated] = await db
+      .update(sessionsT)
+      .set({
+        status: "complete",
+        sessionEndedAt: new Date().toISOString(),
+      })
+      .where(and(eq(sessionsT.id, sessionId), eq(sessionsT.status, "in_session")))
+      .returning({ location_id: sessionsT.locationId });
+  } catch (error) {
     console.error("[COMPLETE] Failed:", error);
-    return { success: false, error: error.message };
+    return { success: false, error: (error as Error).message };
   }
 
   await broadcastSessionStatus(sessionId, "complete");
@@ -147,18 +138,16 @@ export async function markSessionComplete(sessionId: string) {
 
 /** Mark a session as done (after processing). */
 export async function markSessionDone(sessionId: string) {
-  const supabase = await createClient();
-
-  const { data: updated, error } = await supabase
-    .from("sessions")
-    .update({ status: "done" })
-    .eq("id", sessionId)
-    .select("location_id")
-    .single();
-
-  if (error) {
+  let updated: { location_id: string } | undefined;
+  try {
+    [updated] = await db
+      .update(sessionsT)
+      .set({ status: "done" })
+      .where(eq(sessionsT.id, sessionId))
+      .returning({ location_id: sessionsT.locationId });
+  } catch (error) {
     console.error("[DONE] Failed:", error);
-    return { success: false, error: error.message };
+    return { success: false, error: (error as Error).message };
   }
 
   await broadcastSessionStatus(sessionId, "done");
@@ -176,51 +165,40 @@ export async function chargePayment(
   sessionId: string,
   amountCents: number
 ) {
-  const supabase = await createClient();
-
   // Get session details for payment
-  const { data: session } = await supabase
-    .from("sessions")
-    .select(
-      `
-      id,
-      appointment_id,
-      location_id,
-      session_participants!left (
-        patient_id,
-        patients!inner (
-          payment_methods!left (
-            stripe_payment_method_id,
-            card_last_four,
-            card_brand,
-            is_default
-          )
-        )
-      )
-    `
-    )
-    .eq("id", sessionId)
-    .single();
+  const [session] = await db
+    .select({
+      id: sessionsT.id,
+      appointment_id: sessionsT.appointmentId,
+      location_id: sessionsT.locationId,
+    })
+    .from(sessionsT)
+    .where(eq(sessionsT.id, sessionId));
 
   if (!session) return { success: false, error: "Session not found" };
 
-  // Create payment record
-  const participants = session.session_participants as unknown as Array<Record<string, unknown>> | null;
-  const patientId = participants?.[0]?.patient_id as string | null;
+  // Resolve the session's patient (first participant). The payment_methods
+  // join in the old query was decorative — only patient_id is used here.
+  const [participant] = await db
+    .select({ patient_id: sessionParticipants.patientId })
+    .from(sessionParticipants)
+    .where(eq(sessionParticipants.sessionId, sessionId))
+    .limit(1);
+  const patientId = participant?.patient_id ?? null;
 
-  const { error } = await supabase.from("payments").insert({
-    session_id: sessionId,
-    appointment_id: session.appointment_id,
-    patient_id: patientId,
-    amount_cents: amountCents,
-    status: "completed", // Stub: in production this would be 'processing' until Stripe confirms
-    stripe_payment_intent_id: `pi_test_${Date.now()}`,
-    stripe_account_id: "acct_test_bondi",
-  });
-
-  if (error) {
+  try {
+    await db.insert(paymentsT).values({
+      sessionId,
+      appointmentId: session.appointment_id,
+      patientId,
+      amountCents,
+      status: "completed", // Stub: in production this would be 'processing' until Stripe confirms
+      stripePaymentIntentId: `pi_test_${Date.now()}`,
+      stripeAccountId: "acct_test_bondi",
+    });
+  } catch (error) {
     console.error("[PAYMENT] Failed to create payment record:", error);
-    return { success: false, error: error.message };
+    return { success: false, error: (error as Error).message };
   }
 
   // Broadcast so the run sheet store refetches and picks up payment_status.
@@ -251,27 +229,31 @@ export async function selectOutcomePathway(
     form_id: string | null;
   }>
 ): Promise<{ success: boolean; error?: string; workflow_run_id?: string }> {
-  const supabase = await createClient();
-
-  const { data, error } = await supabase.rpc("confirm_outcome_pathway", {
-    p_session_id: sessionId,
-    p_pathway_id: pathwayId,
-    p_actions: actions,
-  });
-
-  if (error) {
-    console.error("[OUTCOME] Failed to confirm pathway:", error.message);
-    return { success: false, error: error.message };
+  let result: { workflow_run_id: string; action_count: number } | null = null;
+  try {
+    const res = await db.execute(
+      sql`select * from public.confirm_outcome_pathway(${sessionId}, ${pathwayId}, ${JSON.stringify(actions)}::jsonb)`
+    );
+    const row = (res.rows?.[0] ?? null) as
+      | { confirm_outcome_pathway: { workflow_run_id: string; action_count: number } }
+      | { workflow_run_id: string; action_count: number }
+      | null;
+    if (row) {
+      result =
+        "confirm_outcome_pathway" in row
+          ? row.confirm_outcome_pathway
+          : (row as { workflow_run_id: string; action_count: number });
+    }
+  } catch (error) {
+    console.error("[OUTCOME] Failed to confirm pathway:", (error as Error).message);
+    return { success: false, error: (error as Error).message };
   }
 
-  const result = data as { workflow_run_id: string; action_count: number } | null;
-
   await broadcastSessionStatus(sessionId, "done");
-  const { data: session } = await supabase
-    .from("sessions")
-    .select("location_id")
-    .eq("id", sessionId)
-    .single();
+  const [session] = await db
+    .select({ location_id: sessionsT.locationId })
+    .from(sessionsT)
+    .where(eq(sessionsT.id, sessionId));
   if (session?.location_id) {
     await broadcastSessionChange(session.location_id, "status_changed", {
       session_id: sessionId,
@@ -288,19 +270,17 @@ export async function selectOutcomePathway(
 export async function skipOutcomePathway(
   sessionId: string
 ): Promise<{ success: boolean; error?: string }> {
-  const supabase = await createClient();
-
-  const { error } = await supabase
-    .from("sessions")
-    .update({
-      status: "done",
-      session_ended_at: new Date().toISOString(),
-    })
-    .eq("id", sessionId);
-
-  if (error) {
-    console.error("[OUTCOME] Failed to skip pathway:", error.message);
-    return { success: false, error: error.message };
+  try {
+    await db
+      .update(sessionsT)
+      .set({
+        status: "done",
+        sessionEndedAt: new Date().toISOString(),
+      })
+      .where(eq(sessionsT.id, sessionId));
+  } catch (error) {
+    console.error("[OUTCOME] Failed to skip pathway:", (error as Error).message);
+    return { success: false, error: (error as Error).message };
   }
 
   return { success: true };
@@ -315,55 +295,59 @@ export async function resolveTask(
   userId: string,
   note?: string
 ): Promise<{ success: boolean; error?: string }> {
-  const supabase = await createClient();
   const now = new Date().toISOString();
 
-  const { error } = await supabase
-    .from("appointment_actions")
-    .update({
-      status: "completed",
-      completed_at: now,
-      resolved_at: now,
-      resolved_by: userId,
-      resolution_note: note ?? null,
-    })
-    .eq("id", actionId);
-
-  if (error) {
-    console.error("[TASK] Failed to resolve task:", error.message);
-    return { success: false, error: error.message };
+  try {
+    await db
+      .update(appointmentActions)
+      .set({
+        status: "completed",
+        completedAt: now,
+        resolvedAt: now,
+        resolvedBy: userId,
+        resolutionNote: note ?? null,
+      })
+      .where(eq(appointmentActions.id, actionId));
+  } catch (error) {
+    console.error("[TASK] Failed to resolve task:", (error as Error).message);
+    return { success: false, error: (error as Error).message };
   }
 
   // Check workflow run completion
-  const { data: action } = await supabase
-    .from("appointment_actions")
-    .select("workflow_run_id, appointment_id")
-    .eq("id", actionId)
-    .single();
+  const [action] = await db
+    .select({
+      workflow_run_id: appointmentActions.workflowRunId,
+      appointment_id: appointmentActions.appointmentId,
+    })
+    .from(appointmentActions)
+    .where(eq(appointmentActions.id, actionId));
 
   if (action?.workflow_run_id) {
-    const terminalStatuses = ["completed", "failed", "cancelled", "skipped", "dropped"];
-    const { data: remaining } = await supabase
-      .from("appointment_actions")
-      .select("id")
-      .eq("workflow_run_id", action.workflow_run_id)
-      .not("status", "in", `(${terminalStatuses.join(",")})`);
+    const terminalStatuses: Array<typeof appointmentActions.status.enumValues[number]> = ["completed", "failed", "cancelled", "skipped", "dropped"];
+    const remaining = await db
+      .select({ id: appointmentActions.id })
+      .from(appointmentActions)
+      .where(
+        and(
+          eq(appointmentActions.workflowRunId, action.workflow_run_id),
+          notInArray(appointmentActions.status, terminalStatuses)
+        )
+      );
 
-    if (remaining && remaining.length === 0) {
-      await supabase
-        .from("appointment_workflow_runs")
-        .update({ status: "complete", completed_at: now })
-        .eq("id", action.workflow_run_id);
+    if (remaining.length === 0) {
+      await db
+        .update(appointmentWorkflowRuns)
+        .set({ status: "complete", completedAt: now })
+        .where(eq(appointmentWorkflowRuns.id, action.workflow_run_id));
     }
   }
 
   // Notify the readiness dashboard at this appointment's location.
   if (action?.appointment_id) {
-    const { data: appt } = await supabase
-      .from("appointments")
-      .select("location_id")
-      .eq("id", action.appointment_id)
-      .maybeSingle();
+    const [appt] = await db
+      .select({ location_id: appointmentsT.locationId })
+      .from(appointmentsT)
+      .where(eq(appointmentsT.id, action.appointment_id));
     if (appt?.location_id) {
       await broadcastReadinessChange(appt.location_id, "action_resolved", {
         appointment_id: action.appointment_id,
@@ -381,39 +365,44 @@ export async function resolveTask(
 export async function cancelAction(
   actionId: string
 ): Promise<{ success: boolean; error?: string }> {
-  const supabase = await createClient();
-
-  const { error } = await supabase
-    .from("appointment_actions")
-    .update({ status: "cancelled" })
-    .eq("id", actionId)
-    .in("status", ["scheduled", "fired"]);
-
-  if (error) {
-    console.error("[ACTION] Failed to cancel action:", error.message);
-    return { success: false, error: error.message };
+  try {
+    await db
+      .update(appointmentActions)
+      .set({ status: "cancelled" })
+      .where(
+        and(
+          eq(appointmentActions.id, actionId),
+          inArray(appointmentActions.status, ["scheduled", "firing"])
+        )
+      );
+  } catch (error) {
+    console.error("[ACTION] Failed to cancel action:", (error as Error).message);
+    return { success: false, error: (error as Error).message };
   }
 
   // Check workflow run completion
-  const { data: action } = await supabase
-    .from("appointment_actions")
-    .select("workflow_run_id")
-    .eq("id", actionId)
-    .single();
+  const [action] = await db
+    .select({ workflow_run_id: appointmentActions.workflowRunId })
+    .from(appointmentActions)
+    .where(eq(appointmentActions.id, actionId));
 
   if (action?.workflow_run_id) {
-    const terminalStatuses = ["completed", "failed", "cancelled", "skipped", "dropped"];
-    const { data: remaining } = await supabase
-      .from("appointment_actions")
-      .select("id")
-      .eq("workflow_run_id", action.workflow_run_id)
-      .not("status", "in", `(${terminalStatuses.join(",")})`);
+    const terminalStatuses: Array<typeof appointmentActions.status.enumValues[number]> = ["completed", "failed", "cancelled", "skipped", "dropped"];
+    const remaining = await db
+      .select({ id: appointmentActions.id })
+      .from(appointmentActions)
+      .where(
+        and(
+          eq(appointmentActions.workflowRunId, action.workflow_run_id),
+          notInArray(appointmentActions.status, terminalStatuses)
+        )
+      );
 
-    if (remaining && remaining.length === 0) {
-      await supabase
-        .from("appointment_workflow_runs")
-        .update({ status: "complete", completed_at: new Date().toISOString() })
-        .eq("id", action.workflow_run_id);
+    if (remaining.length === 0) {
+      await db
+        .update(appointmentWorkflowRuns)
+        .set({ status: "complete", completedAt: new Date().toISOString() })
+        .where(eq(appointmentWorkflowRuns.id, action.workflow_run_id));
     }
   }
 

@@ -1,31 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServiceClient } from '@/lib/supabase/service';
+import { db } from '@/lib/db';
+import {
+  sessions as sessionsT,
+  rooms as roomsT,
+  locations as locationsT,
+  organisations as organisationsT,
+  appointments as appointmentsT,
+  users as usersT,
+} from '@/lib/db/schema';
+import { eq } from 'drizzle-orm';
 import { EntryContext } from '@/lib/supabase/types';
 import type { OrgTier, RoomType } from '@/lib/supabase/custom-types';
-
-/**
- * Unwrap a Supabase embedded relation that may arrive as an object or a
- * single-element array, into the caller-declared shape. Avoids `any` casts
- * when walking nested joins (session → room → location → org).
- */
-function rel<T = Record<string, unknown>>(value: unknown): T {
-  if (Array.isArray(value)) return (value[0] ?? {}) as T;
-  return (value ?? {}) as T;
-}
-
-type OrgRel = { id: string; name: string; logo_url: string | null; tier: OrgTier };
-type LocationRel = {
-  id: string;
-  name: string;
-  stripe_account_id: string | null;
-  organisations: unknown;
-};
-type RoomRel = { id: string; name: string; room_type: RoomType; locations: unknown };
-type AppointmentRel = {
-  scheduled_at: string | null;
-  phone_number: string | null;
-  users: { full_name: string | null } | { full_name: string | null }[] | null;
-};
 
 /**
  * POST /api/patient/resolve
@@ -39,98 +24,135 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Token is required' }, { status: 400 });
   }
 
-  const supabase = createServiceClient();
-
   // 1. Check sessions.entry_token (SMS link entry)
-  const { data: session } = await supabase
-    .from('sessions')
-    .select(`
-      id, entry_token, status, appointment_id, notification_sent,
-      prep_completed, card_captured, device_tested,
-      rooms!inner (id, name, room_type,
-        locations!inner (id, name, stripe_account_id,
-          organisations!inner (id, name, logo_url, tier)
-        )
-      ),
-      appointments!left (scheduled_at, phone_number,
-        users!left (full_name)
-      )
-    `)
-    .eq('entry_token', token)
-    .single();
+  const [session] = await db
+    .select({
+      id: sessionsT.id,
+      entry_token: sessionsT.entryToken,
+      status: sessionsT.status,
+      appointment_id: sessionsT.appointmentId,
+      room_id: roomsT.id,
+      room_name: roomsT.name,
+      room_type: roomsT.roomType,
+      location_id: locationsT.id,
+      location_name: locationsT.name,
+      stripe_account_id: locationsT.stripeAccountId,
+      org_id: organisationsT.id,
+      org_name: organisationsT.name,
+      logo_url: organisationsT.logoUrl,
+      tier: organisationsT.tier,
+      scheduled_at: appointmentsT.scheduledAt,
+      phone_number: appointmentsT.phoneNumber,
+      clinician_name: usersT.fullName,
+    })
+    .from(sessionsT)
+    .innerJoin(roomsT, eq(roomsT.id, sessionsT.roomId))
+    .innerJoin(locationsT, eq(locationsT.id, roomsT.locationId))
+    .innerJoin(organisationsT, eq(organisationsT.id, locationsT.orgId))
+    .leftJoin(appointmentsT, eq(appointmentsT.id, sessionsT.appointmentId))
+    .leftJoin(usersT, eq(usersT.id, appointmentsT.clinicianId))
+    .where(eq(sessionsT.entryToken, token));
 
   if (session) {
-    const room = rel<RoomRel>(session.rooms);
-    const location = rel<LocationRel>(room.locations);
-    const org = rel<OrgRel>(location.organisations);
-    const appointment = rel<AppointmentRel>(session.appointments);
-    const clinician = rel<{ full_name: string | null }>(appointment.users);
-
     const context: EntryContext = {
       entry_type: 'session',
-      org: { id: org.id, name: org.name, logo_url: org.logo_url, tier: org.tier },
-      location: { id: location.id, name: location.name, stripe_account_id: location.stripe_account_id },
-      room: { id: room.id, name: room.name, room_type: room.room_type },
+      org: {
+        id: session.org_id,
+        name: session.org_name,
+        logo_url: session.logo_url,
+        tier: session.tier as OrgTier,
+      },
+      location: {
+        id: session.location_id,
+        name: session.location_name,
+        stripe_account_id: session.stripe_account_id,
+      },
+      room: { id: session.room_id, name: session.room_name, room_type: session.room_type as RoomType },
       session: {
         id: session.id,
-        entry_token: session.entry_token,
+        entry_token: session.entry_token ?? '',
         status: session.status,
         appointment_id: session.appointment_id,
-        scheduled_at: appointment.scheduled_at || null,
-        phone_number: appointment.phone_number || null,
-        clinician_name: clinician.full_name || null,
+        scheduled_at: session.scheduled_at || null,
+        phone_number: session.phone_number || null,
+        clinician_name: session.clinician_name || null,
       },
-      payments_enabled: !!location.stripe_account_id,
+      payments_enabled: !!session.stripe_account_id,
     };
 
     return NextResponse.json({ context });
   }
 
   // 2. Check rooms.link_token (on-demand entry)
-  const { data: room } = await supabase
-    .from('rooms')
-    .select(`
-      id, name, room_type,
-      locations!inner (id, name, stripe_account_id,
-        organisations!inner (id, name, logo_url, tier)
-      )
-    `)
-    .eq('link_token', token)
-    .single();
+  const [room] = await db
+    .select({
+      id: roomsT.id,
+      name: roomsT.name,
+      room_type: roomsT.roomType,
+      location_id: locationsT.id,
+      location_name: locationsT.name,
+      stripe_account_id: locationsT.stripeAccountId,
+      org_id: organisationsT.id,
+      org_name: organisationsT.name,
+      logo_url: organisationsT.logoUrl,
+      tier: organisationsT.tier,
+    })
+    .from(roomsT)
+    .innerJoin(locationsT, eq(locationsT.id, roomsT.locationId))
+    .innerJoin(organisationsT, eq(organisationsT.id, locationsT.orgId))
+    .where(eq(roomsT.linkToken, token));
 
   if (room) {
-    const location = rel<LocationRel>((room as { locations: unknown }).locations);
-    const org = rel<OrgRel>(location.organisations);
-
     const context: EntryContext = {
       entry_type: 'on_demand',
-      org: { id: org.id, name: org.name, logo_url: org.logo_url, tier: org.tier },
-      location: { id: location.id, name: location.name, stripe_account_id: location.stripe_account_id },
-      room: { id: room.id, name: room.name, room_type: room.room_type },
+      org: {
+        id: room.org_id,
+        name: room.org_name,
+        logo_url: room.logo_url,
+        tier: room.tier as OrgTier,
+      },
+      location: {
+        id: room.location_id,
+        name: room.location_name,
+        stripe_account_id: room.stripe_account_id,
+      },
+      room: { id: room.id, name: room.name, room_type: room.room_type as RoomType },
       session: null,
-      payments_enabled: !!location.stripe_account_id,
+      payments_enabled: !!room.stripe_account_id,
     };
 
     return NextResponse.json({ context });
   }
 
   // 3. Check locations.qr_token (QR code entry — deferred but resolve works)
-  const { data: location } = await supabase
-    .from('locations')
-    .select(`
-      id, name, stripe_account_id,
-      organisations!inner (id, name, logo_url, tier)
-    `)
-    .eq('qr_token', token)
-    .single();
+  const [location] = await db
+    .select({
+      id: locationsT.id,
+      name: locationsT.name,
+      stripe_account_id: locationsT.stripeAccountId,
+      org_id: organisationsT.id,
+      org_name: organisationsT.name,
+      logo_url: organisationsT.logoUrl,
+      tier: organisationsT.tier,
+    })
+    .from(locationsT)
+    .innerJoin(organisationsT, eq(organisationsT.id, locationsT.orgId))
+    .where(eq(locationsT.qrToken, token));
 
   if (location) {
-    const org = rel<OrgRel>((location as { organisations: unknown }).organisations);
-
     const context: EntryContext = {
       entry_type: 'qr_code',
-      org: { id: org.id, name: org.name, logo_url: org.logo_url, tier: org.tier },
-      location: { id: location.id, name: location.name, stripe_account_id: location.stripe_account_id },
+      org: {
+        id: location.org_id,
+        name: location.org_name,
+        logo_url: location.logo_url,
+        tier: location.tier as OrgTier,
+      },
+      location: {
+        id: location.id,
+        name: location.name,
+        stripe_account_id: location.stripe_account_id,
+      },
       room: null,
       session: null,
       payments_enabled: !!location.stripe_account_id,

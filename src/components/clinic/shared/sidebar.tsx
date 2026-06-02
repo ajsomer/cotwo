@@ -60,7 +60,7 @@ const NAV_ITEMS: NavItemDef[] = [
     tiers: ["core", "complete"],
   },
   {
-    href: "/readiness",
+    href: "/tasks",
     label: "Tasks",
     icon: icons.readiness,
     roles: ["clinic_owner", "practice_manager", "receptionist"],

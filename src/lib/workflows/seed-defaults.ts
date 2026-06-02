@@ -1,4 +1,13 @@
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  forms as formsT,
+  appointmentTypes as appointmentTypesT,
+  workflowTemplates as workflowTemplatesT,
+  workflowActionBlocks,
+  typeWorkflowLinks,
+  outcomePathways as outcomePathwaysT,
+} from "@/lib/db/schema";
+import { and, eq } from "drizzle-orm";
 
 /**
  * Seed default workflow templates, action blocks, type_workflow_links, and
@@ -11,27 +20,24 @@ import { createServiceClient } from "@/lib/supabase/service";
  * is still correct and editable.
  */
 export async function seedDefaultWorkflows(orgId: string): Promise<void> {
-  const supabase = createServiceClient();
-
   // Look up existing published forms by name
-  const { data: orgForms } = await supabase
-    .from("forms")
-    .select("id, name")
-    .eq("org_id", orgId)
-    .eq("status", "published");
+  const orgForms = await db
+    .select({ id: formsT.id, name: formsT.name })
+    .from(formsT)
+    .where(and(eq(formsT.orgId, orgId), eq(formsT.status, "published")));
 
-  const formByName = new Map((orgForms ?? []).map((f) => [f.name, f.id]));
+  const formByName = new Map(orgForms.map((f) => [f.name, f.id]));
   const intakeFormId = formByName.get("New Patient Intake") ?? null;
   const k10FormId = formByName.get("Mental Health Assessment (K10)") ?? null;
   const satisfactionFormId = formByName.get("Patient Satisfaction Survey") ?? null;
 
   // Look up existing appointment types
-  const { data: types } = await supabase
-    .from("appointment_types")
-    .select("id, name")
-    .eq("org_id", orgId);
+  const types = await db
+    .select({ id: appointmentTypesT.id, name: appointmentTypesT.name })
+    .from(appointmentTypesT)
+    .where(eq(appointmentTypesT.orgId, orgId));
 
-  const typeByName = new Map((types ?? []).map((t) => [t.name, t.id]));
+  const typeByName = new Map(types.map((t) => [t.name, t.id]));
 
   // --- Pre-appointment workflow templates ---
 
@@ -44,32 +50,35 @@ export async function seedDefaultWorkflows(orgId: string): Promise<void> {
 
   for (const tpl of preTemplates) {
     // Check if template already exists
-    const { data: existing } = await supabase
-      .from("workflow_templates")
-      .select("id")
-      .eq("org_id", orgId)
-      .eq("name", tpl.name)
-      .eq("direction", "pre_appointment")
-      .maybeSingle();
+    const [existing] = await db
+      .select({ id: workflowTemplatesT.id })
+      .from(workflowTemplatesT)
+      .where(
+        and(
+          eq(workflowTemplatesT.orgId, orgId),
+          eq(workflowTemplatesT.name, tpl.name),
+          eq(workflowTemplatesT.direction, "pre_appointment")
+        )
+      )
+      .limit(1);
 
     if (existing) continue; // Already seeded
 
-    const { data: template } = await supabase
-      .from("workflow_templates")
-      .insert({
-        org_id: orgId,
+    const [template] = await db
+      .insert(workflowTemplatesT)
+      .values({
+        orgId,
         name: tpl.name,
         direction: "pre_appointment",
         status: "published",
-        terminal_type: "run_sheet",
+        terminalType: "run_sheet",
       })
-      .select("id")
-      .single();
+      .returning({ id: workflowTemplatesT.id });
 
     if (!template) continue;
 
     // Create action blocks based on template name.
-    await seedPreActionBlocks(supabase, tpl.name, template.id, intakeFormId);
+    await seedPreActionBlocks(tpl.name, template.id, intakeFormId);
 
     // Link to matching appointment types
     for (const typeName of tpl.typeNames) {
@@ -77,17 +86,21 @@ export async function seedDefaultWorkflows(orgId: string): Promise<void> {
       if (!typeId) continue;
 
       // Check if link already exists
-      const { data: existingLink } = await supabase
-        .from("type_workflow_links")
-        .select("id")
-        .eq("appointment_type_id", typeId)
-        .eq("direction", "pre_appointment")
-        .maybeSingle();
+      const [existingLink] = await db
+        .select({ id: typeWorkflowLinks.id })
+        .from(typeWorkflowLinks)
+        .where(
+          and(
+            eq(typeWorkflowLinks.appointmentTypeId, typeId),
+            eq(typeWorkflowLinks.direction, "pre_appointment")
+          )
+        )
+        .limit(1);
 
       if (!existingLink) {
-        await supabase.from("type_workflow_links").insert({
-          appointment_type_id: typeId,
-          workflow_template_id: template.id,
+        await db.insert(typeWorkflowLinks).values({
+          appointmentTypeId: typeId,
+          workflowTemplateId: template.id,
           direction: "pre_appointment",
         });
       }
@@ -112,59 +125,59 @@ export async function seedDefaultWorkflows(orgId: string): Promise<void> {
   ];
 
   for (const tpl of postTemplates) {
-    const { data: existing } = await supabase
-      .from("workflow_templates")
-      .select("id")
-      .eq("org_id", orgId)
-      .eq("name", tpl.name)
-      .eq("direction", "post_appointment")
-      .maybeSingle();
+    const [existing] = await db
+      .select({ id: workflowTemplatesT.id })
+      .from(workflowTemplatesT)
+      .where(
+        and(
+          eq(workflowTemplatesT.orgId, orgId),
+          eq(workflowTemplatesT.name, tpl.name),
+          eq(workflowTemplatesT.direction, "post_appointment")
+        )
+      )
+      .limit(1);
 
     if (existing) continue;
 
-    const { data: template } = await supabase
-      .from("workflow_templates")
-      .insert({
-        org_id: orgId,
+    const [template] = await db
+      .insert(workflowTemplatesT)
+      .values({
+        orgId,
         name: tpl.name,
         direction: "post_appointment",
         status: "published",
       })
-      .select("id")
-      .single();
+      .returning({ id: workflowTemplatesT.id });
 
     if (!template) continue;
 
     const blocks = getPostActionBlocks(tpl.name, template.id, satisfactionFormId, k10FormId);
     if (blocks.length > 0) {
-      await supabase.from("workflow_action_blocks").insert(blocks);
+      await db.insert(workflowActionBlocks).values(blocks);
     }
 
     // Create or update outcome pathway
-    const { data: existingPathway } = await supabase
-      .from("outcome_pathways")
-      .select("id")
-      .eq("org_id", orgId)
-      .eq("name", tpl.name)
-      .maybeSingle();
+    const [existingPathway] = await db
+      .select({ id: outcomePathwaysT.id })
+      .from(outcomePathwaysT)
+      .where(and(eq(outcomePathwaysT.orgId, orgId), eq(outcomePathwaysT.name, tpl.name)))
+      .limit(1);
 
     if (existingPathway) {
-      await supabase
-        .from("outcome_pathways")
-        .update({ workflow_template_id: template.id })
-        .eq("id", existingPathway.id);
+      await db
+        .update(outcomePathwaysT)
+        .set({ workflowTemplateId: template.id })
+        .where(eq(outcomePathwaysT.id, existingPathway.id));
     } else {
-      await supabase.from("outcome_pathways").insert({
-        org_id: orgId,
+      await db.insert(outcomePathwaysT).values({
+        orgId,
         name: tpl.name,
         description: tpl.pathwayDescription,
-        workflow_template_id: template.id,
+        workflowTemplateId: template.id,
       });
     }
   }
 }
-
-type SupabaseClient = ReturnType<typeof createServiceClient>;
 
 /**
  * Seed pre-appointment action blocks using the intake-package model.
@@ -181,7 +194,6 @@ type SupabaseClient = ReturnType<typeof createServiceClient>;
  * the intake_reminder children via `parent_action_block_id`.
  */
 async function seedPreActionBlocks(
-  supabase: SupabaseClient,
   templateName: string,
   templateId: string,
   intakeFormId: string | null
@@ -193,78 +205,76 @@ async function seedPreActionBlocks(
   let intakePackageId: string | null = null;
 
   if (plan.intakePackage) {
-    const { data: packageRow, error } = await supabase
-      .from("workflow_action_blocks")
-      .insert({
-        template_id: templateId,
-        action_type: "intake_package",
-        offset_minutes: 0,
-        offset_direction: "before",
-        config: {
-          includes_card_capture: plan.intakePackage.includes_card_capture,
-          includes_consent: plan.intakePackage.includes_consent,
-          form_ids: plan.intakePackage.form_ids,
-        },
-        sort_order: 0,
-      })
-      .select("id")
-      .single();
-
-    if (error) {
+    try {
+      const [packageRow] = await db
+        .insert(workflowActionBlocks)
+        .values({
+          templateId,
+          actionType: "intake_package",
+          offsetMinutes: 0,
+          offsetDirection: "before",
+          config: {
+            includes_card_capture: plan.intakePackage.includes_card_capture,
+            includes_consent: plan.intakePackage.includes_consent,
+            form_ids: plan.intakePackage.form_ids,
+          },
+          sortOrder: 0,
+        })
+        .returning({ id: workflowActionBlocks.id });
+      intakePackageId = packageRow?.id ?? null;
+    } catch (error) {
       console.error(
         `[WORKFLOW SEED] Failed to insert intake_package block for template '${templateName}':`,
         error
       );
       return;
     }
-    intakePackageId = packageRow?.id ?? null;
   }
 
   // Children and siblings: intake_reminder, send_reminder, add_to_runsheet
-  const children: Array<Record<string, unknown>> = [];
+  const children: Array<typeof workflowActionBlocks.$inferInsert> = [];
 
   for (const [i, reminder] of plan.intakeReminders.entries()) {
     if (!intakePackageId) continue;
     children.push({
-      template_id: templateId,
-      action_type: "intake_reminder",
-      offset_minutes: reminder.offset_days * 24 * 60,
-      offset_direction: "after",
+      templateId,
+      actionType: "intake_reminder",
+      offsetMinutes: reminder.offset_days * 24 * 60,
+      offsetDirection: "after",
       config: {
         offset_days: reminder.offset_days,
         message_body: reminder.message_body,
       },
-      parent_action_block_id: intakePackageId,
-      sort_order: 10 + i,
+      parentActionBlockId: intakePackageId,
+      sortOrder: 10 + i,
     });
   }
 
   for (const [i, reminder] of plan.appointmentReminders.entries()) {
     children.push({
-      template_id: templateId,
-      action_type: "send_reminder",
-      offset_minutes: reminder.offset_minutes,
-      offset_direction: "before",
+      templateId,
+      actionType: "send_reminder",
+      offsetMinutes: reminder.offset_minutes,
+      offsetDirection: "before",
       config: { message: reminder.message },
-      sort_order: 50 + i,
+      sortOrder: 50 + i,
     });
   }
 
   // Every pre-appointment run-sheet workflow needs an add_to_runsheet block.
   children.push({
-    template_id: templateId,
-    action_type: "add_to_runsheet",
-    offset_minutes: 0,
-    offset_direction: "before",
+    templateId,
+    actionType: "add_to_runsheet",
+    offsetMinutes: 0,
+    offsetDirection: "before",
     config: {},
-    sort_order: 100,
+    sortOrder: 100,
   });
 
   if (children.length > 0) {
-    const { error } = await supabase
-      .from("workflow_action_blocks")
-      .insert(children);
-    if (error) {
+    try {
+      await db.insert(workflowActionBlocks).values(children);
+    } catch (error) {
       console.error(
         `[WORKFLOW SEED] Failed to insert child blocks for template '${templateName}':`,
         error
@@ -390,24 +400,24 @@ function getPostActionBlocks(
   templateId: string,
   satisfactionFormId: string | null,
   k10FormId: string | null
-) {
+): Array<typeof workflowActionBlocks.$inferInsert> {
   switch (templateName) {
     case "Discharge with Home Exercises":
       return [
-        { template_id: templateId, action_type: "send_sms", offset_minutes: 0, offset_direction: "after", config: { message: "Hi {first_name}, thanks for your appointment today with {clinician_name}. We'll send your exercise program shortly." }, precondition: null, sort_order: 0 },
-        { template_id: templateId, action_type: "send_file", offset_minutes: 1440, offset_direction: "after", config: { message: "Hi {first_name}, here's your home exercise program as discussed." }, precondition: null, sort_order: 1 },
-        { template_id: templateId, action_type: "deliver_form", offset_minutes: 20160, offset_direction: "after", form_id: satisfactionFormId, config: {}, precondition: null, sort_order: 2 },
-        { template_id: templateId, action_type: "send_rebooking_nudge", offset_minutes: 43200, offset_direction: "after", config: { message: "Hi {first_name}, it's been a month since your last appointment with {clinic_name}. Would you like to book a follow-up?" }, precondition: { type: "no_future_appointment" }, sort_order: 3 },
+        { templateId, actionType: "send_sms", offsetMinutes: 0, offsetDirection: "after", config: { message: "Hi {first_name}, thanks for your appointment today with {clinician_name}. We'll send your exercise program shortly." }, precondition: null, sortOrder: 0 },
+        { templateId, actionType: "send_file", offsetMinutes: 1440, offsetDirection: "after", config: { message: "Hi {first_name}, here's your home exercise program as discussed." }, precondition: null, sortOrder: 1 },
+        { templateId, actionType: "deliver_form", offsetMinutes: 20160, offsetDirection: "after", formId: satisfactionFormId, config: {}, precondition: null, sortOrder: 2 },
+        { templateId, actionType: "send_rebooking_nudge", offsetMinutes: 43200, offsetDirection: "after", config: { message: "Hi {first_name}, it's been a month since your last appointment with {clinic_name}. Would you like to book a follow-up?" }, precondition: { type: "no_future_appointment" }, sortOrder: 3 },
       ];
     case "Continue Treatment":
       return [
-        { template_id: templateId, action_type: "send_sms", offset_minutes: 0, offset_direction: "after", config: { message: "Hi {first_name}, thanks for your appointment today. We'll be in touch about your next visit." }, precondition: null, sort_order: 0 },
-        { template_id: templateId, action_type: "send_rebooking_nudge", offset_minutes: 10080, offset_direction: "after", config: { message: "Hi {first_name}, time to book your next appointment with {clinic_name}." }, precondition: { type: "no_future_appointment" }, sort_order: 1 },
+        { templateId, actionType: "send_sms", offsetMinutes: 0, offsetDirection: "after", config: { message: "Hi {first_name}, thanks for your appointment today. We'll be in touch about your next visit." }, precondition: null, sortOrder: 0 },
+        { templateId, actionType: "send_rebooking_nudge", offsetMinutes: 10080, offsetDirection: "after", config: { message: "Hi {first_name}, time to book your next appointment with {clinic_name}." }, precondition: { type: "no_future_appointment" }, sortOrder: 1 },
       ];
     case "Discharge Complete":
       return [
-        { template_id: templateId, action_type: "send_sms", offset_minutes: 0, offset_direction: "after", config: { message: "Hi {first_name}, your treatment with {clinic_name} is now complete. If you need anything in the future, don't hesitate to get in touch." }, precondition: null, sort_order: 0 },
-        { template_id: templateId, action_type: "deliver_form", offset_minutes: 20160, offset_direction: "after", form_id: k10FormId, config: {}, precondition: null, sort_order: 1 },
+        { templateId, actionType: "send_sms", offsetMinutes: 0, offsetDirection: "after", config: { message: "Hi {first_name}, your treatment with {clinic_name} is now complete. If you need anything in the future, don't hesitate to get in touch." }, precondition: null, sortOrder: 0 },
+        { templateId, actionType: "deliver_form", offsetMinutes: 20160, offsetDirection: "after", formId: k10FormId, config: {}, precondition: null, sortOrder: 1 },
       ];
     default:
       return [];

@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  fileDeliveries,
+  files as filesT,
+  organisations as organisationsT,
+} from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 
 // GET /api/files/view/[token] — validate delivery token, return signed URL + metadata
 export async function GET(
@@ -16,13 +23,17 @@ export async function GET(
     const supabase = createServiceClient();
 
     // Look up the delivery by token
-    const { data: delivery, error: deliveryError } = await supabase
-      .from("file_deliveries")
-      .select("id, file_id, viewed_at")
-      .eq("token", token)
-      .single();
+    const [delivery] = await db
+      .select({
+        id: fileDeliveries.id,
+        file_id: fileDeliveries.fileId,
+        viewed_at: fileDeliveries.viewedAt,
+      })
+      .from(fileDeliveries)
+      .where(eq(fileDeliveries.token, token))
+      .limit(1);
 
-    if (deliveryError || !delivery) {
+    if (!delivery) {
       return NextResponse.json(
         { error: "This link is no longer available" },
         { status: 404 }
@@ -30,13 +41,20 @@ export async function GET(
     }
 
     // Get file details (archived files are still viewable via delivery links)
-    const { data: file, error: fileError } = await supabase
-      .from("files")
-      .select("id, name, storage_path, file_size_bytes, mime_type, org_id")
-      .eq("id", delivery.file_id)
-      .single();
+    const [file] = await db
+      .select({
+        id: filesT.id,
+        name: filesT.name,
+        storage_path: filesT.storagePath,
+        file_size_bytes: filesT.fileSizeBytes,
+        mime_type: filesT.mimeType,
+        org_id: filesT.orgId,
+      })
+      .from(filesT)
+      .where(eq(filesT.id, delivery.file_id))
+      .limit(1);
 
-    if (fileError || !file) {
+    if (!file) {
       return NextResponse.json(
         { error: "File not found" },
         { status: 404 }
@@ -44,11 +62,11 @@ export async function GET(
     }
 
     // Get org branding
-    const { data: org } = await supabase
-      .from("organisations")
-      .select("name, logo_url")
-      .eq("id", file.org_id)
-      .single();
+    const [org] = await db
+      .select({ name: organisationsT.name, logo_url: organisationsT.logoUrl })
+      .from(organisationsT)
+      .where(eq(organisationsT.id, file.org_id))
+      .limit(1);
 
     // Generate short-lived signed URL (60 minutes)
     const { data: signedUrlData, error: signedUrlError } = await supabase.storage
@@ -65,10 +83,10 @@ export async function GET(
 
     // Set viewed_at on first access
     if (!delivery.viewed_at) {
-      await supabase
-        .from("file_deliveries")
-        .update({ viewed_at: new Date().toISOString() })
-        .eq("id", delivery.id);
+      await db
+        .update(fileDeliveries)
+        .set({ viewedAt: new Date().toISOString() })
+        .where(eq(fileDeliveries.id, delivery.id));
     }
 
     return NextResponse.json({

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServiceClient } from '@/lib/supabase/service';
+import { db } from '@/lib/db';
+import { phoneVerifications, patientPhoneNumbers, patients } from '@/lib/db/schema';
+import { and, eq } from 'drizzle-orm';
 
 /**
  * POST /api/patient/otp/verify
@@ -13,26 +15,23 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Verification ID and code are required' }, { status: 400 });
   }
 
-  const supabase = createServiceClient();
-
   // Look up the verification record
-  const { data: verification } = await supabase
-    .from('phone_verifications')
-    .select('*')
-    .eq('id', verification_id)
-    .single();
+  const [verification] = await db
+    .select()
+    .from(phoneVerifications)
+    .where(eq(phoneVerifications.id, verification_id));
 
   if (!verification) {
     return NextResponse.json({ error: 'Invalid verification' }, { status: 400 });
   }
 
   // Check expiry
-  if (new Date(verification.expires_at) < new Date()) {
+  if (new Date(verification.expiresAt) < new Date()) {
     return NextResponse.json({ error: 'Code expired. Please request a new one.' }, { status: 410 });
   }
 
   // Check if already used
-  if (verification.verified_at) {
+  if (verification.verifiedAt) {
     return NextResponse.json({ error: 'Code already used. Please request a new one.' }, { status: 410 });
   }
 
@@ -42,43 +41,44 @@ export async function POST(request: NextRequest) {
   }
 
   // Mark as verified
-  await supabase
-    .from('phone_verifications')
-    .update({ verified_at: new Date().toISOString() })
-    .eq('id', verification_id);
+  await db
+    .update(phoneVerifications)
+    .set({ verifiedAt: new Date().toISOString() })
+    .where(eq(phoneVerifications.id, verification_id));
 
   // Update verified_at on matching patient_phone_numbers
-  await supabase
-    .from('patient_phone_numbers')
-    .update({ verified_at: new Date().toISOString() })
-    .eq('phone_number', verification.phone_number);
+  await db
+    .update(patientPhoneNumbers)
+    .set({ verifiedAt: new Date().toISOString() })
+    .where(eq(patientPhoneNumbers.phoneNumber, verification.phoneNumber));
 
   // Look up existing patient contacts at this org under this phone number
-  const { data: contacts } = await supabase
-    .from('patient_phone_numbers')
-    .select('patient_id, patients!inner (id, first_name, last_name, date_of_birth, org_id)')
-    .eq('phone_number', verification.phone_number)
-    .eq('patients.org_id', org_id);
+  const contacts = await db
+    .select({
+      id: patients.id,
+      first_name: patients.firstName,
+      last_name: patients.lastName,
+      date_of_birth: patients.dateOfBirth,
+    })
+    .from(patientPhoneNumbers)
+    .innerJoin(patients, eq(patients.id, patientPhoneNumbers.patientId))
+    .where(
+      and(
+        eq(patientPhoneNumbers.phoneNumber, verification.phoneNumber),
+        eq(patients.orgId, org_id)
+      )
+    );
 
-  type PatientRel = {
-    id: string;
-    first_name: string;
-    last_name: string;
-    date_of_birth: string | null;
-  };
-  const patients = (contacts ?? []).map((c) => {
-    const p = (Array.isArray(c.patients) ? c.patients[0] : c.patients) as PatientRel;
-    return {
-      id: p.id,
-      first_name: p.first_name,
-      last_name: p.last_name,
-      date_of_birth: p.date_of_birth,
-    };
-  });
+  const patientList = contacts.map((p) => ({
+    id: p.id,
+    first_name: p.first_name,
+    last_name: p.last_name,
+    date_of_birth: p.date_of_birth,
+  }));
 
   return NextResponse.json({
     verified: true,
-    phone_number: verification.phone_number,
-    patients,
+    phone_number: verification.phoneNumber,
+    patients: patientList,
   });
 }

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServiceClient } from '@/lib/supabase/service';
+import { db } from '@/lib/db';
+import { sessions as sessionsT, sessionParticipants } from '@/lib/db/schema';
+import { eq } from 'drizzle-orm';
 import { broadcastSessionChange } from '@/lib/realtime/broadcast';
 import { resolveEntryTokenScope } from '@/lib/patient/entry-token';
 import { assertPatientInOrg } from '@/lib/auth/staff-access';
@@ -15,18 +17,17 @@ import { assertPatientInOrg } from '@/lib/auth/staff-access';
  */
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const supabase = createServiceClient();
 
   if (!body.token) {
     return NextResponse.json({ error: 'token required' }, { status: 400 });
   }
 
-  const scope = await resolveEntryTokenScope(supabase, body.token);
+  const scope = await resolveEntryTokenScope(body.token);
   if (!scope) {
     return NextResponse.json({ error: 'Invalid token' }, { status: 404 });
   }
 
-  if (body.patient_id && !(await assertPatientInOrg(supabase, body.patient_id, scope.orgId))) {
+  if (body.patient_id && !(await assertPatientInOrg(body.patient_id, scope.orgId))) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
@@ -35,19 +36,19 @@ export async function POST(request: NextRequest) {
   // On-demand entry (room link token, no session yet): create the session
   // using the token's room + location.
   if (!sessionId && scope.roomId) {
-    const { data: newSession, error: sessionError } = await supabase
-      .from('sessions')
-      .insert({
-        room_id: scope.roomId,
-        location_id: scope.locationId,
-        status: 'waiting',
-        patient_arrived: true,
-        patient_arrived_at: new Date().toISOString(),
-      })
-      .select('id, entry_token')
-      .single();
-
-    if (sessionError) {
+    let newSession: { id: string; entry_token: string | null };
+    try {
+      [newSession] = await db
+        .insert(sessionsT)
+        .values({
+          roomId: scope.roomId,
+          locationId: scope.locationId,
+          status: 'waiting',
+          patientArrived: true,
+          patientArrivedAt: new Date().toISOString(),
+        })
+        .returning({ id: sessionsT.id, entry_token: sessionsT.entryToken });
+    } catch (sessionError) {
       console.error('[ARRIVE] Failed to create on-demand session:', sessionError);
       return NextResponse.json({ error: 'Failed to create session' }, { status: 500 });
     }
@@ -56,9 +57,9 @@ export async function POST(request: NextRequest) {
 
     // Link patient to session
     if (body.patient_id) {
-      await supabase.from('session_participants').insert({
-        session_id: sessionId,
-        patient_id: body.patient_id,
+      await db.insert(sessionParticipants).values({
+        sessionId,
+        patientId: body.patient_id,
         role: 'patient',
       });
     }
@@ -82,20 +83,20 @@ export async function POST(request: NextRequest) {
   const modality = body.modality || 'telehealth';
   const newStatus = modality === 'in_person' ? 'checked_in' : 'waiting';
 
-  const { data: updated, error } = await supabase
-    .from('sessions')
-    .update({
-      status: newStatus,
-      patient_arrived: true,
-      patient_arrived_at: new Date().toISOString(),
-      prep_completed: true,
-      device_tested: body.device_tested || false,
-    })
-    .eq('id', sessionId)
-    .select('location_id')
-    .single();
-
-  if (error) {
+  let updated: { location_id: string };
+  try {
+    [updated] = await db
+      .update(sessionsT)
+      .set({
+        status: newStatus,
+        patientArrived: true,
+        patientArrivedAt: new Date().toISOString(),
+        prepCompleted: true,
+        deviceTested: body.device_tested || false,
+      })
+      .where(eq(sessionsT.id, sessionId))
+      .returning({ location_id: sessionsT.locationId });
+  } catch (error) {
     console.error('[ARRIVE] Failed to update session:', error);
     return NextResponse.json({ error: 'Failed to update session' }, { status: 500 });
   }

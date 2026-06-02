@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  formAssignments,
+  forms as formsT,
+  patients as patientsT,
+  appointments as appointmentsT,
+} from "@/lib/db/schema";
+import { desc, eq, inArray } from "drizzle-orm";
 import {
   requireStaffCanAccessForm,
   assertPatientInOrg,
@@ -14,9 +21,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "form_id required" }, { status: 400 });
   }
 
-  const supabase = createServiceClient();
-
-  const access = await requireStaffCanAccessForm(supabase, formId);
+  const access = await requireStaffCanAccessForm(formId);
   if (!access.ok) {
     return NextResponse.json(
       { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -25,46 +30,65 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const { data: assignments, error } = await supabase
-      .from("form_assignments")
-      .select("*")
-      .eq("form_id", formId)
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+    const assignments = await db
+      .select({
+        id: formAssignments.id,
+        form_id: formAssignments.formId,
+        appointment_id: formAssignments.appointmentId,
+        patient_id: formAssignments.patientId,
+        token: formAssignments.token,
+        schema_snapshot: formAssignments.schemaSnapshot,
+        status: formAssignments.status,
+        sent_at: formAssignments.sentAt,
+        opened_at: formAssignments.openedAt,
+        completed_at: formAssignments.completedAt,
+        submission_id: formAssignments.submissionId,
+        created_at: formAssignments.createdAt,
+        updated_at: formAssignments.updatedAt,
+      })
+      .from(formAssignments)
+      .where(eq(formAssignments.formId, formId))
+      .orderBy(desc(formAssignments.createdAt));
 
     // Enrich with patient names and appointment times
-    const patientIds = [...new Set((assignments ?? []).map((a) => a.patient_id))];
-    const appointmentIds = [...new Set((assignments ?? []).map((a) => a.appointment_id).filter(Boolean))];
+    const patientIds = [...new Set(assignments.map((a) => a.patient_id))];
+    const appointmentIds = [
+      ...new Set(
+        assignments
+          .map((a) => a.appointment_id)
+          .filter((x): x is string => !!x)
+      ),
+    ];
 
     let patientMap: Record<string, { first_name: string; last_name: string }> = {};
-    let appointmentMap: Record<string, { scheduled_at: string }> = {};
+    let appointmentMap: Record<string, { scheduled_at: string | null }> = {};
 
     if (patientIds.length > 0) {
-      const { data: patients } = await supabase
-        .from("patients")
-        .select("id, first_name, last_name")
-        .in("id", patientIds);
+      const patients = await db
+        .select({
+          id: patientsT.id,
+          first_name: patientsT.firstName,
+          last_name: patientsT.lastName,
+        })
+        .from(patientsT)
+        .where(inArray(patientsT.id, patientIds));
 
-      if (patients) {
-        patientMap = Object.fromEntries(patients.map((p) => [p.id, { first_name: p.first_name, last_name: p.last_name }]));
-      }
+      patientMap = Object.fromEntries(patients.map((p) => [p.id, { first_name: p.first_name, last_name: p.last_name }]));
     }
 
     if (appointmentIds.length > 0) {
-      const { data: appointments } = await supabase
-        .from("appointments")
-        .select("id, scheduled_at")
-        .in("id", appointmentIds);
+      const appointments = await db
+        .select({
+          id: appointmentsT.id,
+          scheduled_at: appointmentsT.scheduledAt,
+        })
+        .from(appointmentsT)
+        .where(inArray(appointmentsT.id, appointmentIds));
 
-      if (appointments) {
-        appointmentMap = Object.fromEntries(appointments.map((a) => [a.id, { scheduled_at: a.scheduled_at }]));
-      }
+      appointmentMap = Object.fromEntries(appointments.map((a) => [a.id, { scheduled_at: a.scheduled_at }]));
     }
 
-    const enriched = (assignments ?? []).map((a) => ({
+    const enriched = assignments.map((a) => ({
       ...a,
       patient_first_name: patientMap[a.patient_id]?.first_name ?? null,
       patient_last_name: patientMap[a.patient_id]?.last_name ?? null,
@@ -90,9 +114,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const supabase = createServiceClient();
-
-  const access = await requireStaffCanAccessForm(supabase, form_id);
+  const access = await requireStaffCanAccessForm(form_id);
   if (!access.ok) {
     return NextResponse.json(
       { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -103,25 +125,24 @@ export async function POST(request: NextRequest) {
   // The form is org-gated above, but patient_id / appointment_id are
   // caller-supplied — prove they belong to the same org before the
   // service-role insert, or this could create a cross-org assignment.
-  if (!(await assertPatientInOrg(supabase, patient_id, access.orgId))) {
+  if (!(await assertPatientInOrg(patient_id, access.orgId))) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   if (
     appointment_id &&
-    !(await assertAppointmentInOrg(supabase, appointment_id, access.orgId))
+    !(await assertAppointmentInOrg(appointment_id, access.orgId))
   ) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
   try {
     // Fetch the form to snapshot its schema
-    const { data: form, error: formError } = await supabase
-      .from("forms")
-      .select("schema, status")
-      .eq("id", form_id)
-      .single();
+    const [form] = await db
+      .select({ schema: formsT.schema, status: formsT.status })
+      .from(formsT)
+      .where(eq(formsT.id, form_id));
 
-    if (formError || !form) {
+    if (!form) {
       return NextResponse.json({ error: "Form not found" }, { status: 404 });
     }
 
@@ -132,21 +153,30 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { data: assignment, error } = await supabase
-      .from("form_assignments")
-      .insert({
-        form_id,
-        patient_id,
-        appointment_id: appointment_id ?? null,
-        schema_snapshot: form.schema,
+    const [assignment] = await db
+      .insert(formAssignments)
+      .values({
+        formId: form_id,
+        patientId: patient_id,
+        appointmentId: appointment_id ?? null,
+        schemaSnapshot: form.schema,
         status: "pending",
       })
-      .select()
-      .single();
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+      .returning({
+        id: formAssignments.id,
+        form_id: formAssignments.formId,
+        appointment_id: formAssignments.appointmentId,
+        patient_id: formAssignments.patientId,
+        token: formAssignments.token,
+        schema_snapshot: formAssignments.schemaSnapshot,
+        status: formAssignments.status,
+        sent_at: formAssignments.sentAt,
+        opened_at: formAssignments.openedAt,
+        completed_at: formAssignments.completedAt,
+        submission_id: formAssignments.submissionId,
+        created_at: formAssignments.createdAt,
+        updated_at: formAssignments.updatedAt,
+      });
 
     return NextResponse.json({ assignment }, { status: 201 });
   } catch (err) {

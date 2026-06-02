@@ -1,4 +1,10 @@
-import { createServiceClient } from '@/lib/supabase/service';
+import { db } from '@/lib/db';
+import {
+  intakePackageJourneys,
+  appointments as appointmentsT,
+  locations as locationsT,
+} from '@/lib/db/schema';
+import { and, eq, ne } from 'drizzle-orm';
 
 export interface OutstandingJourney {
   token: string;
@@ -28,49 +34,50 @@ export async function getOutstandingJourneysForPatient(
   patientId: string,
   orgId: string
 ): Promise<OutstandingCheck> {
-  const supabase = createServiceClient();
-
-  const { data, error } = await supabase
-    .from('intake_package_journeys')
-    .select(
-      `
-      journey_token, status, appointment_id,
-      appointments!inner (id, scheduled_at, location_id,
-        locations!inner (org_id)
-      )
-    `
-    )
-    .eq('patient_id', patientId)
-    .neq('status', 'completed');
-
-  if (error || !data) {
-    return { journeys: [], overrideAllowed: false };
-  }
-
-  type Row = {
+  let rows: Array<{
     journey_token: string;
     status: string;
     appointment_id: string;
-    appointments: {
-      id: string;
-      scheduled_at: string | null;
-      location_id: string;
-      locations: { org_id: string };
-    };
-  };
+    scheduled_at: string | null;
+    org_id: string;
+  }>;
+  try {
+    rows = await db
+      .select({
+        journey_token: intakePackageJourneys.journeyToken,
+        status: intakePackageJourneys.status,
+        appointment_id: intakePackageJourneys.appointmentId,
+        scheduled_at: appointmentsT.scheduledAt,
+        org_id: locationsT.orgId,
+      })
+      .from(intakePackageJourneys)
+      .innerJoin(
+        appointmentsT,
+        eq(appointmentsT.id, intakePackageJourneys.appointmentId)
+      )
+      .innerJoin(locationsT, eq(locationsT.id, appointmentsT.locationId))
+      .where(
+        and(
+          eq(intakePackageJourneys.patientId, patientId),
+          ne(intakePackageJourneys.status, 'completed')
+        )
+      );
+  } catch {
+    return { journeys: [], overrideAllowed: false };
+  }
 
   const now = Date.now();
-  const journeys = (data as unknown as Row[])
-    .filter((row) => row.appointments?.locations?.org_id === orgId)
+  const journeys = rows
+    .filter((row) => row.org_id === orgId)
     .filter((row) => {
-      const ts = row.appointments?.scheduled_at;
+      const ts = row.scheduled_at;
       if (!ts) return true; // collection-only / unscheduled — still gate
       return new Date(ts).getTime() >= now;
     })
     .map((row) => ({
       token: row.journey_token,
       appointmentId: row.appointment_id,
-      scheduledAt: row.appointments?.scheduled_at ?? null,
+      scheduledAt: row.scheduled_at ?? null,
     }))
     .sort((a, b) => {
       // Most imminent first; nulls (collection-only) last.

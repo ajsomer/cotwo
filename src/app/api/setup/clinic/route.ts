@@ -1,5 +1,13 @@
 import { getAuthenticatedUserId } from "@/lib/auth/staff-access";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  organisations as organisationsT,
+  locations as locationsT,
+  staffAssignments,
+  appointmentTypes,
+  forms as formsT,
+} from "@/lib/db/schema";
+import { and, eq } from "drizzle-orm";
 import { generateSlug } from "@/lib/utils/slug";
 import { seedDefaultWorkflows } from "@/lib/workflows/seed-defaults";
 import { NextResponse, type NextRequest } from "next/server";
@@ -18,62 +26,59 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Clinic name is required." }, { status: 400 });
   }
 
-  const service = createServiceClient();
-
   let slug = generateSlug(name);
   for (let attempt = 0; attempt < 3; attempt++) {
-    const { data: existing } = await service
-      .from("organisations")
-      .select("id")
-      .eq("slug", slug)
-      .limit(1)
-      .single();
+    const [existing] = await db
+      .select({ id: organisationsT.id })
+      .from(organisationsT)
+      .where(eq(organisationsT.slug, slug))
+      .limit(1);
     if (!existing) break;
     slug = generateSlug(name);
   }
 
-  const { data: org, error: orgError } = await service
-    .from("organisations")
-    .insert({ name: name.trim(), slug, logo_url: logo_url ?? null, tier: "complete" })
-    .select("id")
-    .single();
-
-  if (orgError || !org) {
+  let org: { id: string };
+  try {
+    [org] = await db
+      .insert(organisationsT)
+      .values({ name: name.trim(), slug, logoUrl: logo_url ?? null, tier: "complete" })
+      .returning({ id: organisationsT.id });
+  } catch (err) {
     return NextResponse.json(
-      { error: "Failed to create organisation: " + orgError?.message },
+      { error: "Failed to create organisation: " + (err as Error).message },
       { status: 500 }
     );
   }
 
-  const { data: location, error: locError } = await service
-    .from("locations")
-    .insert({ org_id: org.id, name: name.trim(), address: null })
-    .select("id")
-    .single();
-
-  if (locError || !location) {
+  let location: { id: string };
+  try {
+    [location] = await db
+      .insert(locationsT)
+      .values({ orgId: org.id, name: name.trim(), address: null })
+      .returning({ id: locationsT.id });
+  } catch (err) {
     return NextResponse.json(
-      { error: "Failed to create location: " + locError?.message },
+      { error: "Failed to create location: " + (err as Error).message },
       { status: 500 }
     );
   }
 
-  const { error: saError } = await service.from("staff_assignments").insert({
-    user_id: userId,
-    location_id: location.id,
-    role: "clinic_owner",
-    employment_type: "full_time",
-  });
-
-  if (saError) {
+  try {
+    await db.insert(staffAssignments).values({
+      userId,
+      locationId: location.id,
+      role: "clinic_owner",
+      employmentType: "full_time",
+    });
+  } catch {
     return NextResponse.json({ error: "Failed to create staff assignment." }, { status: 500 });
   }
 
   // Seed no-PMS floor: default appointment type + forms
-  await seedNoPmsFloor(service, org.id);
+  await seedNoPmsFloor(org.id);
 
   // Seed platform demo form (hidden from clinic UI)
-  await seedPlatformDemoForm(service, org.id);
+  await seedPlatformDemoForm(org.id);
 
   // Seed default workflow templates
   try {
@@ -85,24 +90,26 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ org_id: org.id, location_id: location.id });
 }
 
-type ServiceClient = ReturnType<typeof createServiceClient>;
-
-async function seedNoPmsFloor(service: ServiceClient, orgId: string): Promise<void> {
+async function seedNoPmsFloor(orgId: string): Promise<void> {
   // Default appointment type
-  const { data: existing } = await service
-    .from("appointment_types")
-    .select("id")
-    .eq("org_id", orgId)
-    .eq("name", "Initial Consultation")
-    .maybeSingle();
+  const [existing] = await db
+    .select({ id: appointmentTypes.id })
+    .from(appointmentTypes)
+    .where(
+      and(
+        eq(appointmentTypes.orgId, orgId),
+        eq(appointmentTypes.name, "Initial Consultation"),
+      ),
+    )
+    .limit(1);
 
   if (!existing) {
-    await service.from("appointment_types").insert({
-      org_id: orgId,
+    await db.insert(appointmentTypes).values({
+      orgId,
       name: "Initial Consultation",
       modality: "telehealth",
-      duration_minutes: 30,
-      default_fee_cents: 0,
+      durationMinutes: 30,
+      defaultFeeCents: 0,
     });
   }
 
@@ -114,42 +121,40 @@ async function seedNoPmsFloor(service: ServiceClient, orgId: string): Promise<vo
   ];
 
   for (const form of defaultForms) {
-    const { data: existingForm } = await service
-      .from("forms")
-      .select("id")
-      .eq("org_id", orgId)
-      .eq("name", form.name)
-      .maybeSingle();
+    const [existingForm] = await db
+      .select({ id: formsT.id })
+      .from(formsT)
+      .where(and(eq(formsT.orgId, orgId), eq(formsT.name, form.name)))
+      .limit(1);
 
     if (!existingForm) {
-      await service.from("forms").insert({
-        org_id: orgId,
+      await db.insert(formsT).values({
+        orgId,
         name: form.name,
         description: form.description,
         status: "published",
-        is_platform_demo: false,
+        isPlatformDemo: false,
         schema: {},
       });
     }
   }
 }
 
-async function seedPlatformDemoForm(service: ServiceClient, orgId: string): Promise<void> {
-  const { data: existing } = await service
-    .from("forms")
-    .select("id")
-    .eq("org_id", orgId)
-    .eq("is_platform_demo", true)
-    .maybeSingle();
+async function seedPlatformDemoForm(orgId: string): Promise<void> {
+  const [existing] = await db
+    .select({ id: formsT.id })
+    .from(formsT)
+    .where(and(eq(formsT.orgId, orgId), eq(formsT.isPlatformDemo, true)))
+    .limit(1);
 
   if (existing) return;
 
-  await service.from("forms").insert({
-    org_id: orgId,
+  await db.insert(formsT).values({
+    orgId,
     name: "Coviu Demo Form",
     description: null,
     status: "published",
-    is_platform_demo: true,
+    isPlatformDemo: true,
     schema: DEMO_FORM_SCHEMA,
   });
 }

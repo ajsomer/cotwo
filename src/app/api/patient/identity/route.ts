@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServiceClient } from '@/lib/supabase/service';
+import { db } from '@/lib/db';
+import {
+  patients as patientsT,
+  patientPhoneNumbers,
+  sessionParticipants,
+  sessions as sessionsT,
+  appointments as appointmentsT,
+} from '@/lib/db/schema';
+import { eq } from 'drizzle-orm';
 import { resolveEntryTokenScope } from '@/lib/patient/entry-token';
 import { assertPatientInOrg } from '@/lib/auth/staff-access';
 import { normalisePhone } from '@/lib/phone/normalise';
@@ -32,9 +40,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid phone number' }, { status: 400 });
   }
 
-  const supabase = createServiceClient();
-
-  const scope = await resolveEntryTokenScope(supabase, token);
+  const scope = await resolveEntryTokenScope(token);
   if (!scope) {
     return NextResponse.json({ error: 'Invalid token' }, { status: 404 });
   }
@@ -45,7 +51,7 @@ export async function POST(request: NextRequest) {
 
   if (body.existing_patient_id) {
     // Mode 1: Confirm existing patient — must belong to the token's org.
-    if (!(await assertPatientInOrg(supabase, body.existing_patient_id, orgId))) {
+    if (!(await assertPatientInOrg(body.existing_patient_id, orgId))) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
     patientId = body.existing_patient_id;
@@ -57,18 +63,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'First name and last name are required' }, { status: 400 });
     }
 
-    const { data: patient, error: patientError } = await supabase
-      .from('patients')
-      .insert({
-        org_id: orgId,
-        first_name,
-        last_name,
-        date_of_birth: date_of_birth || null,
-      })
-      .select('id')
-      .single();
-
-    if (patientError) {
+    let patient: { id: string };
+    try {
+      [patient] = await db
+        .insert(patientsT)
+        .values({
+          orgId,
+          firstName: first_name,
+          lastName: last_name,
+          dateOfBirth: date_of_birth || null,
+        })
+        .returning({ id: patientsT.id });
+    } catch (patientError) {
       console.error('[IDENTITY] Failed to create patient:', patientError);
       return NextResponse.json({ error: 'Failed to create patient' }, { status: 500 });
     }
@@ -76,55 +82,55 @@ export async function POST(request: NextRequest) {
     patientId = patient.id;
 
     // Link phone number to new patient
-    await supabase.from('patient_phone_numbers').insert({
-      patient_id: patientId,
-      phone_number,
-      is_primary: true,
-      verified_at: new Date().toISOString(),
+    await db.insert(patientPhoneNumbers).values({
+      patientId,
+      phoneNumber: phone_number,
+      isPrimary: true,
+      verifiedAt: new Date().toISOString(),
     });
   }
 
   // Link patient to session (if the token resolved to one)
   if (sessionId) {
     // Remove any existing participant link first (idempotent)
-    await supabase
-      .from('session_participants')
-      .delete()
-      .eq('session_id', sessionId);
+    await db
+      .delete(sessionParticipants)
+      .where(eq(sessionParticipants.sessionId, sessionId));
 
-    const { error: linkError } = await supabase
-      .from('session_participants')
-      .insert({
-        session_id: sessionId,
-        patient_id: patientId,
+    try {
+      await db.insert(sessionParticipants).values({
+        sessionId,
+        patientId,
         role: 'patient',
       });
-
-    if (linkError) {
+    } catch (linkError) {
       console.error('[IDENTITY] Failed to link patient to session:', linkError);
     }
 
     // Also update the appointment's patient_id if it exists
-    const { data: session } = await supabase
-      .from('sessions')
-      .select('appointment_id')
-      .eq('id', sessionId)
-      .single();
+    const [session] = await db
+      .select({ appointment_id: sessionsT.appointmentId })
+      .from(sessionsT)
+      .where(eq(sessionsT.id, sessionId));
 
     if (session?.appointment_id) {
-      await supabase
-        .from('appointments')
-        .update({ patient_id: patientId })
-        .eq('id', session.appointment_id);
+      await db
+        .update(appointmentsT)
+        .set({ patientId })
+        .where(eq(appointmentsT.id, session.appointment_id));
     }
   }
 
   // Fetch the full patient for return
-  const { data: patient } = await supabase
-    .from('patients')
-    .select('id, first_name, last_name, date_of_birth')
-    .eq('id', patientId)
-    .single();
+  const [patient] = await db
+    .select({
+      id: patientsT.id,
+      first_name: patientsT.firstName,
+      last_name: patientsT.lastName,
+      date_of_birth: patientsT.dateOfBirth,
+    })
+    .from(patientsT)
+    .where(eq(patientsT.id, patientId));
 
   return NextResponse.json({ patient });
 }

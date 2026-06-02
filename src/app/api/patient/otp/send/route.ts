@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServiceClient } from '@/lib/supabase/service';
+import { db } from '@/lib/db';
+import { phoneVerifications } from '@/lib/db/schema';
+import { and, eq, gte, sql } from 'drizzle-orm';
 import { getSmsProvider } from '@/lib/sms';
 import { normalisePhone } from '@/lib/phone/normalise';
 
@@ -22,19 +24,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid phone number' }, { status: 400 });
   }
 
-  const supabase = createServiceClient();
-
   // Rate limit: count recent sends for this phone number (last 10 minutes)
   // Onboarding demo number is exempt — the test session creates a new patient
   // contact every time, so the same number gets exercised repeatedly during demos.
   const ONBOARDING_DEMO_NUMBER = '+61400000000';
   if (phone_number !== ONBOARDING_DEMO_NUMBER) {
     const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-    const { count } = await supabase
-      .from('phone_verifications')
-      .select('*', { count: 'exact', head: true })
-      .eq('phone_number', phone_number)
-      .gte('created_at', tenMinutesAgo);
+    const [{ count }] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(phoneVerifications)
+      .where(
+        and(
+          eq(phoneVerifications.phoneNumber, phone_number),
+          gte(phoneVerifications.createdAt, tenMinutesAgo)
+        )
+      );
 
     if ((count || 0) >= 3) {
       return NextResponse.json(
@@ -49,18 +53,18 @@ export async function POST(request: NextRequest) {
   const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
   // Store verification record
-  const { data: verification, error } = await supabase
-    .from('phone_verifications')
-    .insert({
-      phone_number,
-      code,
-      expires_at: expiresAt,
-      session_id: session_id || null,
-    })
-    .select('id')
-    .single();
-
-  if (error) {
+  let verification: { id: string };
+  try {
+    [verification] = await db
+      .insert(phoneVerifications)
+      .values({
+        phoneNumber: phone_number,
+        code,
+        expiresAt,
+        sessionId: session_id || null,
+      })
+      .returning({ id: phoneVerifications.id });
+  } catch (error) {
     console.error('[OTP] Failed to store verification:', error);
     return NextResponse.json({ error: 'Failed to send code' }, { status: 500 });
   }

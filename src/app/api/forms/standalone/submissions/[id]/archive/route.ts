@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import { formSubmissions, forms as formsT } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { assertStaffCanAccessSubmission } from "@/lib/auth/staff-access";
 import { broadcastOrgSubmissionChange } from "@/lib/realtime/broadcast";
 
@@ -23,17 +25,22 @@ export async function POST(
     return NextResponse.json({ error: "id required" }, { status: 400 });
   }
 
-  const supabase = createServiceClient();
-  const access = await assertStaffCanAccessSubmission(supabase, id);
+  const access = await assertStaffCanAccessSubmission(id);
   if (!access.ok) {
     return NextResponse.json({ error: "Not found" }, { status: access.status });
   }
 
-  const { data: submission } = await supabase
-    .from("form_submissions")
-    .select("id, form_id, submission_source, review_status, forms!inner(org_id)")
-    .eq("id", id)
-    .single();
+  const [submission] = await db
+    .select({
+      id: formSubmissions.id,
+      form_id: formSubmissions.formId,
+      submission_source: formSubmissions.submissionSource,
+      review_status: formSubmissions.reviewStatus,
+      form_org_id: formsT.orgId,
+    })
+    .from(formSubmissions)
+    .innerJoin(formsT, eq(formsT.id, formSubmissions.formId))
+    .where(eq(formSubmissions.id, id));
 
   if (!submission) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -57,16 +64,16 @@ export async function POST(
     );
   }
 
-  const { error: updateError } = await supabase
-    .from("form_submissions")
-    .update({
-      review_status: "archived",
-      reviewed_at: new Date().toISOString(),
-      reviewed_by: access.userId,
-    })
-    .eq("id", id);
-
-  if (updateError) {
+  try {
+    await db
+      .update(formSubmissions)
+      .set({
+        reviewStatus: "archived",
+        reviewedAt: new Date().toISOString(),
+        reviewedBy: access.userId,
+      })
+      .where(eq(formSubmissions.id, id));
+  } catch (updateError) {
     console.error("[standalone/archive] update error:", updateError);
     return NextResponse.json(
       { error: "Failed to update review status" },
@@ -74,11 +81,8 @@ export async function POST(
     );
   }
 
-  const form = Array.isArray(submission.forms)
-    ? submission.forms[0]
-    : submission.forms;
-  if (form?.org_id) {
-    await broadcastOrgSubmissionChange(form.org_id, "submission_archived", {
+  if (submission.form_org_id) {
+    await broadcastOrgSubmissionChange(submission.form_org_id, "submission_archived", {
       submission_id: id,
     });
   }

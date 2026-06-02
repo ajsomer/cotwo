@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  forms as formsT,
+  phoneVerifications,
+  patientPhoneNumbers,
+  patients as patientsT,
+  formSubmissions,
+} from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { broadcastOrgSubmissionChange } from "@/lib/realtime/broadcast";
 import {
   IDENTITY_QUESTION_NAME,
@@ -113,14 +121,15 @@ export async function POST(
     );
   }
 
-  const supabase = createServiceClient();
-
   // 1. Resolve form by public token and re-enforce publish state.
-  const { data: form } = await supabase
-    .from("forms")
-    .select("id, status, org_id")
-    .eq("public_token", public_token)
-    .maybeSingle();
+  const [form] = await db
+    .select({
+      id: formsT.id,
+      status: formsT.status,
+      org_id: formsT.orgId,
+    })
+    .from(formsT)
+    .where(eq(formsT.publicToken, public_token));
 
   if (!form) {
     return NextResponse.json({}, { status: 404 });
@@ -131,11 +140,14 @@ export async function POST(
   }
 
   // 2. Verify the OTP record and pull the verified phone.
-  const { data: verification } = await supabase
-    .from("phone_verifications")
-    .select("phone_number, verified_at, expires_at")
-    .eq("id", verification_id)
-    .maybeSingle();
+  const [verification] = await db
+    .select({
+      phone_number: phoneVerifications.phoneNumber,
+      verified_at: phoneVerifications.verifiedAt,
+      expires_at: phoneVerifications.expiresAt,
+    })
+    .from(phoneVerifications)
+    .where(eq(phoneVerifications.id, verification_id));
 
   if (!verification || !verification.verified_at) {
     return NextResponse.json(
@@ -158,38 +170,19 @@ export async function POST(
 
   // 3. Server-resolve the OTP match set for this phone at the form's org.
   // Do NOT trust any match set sent by the client.
-  const { data: phoneMatches } = await supabase
-    .from("patient_phone_numbers")
-    .select("patient_id, patients!inner(id, first_name, last_name, date_of_birth, org_id)")
-    .eq("phone_number", verifiedPhone);
-
-  type PhoneMatch = {
-    patient_id: string;
-    patients:
-      | {
-          id: string;
-          first_name: string;
-          last_name: string;
-          date_of_birth: string | null;
-          org_id: string;
-        }
-      | {
-          id: string;
-          first_name: string;
-          last_name: string;
-          date_of_birth: string | null;
-          org_id: string;
-        }[]
-      | null;
-  };
-
-  const matchSet = ((phoneMatches as PhoneMatch[] | null) ?? [])
-    .map((row) => {
-      const p = row.patients;
-      const patient = Array.isArray(p) ? p[0] : p;
-      return patient;
+  const phoneMatches = await db
+    .select({
+      id: patientsT.id,
+      first_name: patientsT.firstName,
+      last_name: patientsT.lastName,
+      date_of_birth: patientsT.dateOfBirth,
+      org_id: patientsT.orgId,
     })
-    .filter((p): p is NonNullable<typeof p> => !!p && p.org_id === form.org_id);
+    .from(patientPhoneNumbers)
+    .innerJoin(patientsT, eq(patientsT.id, patientPhoneNumbers.patientId))
+    .where(eq(patientPhoneNumbers.phoneNumber, verifiedPhone));
+
+  const matchSet = phoneMatches.filter((p) => p.org_id === form.org_id);
 
   // 4. Validate patient_selection against the server-resolved match set,
   //    then resolve to a patient_id (creating a new patient if needed).
@@ -249,18 +242,18 @@ export async function POST(
       };
     }
 
-    const { data: newPatient, error: insertErr } = await supabase
-      .from("patients")
-      .insert({
-        org_id: form.org_id,
-        first_name: v.value.first_name,
-        last_name: v.value.last_name,
-        date_of_birth: v.value.date_of_birth,
-      })
-      .select("id")
-      .single();
-
-    if (!newPatient || insertErr) {
+    let newPatient;
+    try {
+      [newPatient] = await db
+        .insert(patientsT)
+        .values({
+          orgId: form.org_id,
+          firstName: v.value.first_name,
+          lastName: v.value.last_name,
+          dateOfBirth: v.value.date_of_birth,
+        })
+        .returning({ id: patientsT.id });
+    } catch (insertErr) {
       console.error(
         "[standalone-forms] someone_else patient insert failed:",
         insertErr,
@@ -273,10 +266,10 @@ export async function POST(
     resolvedPatientId = newPatient.id;
     resolutionKind = "someone_else";
 
-    await supabase.from("patient_phone_numbers").insert({
-      patient_id: resolvedPatientId,
-      phone_number: verifiedPhone,
-      verified_at: new Date().toISOString(),
+    await db.insert(patientPhoneNumbers).values({
+      patientId: resolvedPatientId,
+      phoneNumber: verifiedPhone,
+      verifiedAt: new Date().toISOString(),
     });
   } else if (patient_selection.kind === "new") {
     if (matchSet.length > 0) {
@@ -294,18 +287,18 @@ export async function POST(
     }
     snapshotIdentity = v.value;
 
-    const { data: newPatient, error: insertErr } = await supabase
-      .from("patients")
-      .insert({
-        org_id: form.org_id,
-        first_name: v.value.first_name,
-        last_name: v.value.last_name,
-        date_of_birth: v.value.date_of_birth,
-      })
-      .select("id")
-      .single();
-
-    if (!newPatient || insertErr) {
+    let newPatient;
+    try {
+      [newPatient] = await db
+        .insert(patientsT)
+        .values({
+          orgId: form.org_id,
+          firstName: v.value.first_name,
+          lastName: v.value.last_name,
+          dateOfBirth: v.value.date_of_birth,
+        })
+        .returning({ id: patientsT.id });
+    } catch (insertErr) {
       console.error(
         "[standalone-forms] new patient insert failed:",
         insertErr,
@@ -318,10 +311,10 @@ export async function POST(
     resolvedPatientId = newPatient.id;
     resolutionKind = "new";
 
-    await supabase.from("patient_phone_numbers").insert({
-      patient_id: resolvedPatientId,
-      phone_number: verifiedPhone,
-      verified_at: new Date().toISOString(),
+    await db.insert(patientPhoneNumbers).values({
+      patientId: resolvedPatientId,
+      phoneNumber: verifiedPhone,
+      verifiedAt: new Date().toISOString(),
     });
   } else {
     return NextResponse.json(
@@ -360,20 +353,20 @@ export async function POST(
   const submissionSource = sanitizeSource(source);
 
   // 7. Insert the submission.
-  const { data: submission, error: subErr } = await supabase
-    .from("form_submissions")
-    .insert({
-      form_id: form.id,
-      patient_id: resolvedPatientId,
-      appointment_id: null,
-      responses: finalResponses,
-      submission_source: submissionSource,
-      review_status: "pending",
-    })
-    .select("id")
-    .single();
-
-  if (!submission || subErr) {
+  let submission;
+  try {
+    [submission] = await db
+      .insert(formSubmissions)
+      .values({
+        formId: form.id,
+        patientId: resolvedPatientId,
+        appointmentId: null,
+        responses: finalResponses,
+        submissionSource: submissionSource,
+        reviewStatus: "pending",
+      })
+      .returning({ id: formSubmissions.id });
+  } catch (subErr) {
     console.error("[standalone-forms] submission insert failed:", subErr);
     return NextResponse.json(
       { error: "Failed to save submission" },

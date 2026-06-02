@@ -1,6 +1,45 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  workflowTemplates,
+  workflowActionBlocks,
+  appointmentWorkflowRuns,
+  appointmentActions,
+} from "@/lib/db/schema";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { requireStaffCanAccessWorkflowTemplate } from "@/lib/auth/staff-access";
+
+// Column projections that alias Drizzle's camelCase fields back to the
+// snake_case shape the UI consumes (byte-identical to the old supabase `*`).
+const templateColumns = {
+  id: workflowTemplates.id,
+  org_id: workflowTemplates.orgId,
+  name: workflowTemplates.name,
+  description: workflowTemplates.description,
+  direction: workflowTemplates.direction,
+  status: workflowTemplates.status,
+  terminal_type: workflowTemplates.terminalType,
+  at_risk_after_days: workflowTemplates.atRiskAfterDays,
+  overdue_after_days: workflowTemplates.overdueAfterDays,
+  created_at: workflowTemplates.createdAt,
+  updated_at: workflowTemplates.updatedAt,
+};
+
+const blockColumns = {
+  id: workflowActionBlocks.id,
+  template_id: workflowActionBlocks.templateId,
+  action_type: workflowActionBlocks.actionType,
+  offset_minutes: workflowActionBlocks.offsetMinutes,
+  offset_direction: workflowActionBlocks.offsetDirection,
+  modality_filter: workflowActionBlocks.modalityFilter,
+  form_id: workflowActionBlocks.formId,
+  config: workflowActionBlocks.config,
+  sort_order: workflowActionBlocks.sortOrder,
+  precondition: workflowActionBlocks.precondition,
+  parent_action_block_id: workflowActionBlocks.parentActionBlockId,
+  created_at: workflowActionBlocks.createdAt,
+  updated_at: workflowActionBlocks.updatedAt,
+};
 
 // GET /api/workflows/[id]
 // Returns a single workflow template with all its action blocks.
@@ -10,8 +49,7 @@ export async function GET(
 ) {
   const { id } = await params;
 
-  const supabase = createServiceClient();
-  const access = await requireStaffCanAccessWorkflowTemplate(supabase, id);
+  const access = await requireStaffCanAccessWorkflowTemplate(id);
   if (!access.ok) {
     return NextResponse.json(
       { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -20,33 +58,26 @@ export async function GET(
   }
 
   try {
-    const { data: template, error: templateError } = await supabase
-      .from("workflow_templates")
-      .select("*")
-      .eq("id", id)
-      .single();
+    const [template] = await db
+      .select(templateColumns)
+      .from(workflowTemplates)
+      .where(eq(workflowTemplates.id, id))
+      .limit(1);
 
-    if (templateError || !template) {
+    if (!template) {
       return NextResponse.json(
         { error: "Workflow template not found" },
         { status: 404 }
       );
     }
 
-    const { data: blocks, error: blocksError } = await supabase
-      .from("workflow_action_blocks")
-      .select("*")
-      .eq("template_id", id)
-      .order("sort_order");
+    const blocks = await db
+      .select(blockColumns)
+      .from(workflowActionBlocks)
+      .where(eq(workflowActionBlocks.templateId, id))
+      .orderBy(asc(workflowActionBlocks.sortOrder));
 
-    if (blocksError) {
-      return NextResponse.json(
-        { error: blocksError.message },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json({ template, blocks: blocks ?? [] });
+    return NextResponse.json({ template, blocks });
   } catch (err) {
     console.error("[WORKFLOWS] GET error:", err);
     return NextResponse.json(
@@ -68,7 +99,11 @@ export async function PATCH(
     const body = await request.json();
     const { name, description, status } = body;
 
-    const updates: Record<string, unknown> = {};
+    const updates: Partial<{
+      name: string;
+      description: string;
+      status: typeof workflowTemplates.$inferInsert.status;
+    }> = {};
     if (name !== undefined) updates.name = name;
     if (description !== undefined) updates.description = description;
     if (status !== undefined) updates.status = status;
@@ -80,8 +115,7 @@ export async function PATCH(
       );
     }
 
-    const supabase = createServiceClient();
-    const access = await requireStaffCanAccessWorkflowTemplate(supabase, id);
+    const access = await requireStaffCanAccessWorkflowTemplate(id);
     if (!access.ok) {
       return NextResponse.json(
         { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -89,14 +123,10 @@ export async function PATCH(
       );
     }
 
-    const { error } = await supabase
-      .from("workflow_templates")
-      .update(updates)
-      .eq("id", id);
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+    await db
+      .update(workflowTemplates)
+      .set(updates)
+      .where(eq(workflowTemplates.id, id));
 
     return NextResponse.json({ success: true });
   } catch (err) {
@@ -121,8 +151,7 @@ export async function DELETE(
   const { id } = await params;
   const force = request.nextUrl.searchParams.get("force") === "true";
 
-  const supabase = createServiceClient();
-  const access = await requireStaffCanAccessWorkflowTemplate(supabase, id);
+  const access = await requireStaffCanAccessWorkflowTemplate(id);
   if (!access.ok) {
     return NextResponse.json(
       { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -132,13 +161,17 @@ export async function DELETE(
 
   try {
     // Check for active in-flight runs
-    const { data: activeRuns } = await supabase
-      .from("appointment_workflow_runs")
-      .select("id")
-      .eq("workflow_template_id", id)
-      .eq("status", "active");
+    const activeRuns = await db
+      .select({ id: appointmentWorkflowRuns.id })
+      .from(appointmentWorkflowRuns)
+      .where(
+        and(
+          eq(appointmentWorkflowRuns.workflowTemplateId, id),
+          eq(appointmentWorkflowRuns.status, "active")
+        )
+      );
 
-    const inFlightCount = activeRuns?.length ?? 0;
+    const inFlightCount = activeRuns.length;
 
     if (inFlightCount > 0 && !force) {
       return NextResponse.json(
@@ -152,31 +185,28 @@ export async function DELETE(
 
     // If force: cancel active runs and their scheduled actions
     if (inFlightCount > 0) {
-      const runIds = activeRuns!.map((r) => r.id);
+      const runIds = activeRuns.map((r) => r.id);
 
       // Cancel scheduled actions on those runs
-      await supabase
-        .from("appointment_actions")
-        .update({ status: "cancelled" })
-        .in("workflow_run_id", runIds)
-        .eq("status", "scheduled");
+      await db
+        .update(appointmentActions)
+        .set({ status: "cancelled" })
+        .where(
+          and(
+            inArray(appointmentActions.workflowRunId, runIds),
+            eq(appointmentActions.status, "scheduled")
+          )
+        );
 
       // Cancel the runs themselves
-      await supabase
-        .from("appointment_workflow_runs")
-        .update({ status: "cancelled", completed_at: new Date().toISOString() })
-        .in("id", runIds);
+      await db
+        .update(appointmentWorkflowRuns)
+        .set({ status: "cancelled", completedAt: new Date().toISOString() })
+        .where(inArray(appointmentWorkflowRuns.id, runIds));
     }
 
     // Delete the template (cascades to workflow_action_blocks and type_workflow_links)
-    const { error } = await supabase
-      .from("workflow_templates")
-      .delete()
-      .eq("id", id);
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+    await db.delete(workflowTemplates).where(eq(workflowTemplates.id, id));
 
     return NextResponse.json({ success: true });
   } catch (err) {

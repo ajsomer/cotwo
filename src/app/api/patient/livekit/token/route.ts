@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  sessions as sessionsT,
+  sessionParticipants,
+  patients as patientsT,
+} from "@/lib/db/schema";
+import { eq, asc } from "drizzle-orm";
 import { generateAccessToken } from "@/lib/livekit/tokens";
 
 /**
@@ -21,22 +27,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "entryToken required" }, { status: 400 });
   }
 
-  const supabase = createServiceClient();
+  const [session] = await db
+    .select({ id: sessionsT.id, status: sessionsT.status })
+    .from(sessionsT)
+    .where(eq(sessionsT.entryToken, entryToken))
+    .limit(1);
 
-  const { data: session, error: sessionError } = await supabase
-    .from("sessions")
-    .select(
-      `
-      id, status,
-      session_participants(
-        patients(id, first_name, last_name)
-      )
-    `
-    )
-    .eq("entry_token", entryToken)
-    .single();
-
-  if (sessionError || !session) {
+  if (!session) {
     return NextResponse.json({ error: "Session not found" }, { status: 404 });
   }
 
@@ -55,15 +52,17 @@ export async function POST(request: NextRequest) {
   }
 
   // Resolve patient display name (first participant; MVP assumes single patient).
-  // Supabase types the joined relation as an array even for singular FKs.
-  const participants = (session.session_participants ?? []) as unknown as Array<{
-    patients:
-      | { id: string; first_name: string; last_name: string }
-      | { id: string; first_name: string; last_name: string }[]
-      | null;
-  }>;
-  const raw = participants[0]?.patients ?? null;
-  const patient = Array.isArray(raw) ? (raw[0] ?? null) : raw;
+  const [patient] = await db
+    .select({
+      id: patientsT.id,
+      first_name: patientsT.firstName,
+      last_name: patientsT.lastName,
+    })
+    .from(sessionParticipants)
+    .innerJoin(patientsT, eq(patientsT.id, sessionParticipants.patientId))
+    .where(eq(sessionParticipants.sessionId, session.id))
+    .orderBy(asc(sessionParticipants.createdAt))
+    .limit(1);
 
   const identity = patient ? `patient-${patient.id}` : `patient-session-${session.id}`;
   const displayName = patient

@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  formSubmissions,
+  forms as formsT,
+  patients as patientsT,
+  staffAssignments,
+  locations,
+} from "@/lib/db/schema";
+import { and, desc, eq, ne } from "drizzle-orm";
 import { requireAuthenticatedUser } from "@/lib/auth/staff-access";
 
 /**
@@ -28,26 +36,16 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
   }
 
-  const supabase = createServiceClient();
-
   // Org membership check: the user must have at least one staff_assignment
   // at a location in this org.
-  const { data: assignments } = await supabase
-    .from("staff_assignments")
-    .select("locations!inner(org_id)")
-    .eq("user_id", auth.userId);
+  const assignments = await db
+    .select({ org_id: locations.orgId })
+    .from(staffAssignments)
+    .innerJoin(locations, eq(locations.id, staffAssignments.locationId))
+    .where(eq(staffAssignments.userId, auth.userId));
 
   const userOrgIds = new Set(
-    (assignments ?? [])
-      .map((a) => {
-        const loc = a.locations as
-          | { org_id: string }
-          | { org_id: string }[]
-          | null;
-        if (Array.isArray(loc)) return loc[0]?.org_id;
-        return loc?.org_id;
-      })
-      .filter((id): id is string => !!id),
+    assignments.map((a) => a.org_id).filter((id): id is string => !!id),
   );
   if (!userOrgIds.has(orgId)) {
     return NextResponse.json({ submissions: [] });
@@ -55,48 +53,44 @@ export async function GET(request: NextRequest) {
 
   // Pull standalone submissions joined to the form (for the form name + org
   // scope) and the patient (for the display name in the inbox row).
-  const { data, error } = await supabase
-    .from("form_submissions")
-    .select(
-      `
-      id,
-      form_id,
-      patient_id,
-      submission_source,
-      review_status,
-      responses,
-      created_at,
-      forms!inner(id, name, org_id),
-      patients!inner(id, first_name, last_name)
-    `,
-    )
-    .neq("submission_source", "entry_flow")
-    .eq("review_status", status)
-    .eq("forms.org_id", orgId)
-    .order("created_at", { ascending: false })
-    .limit(100);
-
-  if (error) {
+  let data;
+  try {
+    data = await db
+      .select({
+        id: formSubmissions.id,
+        form_id: formSubmissions.formId,
+        patient_id: formSubmissions.patientId,
+        submission_source: formSubmissions.submissionSource,
+        review_status: formSubmissions.reviewStatus,
+        responses: formSubmissions.responses,
+        created_at: formSubmissions.createdAt,
+        form_name: formsT.name,
+        patient_first_name: patientsT.firstName,
+        patient_last_name: patientsT.lastName,
+      })
+      .from(formSubmissions)
+      .innerJoin(formsT, eq(formsT.id, formSubmissions.formId))
+      .innerJoin(patientsT, eq(patientsT.id, formSubmissions.patientId))
+      .where(
+        and(
+          ne(formSubmissions.submissionSource, "entry_flow"),
+          eq(formSubmissions.reviewStatus, status),
+          eq(formsT.orgId, orgId),
+        ),
+      )
+      .orderBy(desc(formSubmissions.createdAt))
+      .limit(100);
+  } catch (error) {
     console.error("[standalone-submissions] list error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Internal server error" },
+      { status: 500 },
+    );
   }
 
-  type Row = {
-    id: string;
-    form_id: string;
-    patient_id: string;
-    submission_source: string;
-    review_status: string;
-    responses: Record<string, unknown> | null;
-    created_at: string;
-    forms: { id: string; name: string; org_id: string } | { id: string; name: string; org_id: string }[];
-    patients: { id: string; first_name: string; last_name: string } | { id: string; first_name: string; last_name: string }[];
-  };
-
-  const submissions = (data as Row[] | null ?? []).map((r) => {
-    const form = Array.isArray(r.forms) ? r.forms[0] : r.forms;
-    const patient = Array.isArray(r.patients) ? r.patients[0] : r.patients;
-    const serverMeta = (r.responses?.__server_meta ?? null) as {
+  const submissions = data.map((r) => {
+    const responses = r.responses as Record<string, unknown> | null;
+    const serverMeta = (responses?.__server_meta ?? null) as {
       duplicate_suspected?: boolean;
       possible_duplicate_patient_id?: string;
       possible_duplicate_patient_name?: string;
@@ -105,15 +99,13 @@ export async function GET(request: NextRequest) {
     return {
       id: r.id,
       form_id: r.form_id,
-      form_name: form?.name ?? "Form",
+      form_name: r.form_name ?? "Form",
       patient_id: r.patient_id,
-      patient_name: patient
-        ? `${patient.first_name} ${patient.last_name}`
-        : "Unknown patient",
+      patient_name: `${r.patient_first_name} ${r.patient_last_name}`,
       // Carry first/last separately (not split from the display string) so the
       // contact card can build a real PatientSeed.
-      patient_first_name: patient?.first_name ?? "",
-      patient_last_name: patient?.last_name ?? "",
+      patient_first_name: r.patient_first_name ?? "",
+      patient_last_name: r.patient_last_name ?? "",
       submission_source: r.submission_source,
       review_status: r.review_status,
       duplicate: serverMeta?.duplicate_suspected

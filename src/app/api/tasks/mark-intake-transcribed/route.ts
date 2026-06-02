@@ -1,10 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  appointmentActions,
+  workflowActionBlocks,
+  appointments as appointmentsT,
+} from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { broadcastReadinessChange } from "@/lib/realtime/broadcast";
 import { requireStaffCanAccessAppointment } from "@/lib/auth/staff-access";
 
 /**
- * POST /api/readiness/mark-intake-transcribed
+ * POST /api/tasks/mark-intake-transcribed
  *
  * Marks an intake_package appointment_action as transcribed after the
  * receptionist or practice manager has copied the package contents (forms,
@@ -24,15 +30,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "action_id required" }, { status: 400 });
     }
 
-    const supabase = createServiceClient();
+    const [action] = await db
+      .select({
+        id: appointmentActions.id,
+        status: appointmentActions.status,
+        action_block_id: appointmentActions.actionBlockId,
+        appointment_id: appointmentActions.appointmentId,
+      })
+      .from(appointmentActions)
+      .where(eq(appointmentActions.id, action_id))
+      .limit(1);
 
-    const { data: action, error: fetchError } = await supabase
-      .from("appointment_actions")
-      .select("id, status, action_block_id, appointment_id")
-      .eq("id", action_id)
-      .single();
-
-    if (fetchError || !action) {
+    if (!action) {
       return NextResponse.json({ error: "Action not found" }, { status: 404 });
     }
 
@@ -41,7 +50,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
     const access = await requireStaffCanAccessAppointment(
-      supabase,
       action.appointment_id,
     );
     if (!access.ok) {
@@ -61,11 +69,11 @@ export async function POST(request: NextRequest) {
     // Verify the action is an intake_package (defence-in-depth — the panel
     // only opens for intake_package actions but a misuse of the endpoint
     // shouldn't be able to flip an unrelated action).
-    const { data: block } = await supabase
-      .from("workflow_action_blocks")
-      .select("action_type")
-      .eq("id", action.action_block_id)
-      .single();
+    const [block] = await db
+      .select({ action_type: workflowActionBlocks.actionType })
+      .from(workflowActionBlocks)
+      .where(eq(workflowActionBlocks.id, action.action_block_id))
+      .limit(1);
 
     if (!block || block.action_type !== "intake_package") {
       return NextResponse.json(
@@ -74,23 +82,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { error: updateError } = await supabase
-      .from("appointment_actions")
-      .update({ status: "transcribed" })
-      .eq("id", action_id);
-
-    if (updateError) {
-      console.error("[mark-intake-transcribed] Update error:", updateError);
-      return NextResponse.json({ error: "Failed to update action status" }, { status: 500 });
-    }
+    await db
+      .update(appointmentActions)
+      .set({ status: "transcribed" })
+      .where(eq(appointmentActions.id, action_id));
 
     // Notify the readiness dashboard at this appointment's location.
     if (action.appointment_id) {
-      const { data: appt } = await supabase
-        .from("appointments")
-        .select("location_id")
-        .eq("id", action.appointment_id)
-        .maybeSingle();
+      const [appt] = await db
+        .select({ location_id: appointmentsT.locationId })
+        .from(appointmentsT)
+        .where(eq(appointmentsT.id, action.appointment_id))
+        .limit(1);
       if (appt?.location_id) {
         await broadcastReadinessChange(appt.location_id, "action_resolved", {
           appointment_id: action.appointment_id,

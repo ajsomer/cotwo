@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServiceClient } from '@/lib/supabase/service';
 import { getOutstandingJourneysForPatient } from '@/lib/intake/outstanding';
 import { resolveEntryTokenScope } from '@/lib/patient/entry-token';
 import { assertPatientInOrg } from '@/lib/auth/staff-access';
@@ -26,13 +25,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const service = createServiceClient();
-    const scope = await resolveEntryTokenScope(service, token);
+    const scope = await resolveEntryTokenScope(token);
     if (!scope) {
       return NextResponse.json({ error: 'Invalid token' }, { status: 404 });
     }
 
-    if (!(await assertPatientInOrg(service, patientId, scope.orgId))) {
+    if (!(await assertPatientInOrg(patientId, scope.orgId))) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
 

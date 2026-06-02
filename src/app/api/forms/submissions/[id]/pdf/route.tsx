@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Document, Page, Text, View, StyleSheet, Image, renderToBuffer } from "@react-pdf/renderer";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  formSubmissions,
+  forms as formsT,
+  formAssignments,
+  patients as patientsT,
+  organisations,
+} from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import {
   assertStaffCanAccessPatient,
   requireAuthenticatedUser,
@@ -26,70 +34,83 @@ export async function GET(
     return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
   }
 
-  const supabase = createServiceClient();
+  const [submission] = await db
+    .select({
+      id: formSubmissions.id,
+      form_id: formSubmissions.formId,
+      patient_id: formSubmissions.patientId,
+      appointment_id: formSubmissions.appointmentId,
+      responses: formSubmissions.responses,
+      created_at: formSubmissions.createdAt,
+    })
+    .from(formSubmissions)
+    .where(eq(formSubmissions.id, id));
 
-  const { data: submission, error } = await supabase
-    .from("form_submissions")
-    .select("id, form_id, patient_id, appointment_id, responses, created_at")
-    .eq("id", id)
-    .single();
-
-  if (error || !submission) {
+  if (!submission) {
     return NextResponse.json({ error: "Submission not found" }, { status: 404 });
   }
 
-  const access = await assertStaffCanAccessPatient(supabase, submission.patient_id);
+  const access = await assertStaffCanAccessPatient(submission.patient_id);
   if (!access.ok) {
     // 404 on the org-mismatch case — no existence leak.
     return NextResponse.json({ error: "Submission not found" }, { status: 404 });
   }
 
-  const [formRes, assignmentRes, patientRes, orgRes] = await Promise.all([
-    supabase.from("forms").select("name, schema").eq("id", submission.form_id).single(),
-    supabase
-      .from("form_assignments")
-      .select("schema_snapshot, completed_at")
-      .eq("submission_id", id)
-      .maybeSingle(),
-    supabase
-      .from("patients")
-      .select("first_name, last_name, date_of_birth, org_id")
-      .eq("id", submission.patient_id)
-      .single(),
-    (async () => {
-      const { data: p } = await supabase
-        .from("patients")
-        .select("org_id")
-        .eq("id", submission.patient_id)
-        .single();
-      if (!p?.org_id) return { data: null };
-      return supabase
-        .from("organisations")
-        .select("name, logo_url")
-        .eq("id", p.org_id)
-        .single();
-    })(),
+  const [formRes, assignmentRes, patientRes] = await Promise.all([
+    db
+      .select({ name: formsT.name, schema: formsT.schema })
+      .from(formsT)
+      .where(eq(formsT.id, submission.form_id)),
+    db
+      .select({
+        schema_snapshot: formAssignments.schemaSnapshot,
+        completed_at: formAssignments.completedAt,
+      })
+      .from(formAssignments)
+      .where(eq(formAssignments.submissionId, id)),
+    db
+      .select({
+        first_name: patientsT.firstName,
+        last_name: patientsT.lastName,
+        date_of_birth: patientsT.dateOfBirth,
+        org_id: patientsT.orgId,
+      })
+      .from(patientsT)
+      .where(eq(patientsT.id, submission.patient_id)),
   ]);
+
+  const form = formRes[0];
+  const assignment = assignmentRes[0];
+  const patient = patientRes[0];
+
+  let org: { name: string; logo_url: string | null } | null = null;
+  if (patient?.org_id) {
+    const [orgRow] = await db
+      .select({ name: organisations.name, logo_url: organisations.logoUrl })
+      .from(organisations)
+      .where(eq(organisations.id, patient.org_id));
+    org = orgRow ?? null;
+  }
 
   // Schema source: prefer assignment-level snapshot (taken at send time),
   // fall back to forms.schema (current published schema) for intake-package
   // submissions which have no assignment row.
-  const snapshot = assignmentRes.data?.schema_snapshot as SchemaRoot | null | undefined;
-  const fallbackSchema = (formRes.data?.schema as SchemaRoot | null | undefined) ?? null;
+  const snapshot = assignment?.schema_snapshot as SchemaRoot | null | undefined;
+  const fallbackSchema = (form?.schema as SchemaRoot | null | undefined) ?? null;
   const schema = snapshot ?? fallbackSchema ?? null;
   const usedFallbackSchema = !snapshot && !!fallbackSchema;
 
   const responses = (submission.responses as Record<string, unknown>) ?? {};
   const questions = normaliseQuestions(schema, responses);
 
-  const completedAt = assignmentRes.data?.completed_at ?? submission.created_at;
-  const formName = formRes.data?.name ?? "Form";
-  const patientName = patientRes.data
-    ? `${patientRes.data.first_name} ${patientRes.data.last_name}`
+  const completedAt = assignment?.completed_at ?? submission.created_at;
+  const formName = form?.name ?? "Form";
+  const patientName = patient
+    ? `${patient.first_name} ${patient.last_name}`
     : "Patient";
-  const dob = patientRes.data?.date_of_birth ?? null;
-  const orgName = orgRes.data?.name ?? null;
-  const orgLogoUrl = orgRes.data?.logo_url ?? null;
+  const dob = patient?.date_of_birth ?? null;
+  const orgName = org?.name ?? null;
+  const orgLogoUrl = org?.logo_url ?? null;
 
   const buffer = await renderToBuffer(
     <SubmissionPdf

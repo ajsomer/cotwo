@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import { forms as formsT, organisations } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 
 /**
  * GET /api/forms/standalone/[public_token]
@@ -31,23 +33,26 @@ export async function GET(
     return NextResponse.json({}, { status: 404 });
   }
 
-  const supabase = createServiceClient();
-
-  const { data: form } = await supabase
-    .from("forms")
-    .select("id, name, description, schema, status, org_id")
-    .eq("public_token", public_token)
-    .maybeSingle();
+  const [form] = await db
+    .select({
+      id: formsT.id,
+      name: formsT.name,
+      description: formsT.description,
+      schema: formsT.schema,
+      status: formsT.status,
+      org_id: formsT.orgId,
+    })
+    .from(formsT)
+    .where(eq(formsT.publicToken, public_token));
 
   if (!form) {
     return NextResponse.json({}, { status: 404 });
   }
 
-  const { data: org } = await supabase
-    .from("organisations")
-    .select("name, logo_url")
-    .eq("id", form.org_id)
-    .single();
+  const [org] = await db
+    .select({ name: organisations.name, logo_url: organisations.logoUrl })
+    .from(organisations)
+    .where(eq(organisations.id, form.org_id));
 
   const orgPayload = org
     ? { name: org.name as string, logo_url: org.logo_url as string | null }

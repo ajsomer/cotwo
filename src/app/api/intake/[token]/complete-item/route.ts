@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServiceClient } from '@/lib/supabase/service';
+import { db } from '@/lib/db';
+import {
+  intakePackageJourneys,
+  formSubmissions,
+  appointmentActions,
+  workflowActionBlocks,
+  appointments as appointmentsT,
+} from '@/lib/db/schema';
+import { eq, inArray } from 'drizzle-orm';
 import { broadcastReadinessChange, broadcastSessionChange } from '@/lib/realtime/broadcast';
 import { fireActionNow } from '@/lib/workflows/engine';
 import { getBaseUrl } from '@/lib/utils/url';
@@ -31,19 +39,29 @@ export async function POST(
     return NextResponse.json({ error: 'item_type is required' }, { status: 400 });
   }
 
-  const supabase = createServiceClient();
+  let journey;
+  try {
+    [journey] = await db
+      .select({
+        id: intakePackageJourneys.id,
+        appointment_id: intakePackageJourneys.appointmentId,
+        patient_id: intakePackageJourneys.patientId,
+        status: intakePackageJourneys.status,
+        includes_card_capture: intakePackageJourneys.includesCardCapture,
+        includes_consent: intakePackageJourneys.includesConsent,
+        form_ids: intakePackageJourneys.formIds,
+        card_captured_at: intakePackageJourneys.cardCapturedAt,
+        consent_completed_at: intakePackageJourneys.consentCompletedAt,
+        forms_completed: intakePackageJourneys.formsCompleted,
+      })
+      .from(intakePackageJourneys)
+      .where(eq(intakePackageJourneys.journeyToken, token))
+      .limit(1);
+  } catch {
+    journey = undefined;
+  }
 
-  const { data: journey, error: journeyErr } = await supabase
-    .from('intake_package_journeys')
-    .select(
-      `id, appointment_id, patient_id, status,
-       includes_card_capture, includes_consent, form_ids,
-       card_captured_at, consent_completed_at, forms_completed`
-    )
-    .eq('journey_token', token)
-    .single();
-
-  if (journeyErr || !journey) {
+  if (!journey) {
     return NextResponse.json({ error: 'Journey not found' }, { status: 404 });
   }
 
@@ -58,9 +76,9 @@ export async function POST(
   const updates: Record<string, unknown> = {};
 
   if (item_type === 'card') {
-    updates.card_captured_at = now;
+    updates.cardCapturedAt = now;
   } else if (item_type === 'consent') {
-    updates.consent_completed_at = now;
+    updates.consentCompletedAt = now;
   } else if (item_type === 'form') {
     if (!form_id) {
       return NextResponse.json(
@@ -71,14 +89,14 @@ export async function POST(
 
     // Record the form completion timestamp in the JSONB map
     const existing = (journey.forms_completed as Record<string, string>) ?? {};
-    updates.forms_completed = { ...existing, [form_id]: now };
+    updates.formsCompleted = { ...existing, [form_id]: now };
 
     // Create form_submissions row so the clinic sees the answers (best-effort)
     if (journey.patient_id && data) {
-      await supabase.from('form_submissions').insert({
-        form_id,
-        patient_id: journey.patient_id,
-        appointment_id: journey.appointment_id,
+      await db.insert(formSubmissions).values({
+        formId: form_id,
+        patientId: journey.patient_id,
+        appointmentId: journey.appointment_id,
         responses: data,
       });
     }
@@ -89,18 +107,29 @@ export async function POST(
     );
   }
 
-  const { data: updated, error: updateErr } = await supabase
-    .from('intake_package_journeys')
-    .update(updates)
-    .eq('id', journey.id)
-    .select(
-      `id, status, card_captured_at, consent_completed_at, forms_completed,
-       includes_card_capture, includes_consent, form_ids`
-    )
-    .single();
-
-  if (updateErr || !updated) {
+  let updated;
+  try {
+    [updated] = await db
+      .update(intakePackageJourneys)
+      .set(updates)
+      .where(eq(intakePackageJourneys.id, journey.id))
+      .returning({
+        id: intakePackageJourneys.id,
+        status: intakePackageJourneys.status,
+        card_captured_at: intakePackageJourneys.cardCapturedAt,
+        consent_completed_at: intakePackageJourneys.consentCompletedAt,
+        forms_completed: intakePackageJourneys.formsCompleted,
+        includes_card_capture: intakePackageJourneys.includesCardCapture,
+        includes_consent: intakePackageJourneys.includesConsent,
+        form_ids: intakePackageJourneys.formIds,
+      });
+  } catch (updateErr) {
     console.error('[INTAKE COMPLETE-ITEM] update failed:', updateErr);
+    return NextResponse.json({ error: 'Failed to update journey' }, { status: 500 });
+  }
+
+  if (!updated) {
+    console.error('[INTAKE COMPLETE-ITEM] update returned no row');
     return NextResponse.json({ error: 'Failed to update journey' }, { status: 500 });
   }
 
@@ -113,32 +142,29 @@ export async function POST(
   let sessionJoinUrl: string | null = null;
 
   if (allDone) {
-    await supabase
-      .from('intake_package_journeys')
-      .update({ status: 'completed', completed_at: new Date().toISOString() })
-      .eq('id', journey.id);
+    await db
+      .update(intakePackageJourneys)
+      .set({ status: 'completed', completedAt: new Date().toISOString() })
+      .where(eq(intakePackageJourneys.id, journey.id));
 
     // Flip the matching intake_package appointment_action to completed
-    await markIntakeActionCompleted(supabase, journey.appointment_id);
+    await markIntakeActionCompleted(journey.appointment_id);
 
     // TESTING ONLY: fire add_to_runsheet immediately so the end-to-end flow
     // (intake → run sheet → waiting room) can be walked in one sitting. In
     // production this fires on its real scheduled offset via the workflow
     // engine cron. See TODO.md — remove once we have a dedicated test fixture.
-    const runsheetToken = await fireAddToRunsheetEarly(
-      supabase,
-      journey.appointment_id
-    );
+    const runsheetToken = await fireAddToRunsheetEarly(journey.appointment_id);
     if (runsheetToken) {
       sessionJoinUrl = `${getBaseUrl()}/entry/${runsheetToken}`;
     }
 
     // Notify the readiness dashboard at this appointment's location.
-    const { data: appt } = await supabase
-      .from('appointments')
-      .select('location_id')
-      .eq('id', journey.appointment_id)
-      .maybeSingle();
+    const [appt] = await db
+      .select({ location_id: appointmentsT.locationId })
+      .from(appointmentsT)
+      .where(eq(appointmentsT.id, journey.appointment_id))
+      .limit(1);
     if (appt?.location_id) {
       await broadcastReadinessChange(appt.location_id, 'package_completed', {
         appointment_id: journey.appointment_id,
@@ -152,15 +178,22 @@ export async function POST(
     }
   }
 
-  const { data: finalJourney } = await supabase
-    .from('intake_package_journeys')
-    .select(
-      `id, journey_token, status, patient_id,
-       includes_card_capture, includes_consent, form_ids,
-       card_captured_at, consent_completed_at, forms_completed`
-    )
-    .eq('id', journey.id)
-    .single();
+  const [finalJourney] = await db
+    .select({
+      id: intakePackageJourneys.id,
+      journey_token: intakePackageJourneys.journeyToken,
+      status: intakePackageJourneys.status,
+      patient_id: intakePackageJourneys.patientId,
+      includes_card_capture: intakePackageJourneys.includesCardCapture,
+      includes_consent: intakePackageJourneys.includesConsent,
+      form_ids: intakePackageJourneys.formIds,
+      card_captured_at: intakePackageJourneys.cardCapturedAt,
+      consent_completed_at: intakePackageJourneys.consentCompletedAt,
+      forms_completed: intakePackageJourneys.formsCompleted,
+    })
+    .from(intakePackageJourneys)
+    .where(eq(intakePackageJourneys.id, journey.id))
+    .limit(1);
 
   return NextResponse.json({
     journey: finalJourney,
@@ -175,23 +208,29 @@ export async function POST(
  * TESTING ONLY — see call site.
  */
 async function fireAddToRunsheetEarly(
-  supabase: ReturnType<typeof createServiceClient>,
   appointmentId: string
 ): Promise<string | null> {
-  const { data: actions } = await supabase
-    .from('appointment_actions')
-    .select('id, action_block_id, status')
-    .eq('appointment_id', appointmentId);
-  if (!actions?.length) return null;
+  const actions = await db
+    .select({
+      id: appointmentActions.id,
+      action_block_id: appointmentActions.actionBlockId,
+      status: appointmentActions.status,
+    })
+    .from(appointmentActions)
+    .where(eq(appointmentActions.appointmentId, appointmentId));
+  if (!actions.length) return null;
 
   const blockIds = actions.map((a) => a.action_block_id);
-  const { data: blocks } = await supabase
-    .from('workflow_action_blocks')
-    .select('id, action_type')
-    .in('id', blockIds);
+  const blocks = blockIds.length === 0 ? [] : await db
+    .select({
+      id: workflowActionBlocks.id,
+      action_type: workflowActionBlocks.actionType,
+    })
+    .from(workflowActionBlocks)
+    .where(inArray(workflowActionBlocks.id, blockIds));
 
   const runsheetBlockIds = new Set(
-    (blocks ?? [])
+    blocks
       .filter((b) => b.action_type === 'add_to_runsheet')
       .map((b) => b.id)
   );
@@ -229,27 +268,31 @@ function isJourneyComplete(j: {
   return true;
 }
 
-async function markIntakeActionCompleted(
-  supabase: ReturnType<typeof createServiceClient>,
-  appointmentId: string
-) {
+async function markIntakeActionCompleted(appointmentId: string) {
   // Fetch all actions for this appointment and their action-block type in a
   // two-step query to avoid ambiguity around nested-row shape in joins.
-  const { data: actions } = await supabase
-    .from('appointment_actions')
-    .select('id, action_block_id, status')
-    .eq('appointment_id', appointmentId);
+  const actions = await db
+    .select({
+      id: appointmentActions.id,
+      action_block_id: appointmentActions.actionBlockId,
+      status: appointmentActions.status,
+    })
+    .from(appointmentActions)
+    .where(eq(appointmentActions.appointmentId, appointmentId));
 
-  if (!actions || actions.length === 0) return;
+  if (actions.length === 0) return;
 
   const blockIds = actions.map((a) => a.action_block_id);
-  const { data: blocks } = await supabase
-    .from('workflow_action_blocks')
-    .select('id, action_type')
-    .in('id', blockIds);
+  const blocks = blockIds.length === 0 ? [] : await db
+    .select({
+      id: workflowActionBlocks.id,
+      action_type: workflowActionBlocks.actionType,
+    })
+    .from(workflowActionBlocks)
+    .where(inArray(workflowActionBlocks.id, blockIds));
 
   const intakeBlockIds = new Set(
-    (blocks ?? [])
+    blocks
       .filter((b) => b.action_type === 'intake_package')
       .map((b) => b.id)
   );
@@ -265,11 +308,11 @@ async function markIntakeActionCompleted(
 
   if (intakeAction.status === 'completed') return;
 
-  await supabase
-    .from('appointment_actions')
-    .update({
+  await db
+    .update(appointmentActions)
+    .set({
       status: 'completed',
-      completed_at: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
     })
-    .eq('id', intakeAction.id);
+    .where(eq(appointmentActions.id, intakeAction.id));
 }

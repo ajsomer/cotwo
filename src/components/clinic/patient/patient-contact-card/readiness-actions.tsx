@@ -18,7 +18,7 @@ export function ReadinessActions({
   const handleDelete = async () => {
     setDeleting(true);
     try {
-      const res = await fetch("/api/readiness/delete-appointment", {
+      const res = await fetch("/api/tasks/delete-appointment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ appointment_id: appointment.appointment_id }),

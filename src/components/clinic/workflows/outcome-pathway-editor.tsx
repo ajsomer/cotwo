@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import { SlideOver } from "@/components/ui/slide-over";
 import { Button } from "@/components/ui/button";
 import { useClinicStore } from "@/stores/clinic-store";
-import { createClient } from "@/lib/supabase/client";
 import {
   getActionTypeMeta,
   formatFireTime,
@@ -83,29 +82,21 @@ export function OutcomePathwayEditor({
   useEffect(() => {
     if (!pathwayId) return;
     async function load() {
-      const supabase = createClient();
-
-      const { data: pathway } = await supabase
-        .from("outcome_pathways")
-        .select("name, description, workflow_template_id")
-        .eq("id", pathwayId!)
-        .single();
-
-      if (pathway) {
-        setName(pathway.name);
-        setDescription(pathway.description ?? "");
-
-        if (pathway.workflow_template_id) {
-          const { data: blockData } = await supabase
-            .from("workflow_action_blocks")
-            .select(
-              "id, action_type, offset_minutes, offset_direction, form_id, config, sort_order"
-            )
-            .eq("template_id", pathway.workflow_template_id)
-            .order("sort_order");
-
+      const res = await fetch(`/api/outcome-pathways/${pathwayId!}`);
+      if (res.ok) {
+        const { pathway, blocks: blockData } = await res.json();
+        if (pathway) {
+          setName(pathway.name);
+          setDescription(pathway.description ?? "");
           setBlocks(
-            (blockData ?? []).map((b) => ({
+            (blockData ?? []).map((b: {
+              id: string;
+              action_type: string;
+              offset_minutes: number;
+              form_id: string | null;
+              config: unknown;
+              sort_order: number;
+            }) => ({
               id: b.id,
               action_type: b.action_type as ActionType,
               offset_minutes: b.offset_minutes,

@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import { forms as formsT } from "@/lib/db/schema";
+import { and, eq, inArray } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { requireStaffOrgAccess } from "@/lib/auth/staff-access";
 
 /**
@@ -38,8 +41,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "org_id is required" }, { status: 400 });
     }
 
-    const supabase = createServiceClient();
-    const access = await requireStaffOrgAccess(supabase, org_id);
+    const access = await requireStaffOrgAccess(org_id);
     if (!access.ok) {
       return NextResponse.json(
         { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -89,12 +91,16 @@ export async function POST(request: NextRequest) {
     // Form IDs validation
     const formIdList = Array.isArray(form_ids) ? form_ids : [];
     if (formIdList.length > 0) {
-      const { data: existingForms } = await supabase
-        .from("forms")
-        .select("id")
-        .in("id", formIdList)
-        .eq("org_id", org_id)
-        .eq("is_platform_demo", false);
+      const existingForms = await db
+        .select({ id: formsT.id })
+        .from(formsT)
+        .where(
+          and(
+            inArray(formsT.id, formIdList),
+            eq(formsT.orgId, org_id),
+            eq(formsT.isPlatformDemo, false),
+          ),
+        );
 
       const existingIds = new Set((existingForms ?? []).map((f) => f.id));
       const missing = formIdList.filter((id: string) => !existingIds.has(id));
@@ -105,30 +111,34 @@ export async function POST(request: NextRequest) {
 
     // --- Call RPC ---
 
-    const { data, error } = await supabase.rpc("configure_appointment_type", {
-      p_org_id: org_id,
-      p_appointment_type_id: appointment_type_id ?? null,
-      p_name: name.trim(),
-      p_duration_minutes: duration_minutes,
-      p_modality: modality,
-      p_default_fee_cents: default_fee_cents ?? 0,
-      p_terminal_type: "run_sheet",
-      p_includes_card_capture: includes_card_capture ?? false,
-      p_includes_consent: includes_consent ?? false,
-      p_form_ids: formIdList,
-      p_reminders: reminderList.map((r: { id?: string; offset_days: number; message_body: string }) => ({
+    const remindersJson = JSON.stringify(
+      reminderList.map((r: { id?: string; offset_days: number; message_body: string }) => ({
         id: r.id ?? null,
         offset_days: r.offset_days,
         message_body: r.message_body ?? "",
       })),
-      p_at_risk_after_days: at_risk_after_days ?? null,
-      p_overdue_after_days: overdue_after_days ?? null,
-    });
+    );
 
-    if (error) {
-      console.error("[configure] RPC error:", error.message);
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+    // Preserve the exact positional arg order of configure_appointment_type.
+    const result = await db.execute(sql`
+      select public.configure_appointment_type(
+        ${org_id}::uuid,
+        ${appointment_type_id ?? null}::uuid,
+        ${name.trim()}::text,
+        ${duration_minutes}::integer,
+        ${modality}::appointment_modality,
+        ${default_fee_cents ?? 0}::integer,
+        'run_sheet'::workflow_terminal_type,
+        ${includes_card_capture ?? false}::boolean,
+        ${includes_consent ?? false}::boolean,
+        ${formIdList as string[]}::uuid[],
+        ${remindersJson}::jsonb,
+        ${at_risk_after_days ?? null}::integer,
+        ${overdue_after_days ?? null}::integer
+      ) as result
+    `);
+
+    const data = (result.rows?.[0] as { result: unknown } | undefined)?.result ?? null;
 
     // Legacy block cleanup is now inside the RPC itself (Step 3.5).
     return NextResponse.json(data);

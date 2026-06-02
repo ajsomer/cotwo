@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import { forms as formsT } from "@/lib/db/schema";
+import { and, eq } from "drizzle-orm";
 import { fetchWorkflowsInit } from "@/lib/clinic/fetchers/workflows";
 import { requireStaffOrgAccess } from "@/lib/auth/staff-access";
 
@@ -15,8 +17,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "org_id required" }, { status: 400 });
   }
 
-  const service = createServiceClient();
-  const access = await requireStaffOrgAccess(service, orgId);
+  const access = await requireStaffOrgAccess(orgId);
   if (!access.ok) {
     return NextResponse.json(
       { error: access.status === 401 ? "Unauthorized" : "Not found" },
@@ -27,15 +28,19 @@ export async function GET(request: NextRequest) {
   try {
     const [workflows, formsRes] = await Promise.all([
       fetchWorkflowsInit(orgId),
-      service
-        .from("forms")
-        .select("id, name, status")
-        .eq("org_id", orgId)
-        .eq("status", "published")
-        .eq("is_platform_demo", false),
+      db
+        .select({ id: formsT.id, name: formsT.name, status: formsT.status })
+        .from(formsT)
+        .where(
+          and(
+            eq(formsT.orgId, orgId),
+            eq(formsT.status, "published"),
+            eq(formsT.isPlatformDemo, false)
+          )
+        ),
     ]);
 
-    const forms = (formsRes.data ?? []).map((f) => ({ id: f.id, name: f.name }));
+    const forms = formsRes.map((f) => ({ id: f.id, name: f.name }));
 
     return NextResponse.json({
       appointment_types: workflows.appointmentTypes,

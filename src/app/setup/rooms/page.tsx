@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { getCurrentUserName } from "@/app/(auth)/actions";
 import { Button } from "@/components/ui/button";
 import { Trash2, Plus, CheckCircle2 } from "lucide-react";
 
@@ -42,11 +42,7 @@ export default function SetupRoomsPage() {
         setImported(!!data.imported);
       } else {
         // Pre-fill with user's full name (no "Room" suffix)
-        const supabase = createClient();
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        const fullName = user?.user_metadata?.full_name ?? "Room 1";
+        const fullName = (await getCurrentUserName()) ?? "Room 1";
         setRooms([{ id: makeId(), name: fullName }]);
       }
       setInitialized(true);

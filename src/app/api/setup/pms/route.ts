@@ -1,4 +1,13 @@
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import {
+  pmsConnections,
+  appointmentTypes,
+  forms as formsT,
+  rooms as roomsT,
+  users as usersT,
+  staffAssignments,
+} from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { resolveDefaultStaffOrg, getAuthenticatedUserId } from "@/lib/auth/staff-access";
 import { seedDefaultWorkflows } from "@/lib/workflows/seed-defaults";
 import { NextResponse, type NextRequest } from "next/server";
@@ -44,40 +53,57 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const { provider, skipped } = body as { provider: string | null; skipped: boolean };
 
-  const service = createServiceClient();
-
   // Setup flow: no scope is supplied, so resolve the user's default org.
   const resolved = await resolveDefaultStaffOrg(userId);
   if (!resolved) return NextResponse.json({ error: "No org found." }, { status: 400 });
   const { orgId, locationId } = resolved;
 
   if (provider === "gentu") {
-    await seedGentuData(service, orgId, locationId);
-    await service.from("pms_connections").upsert(
-      { org_id: orgId, provider: "gentu", status: "connected", imported_data: { clinicians: 4, appointment_types: 12, rooms: 3 } },
-      { onConflict: "org_id" }
-    );
+    await seedGentuData(orgId, locationId);
+    await db
+      .insert(pmsConnections)
+      .values({
+        orgId,
+        provider: "gentu",
+        status: "connected",
+        importedData: { clinicians: 4, appointment_types: 12, rooms: 3 },
+      })
+      .onConflictDoUpdate({
+        target: pmsConnections.orgId,
+        set: {
+          provider: "gentu",
+          status: "connected",
+          importedData: { clinicians: 4, appointment_types: 12, rooms: 3 },
+        },
+      });
     try { await seedDefaultWorkflows(orgId); } catch (e) { console.error("[setup/pms] workflow re-seed failed:", e); }
   } else {
-    await service.from("pms_connections").upsert(
-      { org_id: orgId, provider: provider ?? "cliniko", status: "skipped" },
-      { onConflict: "org_id" }
-    );
+    await db
+      .insert(pmsConnections)
+      .values({
+        orgId,
+        provider: (provider ?? "cliniko") as typeof pmsConnections.$inferInsert.provider,
+        status: "skipped",
+      })
+      .onConflictDoUpdate({
+        target: pmsConnections.orgId,
+        set: {
+          provider: (provider ?? "cliniko") as typeof pmsConnections.$inferInsert.provider,
+          status: "skipped",
+        },
+      });
   }
 
   return NextResponse.json({ ok: true });
 }
 
-type ServiceClient = ReturnType<typeof createServiceClient>;
-
-async function seedGentuData(service: ServiceClient, orgId: string, locationId: string) {
+async function seedGentuData(orgId: string, locationId: string) {
   // Existing names (one round trip each rather than per-record)
-  const [{ data: existingTypes }, { data: existingForms }, { data: existingRooms }] =
-    await Promise.all([
-      service.from("appointment_types").select("name").eq("org_id", orgId),
-      service.from("forms").select("name").eq("org_id", orgId),
-      service.from("rooms").select("name").eq("location_id", locationId),
-    ]);
+  const [existingTypes, existingForms, existingRooms] = await Promise.all([
+    db.select({ name: appointmentTypes.name }).from(appointmentTypes).where(eq(appointmentTypes.orgId, orgId)),
+    db.select({ name: formsT.name }).from(formsT).where(eq(formsT.orgId, orgId)),
+    db.select({ name: roomsT.name }).from(roomsT).where(eq(roomsT.locationId, locationId)),
+  ]);
 
   const typeNames = new Set((existingTypes ?? []).map((r) => r.name));
   const formNames = new Set((existingForms ?? []).map((r) => r.name));
@@ -90,61 +116,64 @@ async function seedGentuData(service: ServiceClient, orgId: string, locationId: 
   // Bulk inserts in parallel
   await Promise.all([
     newTypes.length
-      ? service.from("appointment_types").insert(newTypes.map((t) => ({ org_id: orgId, ...t })))
+      ? db.insert(appointmentTypes).values(
+          newTypes.map((t) => ({
+            orgId,
+            name: t.name,
+            modality: t.modality as typeof appointmentTypes.$inferInsert.modality,
+            durationMinutes: t.duration_minutes,
+            defaultFeeCents: t.default_fee_cents,
+          }))
+        )
       : Promise.resolve(),
     newForms.length
-      ? service.from("forms").insert(
+      ? db.insert(formsT).values(
           newForms.map((f) => ({
-            org_id: orgId,
+            orgId,
             name: f.name,
             description: f.description,
             status: "published",
-            is_platform_demo: false,
+            isPlatformDemo: false,
             schema: {},
           }))
         )
       : Promise.resolve(),
     newRooms.length
-      ? service
-          .from("rooms")
-          .insert(newRooms.map((name) => ({ location_id: locationId, name, room_type: "clinical" })))
+      ? db.insert(roomsT).values(
+          newRooms.map((name) => ({ locationId, name, roomType: "clinical" as const }))
+        )
       : Promise.resolve(),
   ]);
 
-  // Clinicians — auth.admin.createUser must be sequential per call but we can run all 4 in parallel
+  // Demo clinicians. These are seeded providers who appear on the run sheet but
+  // never log in, so we insert public.users rows directly rather than creating
+  // Neon Auth accounts. (Prototype: no auth identity needed for demo staff.)
   await Promise.all(
     GENTU_CLINICIANS.map(async (clinician) => {
-      const { data: authUser, error } = await service.auth.admin.createUser({
-        email: clinician.email,
-        password: crypto.randomUUID(),
-        user_metadata: { full_name: clinician.full_name },
-        email_confirm: true,
-      });
+      const [upserted] = await db
+        .insert(usersT)
+        .values({ email: clinician.email, fullName: clinician.full_name })
+        .onConflictDoUpdate({
+          target: usersT.email,
+          set: { fullName: clinician.full_name },
+        })
+        .returning({ id: usersT.id });
 
-      // If user already exists, look them up by email so we can still assign them
-      let userId = authUser?.user?.id;
-      if (!userId && error) {
-        const { data: existing } = await service
-          .from("users")
-          .select("id")
-          .eq("email", clinician.email)
-          .maybeSingle();
-        userId = existing?.id;
-      }
+      const userId = upserted?.id;
       if (!userId) return;
 
-      const { data: existingSa } = await service
-        .from("staff_assignments")
-        .select("id")
-        .eq("user_id", userId)
-        .maybeSingle();
+      const [existingSa] = await db
+        .select({ id: staffAssignments.id })
+        .from(staffAssignments)
+        .where(eq(staffAssignments.userId, userId))
+        .limit(1);
 
       if (!existingSa) {
-        await service.from("staff_assignments").insert({
-          user_id: userId,
-          location_id: locationId,
+        await db.insert(staffAssignments).values({
+          userId,
+          locationId,
           role: "clinician",
-          employment_type: "full_time",
+          employmentType: "full_time",
         });
       }
     })

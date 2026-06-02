@@ -1,4 +1,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { db } from "@/lib/db";
+import {
+  appointments as appointmentsT,
+  appointmentActions,
+  workflowActionBlocks,
+  forms as formsT,
+  sessions as sessionsT,
+  outcomePathways,
+} from "@/lib/db/schema";
+import { and, eq, inArray } from "drizzle-orm";
 import { getPostActionLabel } from "@/lib/workflows/types";
 import type { WorkflowAction } from "@/stores/clinic-store";
 
@@ -49,38 +59,62 @@ export function getActionLabel(actionType: string, formName?: string): string {
  * fetchAppointmentById in the patient route's _shared module.
  */
 export async function fetchAppointmentWorkflowActions(
-  supabase: SupabaseClient,
+  _supabase: SupabaseClient,
   appointmentId: string,
   patientId: string,
 ): Promise<WorkflowAction[]> {
   // Prove the appointment belongs to the authorised patient before reading
   // any actions off it.
-  const { data: appt } = await supabase
-    .from("appointments")
-    .select("id")
-    .eq("id", appointmentId)
-    .eq("patient_id", patientId)
-    .maybeSingle();
+  const [appt] = await db
+    .select({ id: appointmentsT.id })
+    .from(appointmentsT)
+    .where(
+      and(
+        eq(appointmentsT.id, appointmentId),
+        eq(appointmentsT.patientId, patientId),
+      ),
+    );
   if (!appt) return [];
 
-  const { data: actions } = await supabase
-    .from("appointment_actions")
-    .select(
-      "id, appointment_id, action_block_id, status, scheduled_for, fired_at, completed_at, error_message, updated_at, session_id, config, form_id, resolved_at, resolved_by, resolution_note",
-    )
-    .eq("appointment_id", appointmentId);
+  const actions = await db
+    .select({
+      id: appointmentActions.id,
+      appointment_id: appointmentActions.appointmentId,
+      action_block_id: appointmentActions.actionBlockId,
+      status: appointmentActions.status,
+      scheduled_for: appointmentActions.scheduledFor,
+      fired_at: appointmentActions.firedAt,
+      completed_at: appointmentActions.completedAt,
+      error_message: appointmentActions.errorMessage,
+      updated_at: appointmentActions.updatedAt,
+      session_id: appointmentActions.sessionId,
+      config: appointmentActions.config,
+      form_id: appointmentActions.formId,
+      resolved_at: appointmentActions.resolvedAt,
+      resolved_by: appointmentActions.resolvedBy,
+      resolution_note: appointmentActions.resolutionNote,
+    })
+    .from(appointmentActions)
+    .where(eq(appointmentActions.appointmentId, appointmentId));
 
-  if (!actions || actions.length === 0) return [];
+  if (actions.length === 0) return [];
 
   const blockIds = [...new Set(actions.map((a) => a.action_block_id))];
-  const { data: blocks } = await supabase
-    .from("workflow_action_blocks")
-    .select("id, action_type, config, form_id, offset_minutes, offset_direction")
-    .in("id", blockIds);
-  const blockMap = new Map((blocks ?? []).map((b) => [b.id, b]));
+  const blocks = blockIds.length === 0 ? [] : await db
+    .select({
+      id: workflowActionBlocks.id,
+      action_type: workflowActionBlocks.actionType,
+      config: workflowActionBlocks.config,
+      form_id: workflowActionBlocks.formId,
+      offset_minutes: workflowActionBlocks.offsetMinutes,
+      offset_direction: workflowActionBlocks.offsetDirection,
+    })
+    .from(workflowActionBlocks)
+    .where(inArray(workflowActionBlocks.id, blockIds));
+  const blockMap = new Map(blocks.map((b) => [b.id, b]));
 
   // Form names for any form referenced by a block or a post-appointment action.
-  const blockFormIds = (blocks ?? [])
+  const blockFormIds = blocks
     .map((b) => b.form_id)
     .filter((id): id is string => !!id);
   const actionFormIds = actions
@@ -89,11 +123,11 @@ export async function fetchAppointmentWorkflowActions(
   const allFormIds = [...new Set([...blockFormIds, ...actionFormIds])];
   const formMap = new Map<string, string>();
   if (allFormIds.length > 0) {
-    const { data: forms } = await supabase
-      .from("forms")
-      .select("id, name")
-      .in("id", allFormIds);
-    for (const f of forms ?? []) formMap.set(f.id, f.name);
+    const forms = await db
+      .select({ id: formsT.id, name: formsT.name })
+      .from(formsT)
+      .where(inArray(formsT.id, allFormIds));
+    for (const f of forms) formMap.set(f.id, f.name);
   }
 
   // Pathway names for post-appointment actions, resolved via their sessions.
@@ -107,11 +141,15 @@ export async function fetchAppointmentWorkflowActions(
     { session_ended_at: string | null; outcome_pathway_id: string | null }
   >();
   if (sessionIds.length > 0) {
-    const { data: sessions } = await supabase
-      .from("sessions")
-      .select("id, session_ended_at, outcome_pathway_id")
-      .in("id", sessionIds);
-    for (const s of sessions ?? [])
+    const sessions = await db
+      .select({
+        id: sessionsT.id,
+        session_ended_at: sessionsT.sessionEndedAt,
+        outcome_pathway_id: sessionsT.outcomePathwayId,
+      })
+      .from(sessionsT)
+      .where(inArray(sessionsT.id, sessionIds));
+    for (const s of sessions)
       sessionMap.set(s.id, {
         session_ended_at: s.session_ended_at,
         outcome_pathway_id: s.outcome_pathway_id,
@@ -126,11 +164,11 @@ export async function fetchAppointmentWorkflowActions(
   ];
   const pathwayNameMap = new Map<string, string>();
   if (pathwayIds.length > 0) {
-    const { data: pathways } = await supabase
-      .from("outcome_pathways")
-      .select("id, name")
-      .in("id", pathwayIds);
-    for (const p of pathways ?? []) pathwayNameMap.set(p.id, p.name);
+    const pathways = await db
+      .select({ id: outcomePathways.id, name: outcomePathways.name })
+      .from(outcomePathways)
+      .where(inArray(outcomePathways.id, pathwayIds));
+    for (const p of pathways) pathwayNameMap.set(p.id, p.name);
   }
 
   const result: WorkflowAction[] = [];

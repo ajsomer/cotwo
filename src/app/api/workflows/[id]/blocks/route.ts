@@ -1,9 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { db } from "@/lib/db";
+import { workflowActionBlocks } from "@/lib/db/schema";
+import { asc, eq, sql } from "drizzle-orm";
 import {
   requireStaffCanAccessWorkflowTemplate,
   assertFormsInOrg,
 } from "@/lib/auth/staff-access";
+
+// Column projection aliasing Drizzle's camelCase fields back to the snake_case
+// shape the UI consumes (byte-identical to the old supabase `*`).
+const blockColumns = {
+  id: workflowActionBlocks.id,
+  template_id: workflowActionBlocks.templateId,
+  action_type: workflowActionBlocks.actionType,
+  offset_minutes: workflowActionBlocks.offsetMinutes,
+  offset_direction: workflowActionBlocks.offsetDirection,
+  modality_filter: workflowActionBlocks.modalityFilter,
+  form_id: workflowActionBlocks.formId,
+  config: workflowActionBlocks.config,
+  sort_order: workflowActionBlocks.sortOrder,
+  precondition: workflowActionBlocks.precondition,
+  parent_action_block_id: workflowActionBlocks.parentActionBlockId,
+  created_at: workflowActionBlocks.createdAt,
+  updated_at: workflowActionBlocks.updatedAt,
+};
 
 /**
  * Collect every form id a block references — top-level form_id,
@@ -61,11 +81,8 @@ export async function PATCH(
   const { id: templateId } = await params;
 
   try {
-    const service = createServiceClient();
-
     // AUTH: authenticate the caller and verify they staff the template's org.
     const access = await requireStaffCanAccessWorkflowTemplate(
-      service,
       templateId
     );
     if (!access.ok) {
@@ -105,7 +122,7 @@ export async function PATCH(
     // must belong to the template's org — the RPC writes them directly with
     // service-role privileges, so a cross-org form id can't be trusted.
     const referencedFormIds = blocks.flatMap(collectBlockFormIds);
-    if (!(await assertFormsInOrg(service, referencedFormIds, access.orgId))) {
+    if (!(await assertFormsInOrg(referencedFormIds, access.orgId))) {
       return NextResponse.json(
         { error: "A referenced form does not belong to this organisation" },
         { status: 400 }
@@ -113,36 +130,34 @@ export async function PATCH(
     }
 
     // Atomic save + in-flight recalculation (single transaction).
-    const { data: result, error: rpcError } = await service.rpc(
-      "save_workflow_blocks",
-      {
-        p_template_id: templateId,
-        p_blocks: blocks,
-        p_deleted_ids: deleted_ids,
-      }
-    );
-
-    if (rpcError) {
-      return NextResponse.json({ error: rpcError.message }, { status: 500 });
-    }
-
-    const summary = (result ?? {}) as {
+    let summary: {
       deleted?: number;
       inserted?: number;
       retimed?: number;
       in_flight_recalculated?: number;
-    };
+    } = {};
+    try {
+      const res = await db.execute(
+        sql`select public.save_workflow_blocks(${templateId}, ${JSON.stringify(blocks)}::jsonb, ${deleted_ids}::uuid[]) as result`
+      );
+      summary = ((res.rows?.[0] as { result?: typeof summary } | undefined)?.result ?? {}) as typeof summary;
+    } catch (rpcError) {
+      return NextResponse.json(
+        { error: (rpcError as Error).message },
+        { status: 500 }
+      );
+    }
 
     // Return full updated block set for UI reconciliation
-    const { data: allBlocks } = await service
-      .from("workflow_action_blocks")
-      .select("*")
-      .eq("template_id", templateId)
-      .order("sort_order");
+    const allBlocks = await db
+      .select(blockColumns)
+      .from(workflowActionBlocks)
+      .where(eq(workflowActionBlocks.templateId, templateId))
+      .orderBy(asc(workflowActionBlocks.sortOrder));
 
     return NextResponse.json({
       success: true,
-      blocks: allBlocks ?? [],
+      blocks: allBlocks,
       in_flight_recalculated: summary.in_flight_recalculated ?? 0,
     });
   } catch (err) {

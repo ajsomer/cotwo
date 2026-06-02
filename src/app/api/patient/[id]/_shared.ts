@@ -1,4 +1,20 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { db } from "@/lib/db";
+import {
+  patients as patientsT,
+  patientPhoneNumbers,
+  paymentMethods,
+  formAssignments,
+  formSubmissions,
+  forms as formsT,
+  intakePackageJourneys,
+  appointments as appointmentsT,
+  appointmentTypes,
+  rooms as roomsT,
+  locations as locationsT,
+  sessions as sessionsT,
+  sessionParticipants,
+} from "@/lib/db/schema";
+import { and, eq, ne, gte, lt, isNull, inArray, desc, asc, sql } from "drizzle-orm";
 import { bucketByLocalDay, type DayBucket } from "@/lib/datetime/timezone-bucket";
 
 // Split candidate fetching into future-asc + past-desc + awaiting (null
@@ -81,12 +97,17 @@ export interface PatientHistory {
   form_history_truncated: boolean;
 }
 
-const APPT_SELECT = `
-  id, scheduled_at, status, created_at,
-  appointment_types ( name, modality ),
-  rooms!appointments_room_id_fkey ( name ),
-  locations ( timezone )
-`;
+// Column shape for an appointment row joined with its type/room/location.
+interface ApptJoinRow {
+  id: string;
+  scheduled_at: string | null;
+  status: string;
+  created_at: string;
+  type_name: string | null;
+  modality: "telehealth" | "in_person" | null;
+  room_name: string | null;
+  location_timezone: string | null;
+}
 
 // Bucket display order — must stay in sync with the orderedAll concat order.
 const BUCKET_DISPLAY_ORDER: Bucket[] = [
@@ -113,33 +134,45 @@ function dedupeById<T extends { id: string }>(rows: T[]): T[] {
 // Summary: small, fast, indexed single-patient lookups (DOB, phones, cards).
 // ---------------------------------------------------------------------------
 export async function fetchPatientSummary(
-  supabase: SupabaseClient,
   patientId: string,
 ): Promise<PatientSummary | null> {
-  const [patientRes, phonesRes, cardsRes] = await Promise.all([
-    supabase
-      .from("patients")
-      .select("id, first_name, last_name, date_of_birth")
-      .eq("id", patientId)
-      .single(),
-    supabase
-      .from("patient_phone_numbers")
-      .select("phone_number, is_primary")
-      .eq("patient_id", patientId)
-      .order("is_primary", { ascending: false }),
-    supabase
-      .from("payment_methods")
-      .select("card_brand, card_last_four, card_expiry, is_default")
-      .eq("patient_id", patientId)
-      .order("is_default", { ascending: false }),
+  const [patientRows, phonesRows, cardsRows] = await Promise.all([
+    db
+      .select({
+        id: patientsT.id,
+        first_name: patientsT.firstName,
+        last_name: patientsT.lastName,
+        date_of_birth: patientsT.dateOfBirth,
+      })
+      .from(patientsT)
+      .where(eq(patientsT.id, patientId)),
+    db
+      .select({
+        phone_number: patientPhoneNumbers.phoneNumber,
+        is_primary: patientPhoneNumbers.isPrimary,
+      })
+      .from(patientPhoneNumbers)
+      .where(eq(patientPhoneNumbers.patientId, patientId))
+      .orderBy(desc(patientPhoneNumbers.isPrimary)),
+    db
+      .select({
+        card_brand: paymentMethods.cardBrand,
+        card_last_four: paymentMethods.cardLastFour,
+        card_expiry: paymentMethods.cardExpiry,
+        is_default: paymentMethods.isDefault,
+      })
+      .from(paymentMethods)
+      .where(eq(paymentMethods.patientId, patientId))
+      .orderBy(desc(paymentMethods.isDefault)),
   ]);
 
-  if (patientRes.error || !patientRes.data) return null;
+  const patient = patientRows[0];
+  if (!patient) return null;
 
   return {
-    patient: patientRes.data,
-    phone_numbers: phonesRes.data ?? [],
-    payment_methods: cardsRes.data ?? [],
+    patient,
+    phone_numbers: phonesRows,
+    payment_methods: cardsRows,
   };
 }
 
@@ -148,7 +181,6 @@ export async function fetchPatientSummary(
 // appointment buckets + count, sessions, on-demand history, active-row hoist.
 // ---------------------------------------------------------------------------
 export async function fetchPatientHistory(
-  supabase: SupabaseClient,
   patientId: string,
   activeAppointmentId: string | null,
   activeSessionId: string | null,
@@ -161,9 +193,36 @@ export async function fetchPatientHistory(
   //       for the "earlier forms" context.
   // Merged + deduped by row id below. (Readiness mode is unaffected — it reads
   // from the row's completed_form_submissions, not this list.)
-  const ASSIGN_COLS =
-    "id, form_id, appointment_id, status, sent_at, completed_at, created_at, submission_id";
-  const SUB_COLS = "id, form_id, appointment_id, created_at";
+  const recentAssignmentsPromise = db
+    .select({
+      id: formAssignments.id,
+      form_id: formAssignments.formId,
+      appointment_id: formAssignments.appointmentId,
+      status: formAssignments.status,
+      sent_at: formAssignments.sentAt,
+      completed_at: formAssignments.completedAt,
+      created_at: formAssignments.createdAt,
+      submission_id: formAssignments.submissionId,
+    })
+    .from(formAssignments)
+    .where(eq(formAssignments.patientId, patientId))
+    .orderBy(desc(formAssignments.createdAt))
+    .limit(FORM_HISTORY_LIMIT);
+
+  const recentSubmissionsPromise = db
+    .select({
+      id: formSubmissions.id,
+      form_id: formSubmissions.formId,
+      appointment_id: formSubmissions.appointmentId,
+      created_at: formSubmissions.createdAt,
+    })
+    .from(formSubmissions)
+    .where(eq(formSubmissions.patientId, patientId))
+    .orderBy(desc(formSubmissions.createdAt))
+    .limit(FORM_HISTORY_LIMIT);
+
+  type AssignmentRowT = Awaited<typeof recentAssignmentsPromise>[number];
+  type SubmissionRowT = Awaited<typeof recentSubmissionsPromise>[number];
 
   const [
     recentAssignmentsRes,
@@ -171,71 +230,81 @@ export async function fetchPatientHistory(
     activeAssignmentsRes,
     activeSubmissionsRes,
   ] = await Promise.all([
-    supabase
-      .from("form_assignments")
-      .select(ASSIGN_COLS)
-      .eq("patient_id", patientId)
-      .order("created_at", { ascending: false })
-      .limit(FORM_HISTORY_LIMIT),
-    supabase
-      .from("form_submissions")
-      .select(SUB_COLS)
-      .eq("patient_id", patientId)
-      .order("created_at", { ascending: false })
-      .limit(FORM_HISTORY_LIMIT),
+    recentAssignmentsPromise,
+    recentSubmissionsPromise,
     activeAppointmentId
-      ? supabase
-          .from("form_assignments")
-          .select(ASSIGN_COLS)
-          .eq("patient_id", patientId)
-          .eq("appointment_id", activeAppointmentId)
-      : Promise.resolve({ data: [] }),
+      ? db
+          .select({
+            id: formAssignments.id,
+            form_id: formAssignments.formId,
+            appointment_id: formAssignments.appointmentId,
+            status: formAssignments.status,
+            sent_at: formAssignments.sentAt,
+            completed_at: formAssignments.completedAt,
+            created_at: formAssignments.createdAt,
+            submission_id: formAssignments.submissionId,
+          })
+          .from(formAssignments)
+          .where(
+            and(
+              eq(formAssignments.patientId, patientId),
+              eq(formAssignments.appointmentId, activeAppointmentId),
+            ),
+          )
+      : Promise.resolve([] as AssignmentRowT[]),
     activeAppointmentId
-      ? supabase
-          .from("form_submissions")
-          .select(SUB_COLS)
-          .eq("patient_id", patientId)
-          .eq("appointment_id", activeAppointmentId)
-      : Promise.resolve({ data: [] }),
+      ? db
+          .select({
+            id: formSubmissions.id,
+            form_id: formSubmissions.formId,
+            appointment_id: formSubmissions.appointmentId,
+            created_at: formSubmissions.createdAt,
+          })
+          .from(formSubmissions)
+          .where(
+            and(
+              eq(formSubmissions.patientId, patientId),
+              eq(formSubmissions.appointmentId, activeAppointmentId),
+            ),
+          )
+      : Promise.resolve([] as SubmissionRowT[]),
   ]);
 
   // Dedupe by id, recent-history rows first (preserves recency order); the
   // active-appointment rows top up anything the bounded window dropped.
   const formAssignmentsData = dedupeById([
-    ...(recentAssignmentsRes.data ?? []),
-    ...(activeAssignmentsRes.data ?? []),
+    ...recentAssignmentsRes,
+    ...activeAssignmentsRes,
   ]);
   const formSubmissionsData = dedupeById([
-    ...(recentSubmissionsRes.data ?? []),
-    ...(activeSubmissionsRes.data ?? []),
+    ...recentSubmissionsRes,
+    ...activeSubmissionsRes,
   ]);
 
   // Either bounded branch hitting the limit means there may be older forms
   // beyond the window (the active appointment's are still guaranteed present).
   const formHistoryTruncated =
-    (recentAssignmentsRes.data ?? []).length >= FORM_HISTORY_LIMIT ||
-    (recentSubmissionsRes.data ?? []).length >= FORM_HISTORY_LIMIT;
+    recentAssignmentsRes.length >= FORM_HISTORY_LIMIT ||
+    recentSubmissionsRes.length >= FORM_HISTORY_LIMIT;
 
   const formIds = new Set<string>();
-  (formAssignmentsData ?? []).forEach((a) => formIds.add(a.form_id));
-  (formSubmissionsData ?? []).forEach((s) => formIds.add(s.form_id));
+  formAssignmentsData.forEach((a) => formIds.add(a.form_id));
+  formSubmissionsData.forEach((s) => formIds.add(s.form_id));
 
   let formNameMap: Record<string, string> = {};
   if (formIds.size > 0) {
-    const { data: formsData } = await supabase
-      .from("forms")
-      .select("id, name")
-      .in("id", [...formIds]);
-    if (formsData) {
-      formNameMap = Object.fromEntries(formsData.map((f) => [f.id, f.name]));
-    }
+    const formsData = await db
+      .select({ id: formsT.id, name: formsT.name })
+      .from(formsT)
+      .where(inArray(formsT.id, [...formIds]));
+    formNameMap = Object.fromEntries(formsData.map((f) => [f.id, f.name]));
   }
 
   // For intake-package submission rows, look up the journey's per-form
   // completion timestamp so we can resolve completed_at properly.
   const submissionAppointmentIds = [
     ...new Set(
-      (formSubmissionsData ?? [])
+      formSubmissionsData
         .map((s) => s.appointment_id)
         .filter((id): id is string => !!id),
     ),
@@ -245,24 +314,25 @@ export async function fetchPatientHistory(
     { forms_completed: Record<string, string> | null }
   > = {};
   if (submissionAppointmentIds.length > 0) {
-    const { data: journeys } = await supabase
-      .from("intake_package_journeys")
-      .select("appointment_id, forms_completed")
-      .in("appointment_id", submissionAppointmentIds);
-    if (journeys) {
-      journeyByAppointment = Object.fromEntries(
-        journeys.map((j) => [
-          j.appointment_id,
-          {
-            forms_completed:
-              (j.forms_completed as Record<string, string>) ?? null,
-          },
-        ]),
-      );
-    }
+    const journeys = await db
+      .select({
+        appointment_id: intakePackageJourneys.appointmentId,
+        forms_completed: intakePackageJourneys.formsCompleted,
+      })
+      .from(intakePackageJourneys)
+      .where(inArray(intakePackageJourneys.appointmentId, submissionAppointmentIds));
+    journeyByAppointment = Object.fromEntries(
+      journeys.map((j) => [
+        j.appointment_id,
+        {
+          forms_completed:
+            (j.forms_completed as Record<string, string>) ?? null,
+        },
+      ]),
+    );
   }
 
-  const formAssignments: FormAssignmentRow[] = (formAssignmentsData ?? []).map(
+  const formAssignments_: FormAssignmentRow[] = formAssignmentsData.map(
     (a) => ({
       id: a.id,
       form_id: a.form_id,
@@ -276,7 +346,7 @@ export async function fetchPatientHistory(
     }),
   );
 
-  const formSubmissions: FormSubmissionRow[] = (formSubmissionsData ?? []).map(
+  const formSubmissions_: FormSubmissionRow[] = formSubmissionsData.map(
     (s) => {
       const journey = s.appointment_id
         ? journeyByAppointment[s.appointment_id]
@@ -296,43 +366,64 @@ export async function fetchPatientHistory(
   // Unified appointments timeline
   const nowIso = new Date().toISOString();
   const [futureRes, pastRes, awaitingRes, apptsCountRes] = await Promise.all([
-    supabase
-      .from("appointments")
+    db
       .select(APPT_SELECT)
-      .eq("patient_id", patientId)
-      .neq("status", "cancelled")
-      .gte("scheduled_at", nowIso)
-      .order("scheduled_at", { ascending: true })
+      .from(appointmentsT)
+      .leftJoin(appointmentTypes, eq(appointmentTypes.id, appointmentsT.appointmentTypeId))
+      .leftJoin(roomsT, eq(roomsT.id, appointmentsT.roomId))
+      .leftJoin(locationsT, eq(locationsT.id, appointmentsT.locationId))
+      .where(
+        and(
+          eq(appointmentsT.patientId, patientId),
+          ne(appointmentsT.status, "cancelled"),
+          gte(appointmentsT.scheduledAt, nowIso),
+        ),
+      )
+      .orderBy(asc(appointmentsT.scheduledAt))
       .limit(FUTURE_LIMIT),
-    supabase
-      .from("appointments")
+    db
       .select(APPT_SELECT)
-      .eq("patient_id", patientId)
-      .neq("status", "cancelled")
-      .lt("scheduled_at", nowIso)
-      .order("scheduled_at", { ascending: false })
+      .from(appointmentsT)
+      .leftJoin(appointmentTypes, eq(appointmentTypes.id, appointmentsT.appointmentTypeId))
+      .leftJoin(roomsT, eq(roomsT.id, appointmentsT.roomId))
+      .leftJoin(locationsT, eq(locationsT.id, appointmentsT.locationId))
+      .where(
+        and(
+          eq(appointmentsT.patientId, patientId),
+          ne(appointmentsT.status, "cancelled"),
+          lt(appointmentsT.scheduledAt, nowIso),
+        ),
+      )
+      .orderBy(desc(appointmentsT.scheduledAt))
       .limit(PAST_LIMIT),
-    supabase
-      .from("appointments")
+    db
       .select(APPT_SELECT)
-      .eq("patient_id", patientId)
-      .neq("status", "cancelled")
-      .is("scheduled_at", null)
-      .order("created_at", { ascending: false })
+      .from(appointmentsT)
+      .leftJoin(appointmentTypes, eq(appointmentTypes.id, appointmentsT.appointmentTypeId))
+      .leftJoin(roomsT, eq(roomsT.id, appointmentsT.roomId))
+      .leftJoin(locationsT, eq(locationsT.id, appointmentsT.locationId))
+      .where(
+        and(
+          eq(appointmentsT.patientId, patientId),
+          ne(appointmentsT.status, "cancelled"),
+          isNull(appointmentsT.scheduledAt),
+        ),
+      )
+      .orderBy(desc(appointmentsT.createdAt))
       .limit(AWAITING_LIMIT),
-    supabase
-      .from("appointments")
-      .select("id", { count: "exact", head: true })
-      .eq("patient_id", patientId)
-      .neq("status", "cancelled"),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(appointmentsT)
+      .where(
+        and(
+          eq(appointmentsT.patientId, patientId),
+          ne(appointmentsT.status, "cancelled"),
+        ),
+      ),
   ]);
-  const apptsTotalCount = apptsCountRes.count;
+  const apptsTotalCount = apptsCountRes[0]?.count ?? null;
 
-  const apptsData = [
-    ...(futureRes.data ?? []),
-    ...(pastRes.data ?? []),
-    ...(awaitingRes.data ?? []),
-  ];
+  const apptsData: ApptJoinRow[] = [...futureRes, ...pastRes, ...awaitingRes];
 
   // Latest session per appointment.
   const apptIds = apptsData.map((a) => a.id);
@@ -341,62 +432,70 @@ export async function fetchPatientHistory(
 
   const [sessionsForApptsRes, onDemandRes] = await Promise.all([
     apptIds.length > 0
-      ? supabase
-          .from("sessions")
-          .select("id, status, appointment_id, created_at")
-          .in("appointment_id", apptIds)
-          .order("created_at", { ascending: false })
-      : Promise.resolve({ data: [] }),
-    supabase
-      .from("session_participants")
-      .select(
-        `
-        sessions!inner (
-          id, status, session_started_at, session_ended_at, created_at, location_id, room_id, appointment_id,
-          locations ( timezone ),
-          rooms ( name )
-        )
-      `,
-        { count: "exact" },
+      ? db
+          .select({
+            id: sessionsT.id,
+            status: sessionsT.status,
+            appointment_id: sessionsT.appointmentId,
+            created_at: sessionsT.createdAt,
+          })
+          .from(sessionsT)
+          .where(inArray(sessionsT.appointmentId, apptIds))
+          .orderBy(desc(sessionsT.createdAt))
+      : Promise.resolve([] as Array<{
+          id: string;
+          status: string;
+          appointment_id: string | null;
+          created_at: string;
+        }>),
+    db
+      .select({
+        id: sessionsT.id,
+        status: sessionsT.status,
+        session_started_at: sessionsT.sessionStartedAt,
+        session_ended_at: sessionsT.sessionEndedAt,
+        created_at: sessionsT.createdAt,
+        location_id: sessionsT.locationId,
+        room_id: sessionsT.roomId,
+        appointment_id: sessionsT.appointmentId,
+        location_timezone: locationsT.timezone,
+        room_name: roomsT.name,
+      })
+      .from(sessionParticipants)
+      .innerJoin(sessionsT, eq(sessionsT.id, sessionParticipants.sessionId))
+      .leftJoin(locationsT, eq(locationsT.id, sessionsT.locationId))
+      .leftJoin(roomsT, eq(roomsT.id, sessionsT.roomId))
+      .where(
+        and(
+          eq(sessionParticipants.patientId, patientId),
+          isNull(sessionsT.appointmentId),
+        ),
       )
-      .eq("patient_id", patientId)
-      .is("sessions.appointment_id", null)
-      .order("created_at", { ascending: false, referencedTable: "sessions" })
+      .orderBy(desc(sessionsT.createdAt))
       .limit(ON_DEMAND_LIMIT),
   ]);
 
-  for (const s of sessionsForApptsRes.data ?? []) {
+  for (const s of sessionsForApptsRes) {
     if (s.appointment_id && !latestSessionByAppt[s.appointment_id]) {
       latestSessionByAppt[s.appointment_id] = { id: s.id, status: s.status };
     }
   }
 
-  const onDemandData = onDemandRes.data;
-  const onDemandTotalCount = onDemandRes.count;
+  const onDemandData = onDemandRes;
+  // On-demand total count: the previous Supabase head-count was over the same
+  // filtered set, capped by limit; mirror by using the returned length.
+  const onDemandTotalCount = onDemandRes.length;
 
   const now = new Date();
 
-  const apptCandidates: AppointmentRow[] = (apptsData ?? []).map((a) => {
-    const apptType = (
-      Array.isArray(a.appointment_types)
-        ? a.appointment_types[0]
-        : a.appointment_types
-    ) as
-      | { name: string | null; modality: "telehealth" | "in_person" | null }
-      | null;
-    const room = (Array.isArray(a.rooms) ? a.rooms[0] : a.rooms) as
-      | { name: string | null }
-      | null;
-    const location = (
-      Array.isArray(a.locations) ? a.locations[0] : a.locations
-    ) as { timezone: string | null } | null;
+  const apptCandidates: AppointmentRow[] = apptsData.map((a) => {
     const latestSession = latestSessionByAppt[a.id] ?? null;
 
     let bucket: Bucket;
     if (!a.scheduled_at) {
       bucket = "awaiting_scheduling";
     } else {
-      bucket = bucketByLocalDay(a.scheduled_at, location?.timezone ?? null, now);
+      bucket = bucketByLocalDay(a.scheduled_at, a.location_timezone ?? null, now);
     }
 
     return {
@@ -404,48 +503,22 @@ export async function fetchPatientHistory(
       session_id: latestSession?.id ?? null,
       scheduled_at: a.scheduled_at,
       created_at: a.created_at,
-      type_name: apptType?.name ?? null,
-      room_name: room?.name ?? null,
-      modality: apptType?.modality ?? null,
+      type_name: a.type_name ?? null,
+      room_name: a.room_name ?? null,
+      modality: a.modality ?? null,
       appointment_status: a.status,
       session_status: latestSession?.status ?? null,
       bucket,
-      location_timezone: location?.timezone ?? null,
+      location_timezone: a.location_timezone ?? null,
     };
   });
 
   const onDemandCandidates: AppointmentRow[] = [];
-  for (const row of onDemandData ?? []) {
-    const session = (
-      Array.isArray(row.sessions) ? row.sessions[0] : row.sessions
-    ) as {
-      id: string;
-      status: string;
-      session_started_at: string | null;
-      session_ended_at: string | null;
-      created_at: string;
-      location_id: string | null;
-      room_id: string | null;
-      appointment_id: string | null;
-      locations:
-        | { timezone: string | null }
-        | { timezone: string | null }[]
-        | null;
-      rooms: { name: string | null } | { name: string | null }[] | null;
-    } | null;
-    if (!session) continue;
-
-    const location = (
-      Array.isArray(session.locations) ? session.locations[0] : session.locations
-    ) as { timezone: string | null } | null;
-    const room = (
-      Array.isArray(session.rooms) ? session.rooms[0] : session.rooms
-    ) as { name: string | null } | null;
-
+  for (const session of onDemandData) {
     const placementInstant = session.session_started_at ?? session.created_at;
     const bucket: Bucket = bucketByLocalDay(
       placementInstant,
-      location?.timezone ?? null,
+      session.location_timezone ?? null,
       now,
     );
 
@@ -455,12 +528,12 @@ export async function fetchPatientHistory(
       scheduled_at: session.session_started_at,
       created_at: session.created_at,
       type_name: "On-demand",
-      room_name: room?.name ?? null,
+      room_name: session.room_name ?? null,
       modality: "telehealth",
       appointment_status: null,
       session_status: session.status,
       bucket,
-      location_timezone: location?.timezone ?? null,
+      location_timezone: session.location_timezone ?? null,
     });
   }
 
@@ -525,14 +598,12 @@ export async function fetchPatientHistory(
     let extra: AppointmentRow | null = null;
     if (activeAppointmentId) {
       extra = await fetchAppointmentById(
-        supabase,
         activeAppointmentId,
         patientId,
         now,
       );
     } else if (activeSessionId) {
       extra = await fetchOnDemandSessionById(
-        supabase,
         activeSessionId,
         patientId,
         now,
@@ -576,11 +647,25 @@ export async function fetchPatientHistory(
   return {
     appointments,
     total_appointment_count: totalAppointmentCount,
-    form_assignments: formAssignments,
-    form_submissions: formSubmissions,
+    form_assignments: formAssignments_,
+    form_submissions: formSubmissions_,
     form_history_truncated: formHistoryTruncated,
   };
 }
+
+// Shared select shape for appointment timeline rows. Joins type/room/location
+// and aliases the nested columns flat, matching the old APPT_SELECT relation
+// pick.
+const APPT_SELECT = {
+  id: appointmentsT.id,
+  scheduled_at: appointmentsT.scheduledAt,
+  status: appointmentsT.status,
+  created_at: appointmentsT.createdAt,
+  type_name: appointmentTypes.name,
+  modality: appointmentTypes.modality,
+  room_name: roomsT.name,
+  location_timezone: locationsT.timezone,
+};
 
 // Find the position to insert a row of `bucket` so the array stays in
 // (upcoming → today → past → awaiting_scheduling) display order.
@@ -605,50 +690,40 @@ function findBucketInsertionIndex(
 // already been authorised by assertStaffCanAccessPatient at the route entry,
 // so this filter implicitly scopes the lookup to the caller's org.
 async function fetchAppointmentById(
-  supabase: SupabaseClient,
   appointmentId: string,
   patientId: string,
   now: Date,
 ): Promise<AppointmentRow | null> {
-  const { data: a } = await supabase
-    .from("appointments")
-    .select(
-      `id, scheduled_at, status, created_at,
-       appointment_types ( name, modality ),
-       rooms!appointments_room_id_fkey ( name ),
-       locations ( timezone )`,
+  const [a] = await db
+    .select(APPT_SELECT)
+    .from(appointmentsT)
+    .leftJoin(appointmentTypes, eq(appointmentTypes.id, appointmentsT.appointmentTypeId))
+    .leftJoin(roomsT, eq(roomsT.id, appointmentsT.roomId))
+    .leftJoin(locationsT, eq(locationsT.id, appointmentsT.locationId))
+    .where(
+      and(
+        eq(appointmentsT.id, appointmentId),
+        eq(appointmentsT.patientId, patientId),
+        ne(appointmentsT.status, "cancelled"),
+      ),
     )
-    .eq("id", appointmentId)
-    .eq("patient_id", patientId)
-    .neq("status", "cancelled")
-    .maybeSingle();
+    .limit(1);
 
   if (!a) return null;
 
-  const apptType = (
-    Array.isArray(a.appointment_types)
-      ? a.appointment_types[0]
-      : a.appointment_types
-  ) as
-    | { name: string | null; modality: "telehealth" | "in_person" | null }
-    | null;
-  const room = (Array.isArray(a.rooms) ? a.rooms[0] : a.rooms) as
-    | { name: string | null }
-    | null;
-  const location = (
-    Array.isArray(a.locations) ? a.locations[0] : a.locations
-  ) as { timezone: string | null } | null;
-
-  const { data: latestSession } = await supabase
-    .from("sessions")
-    .select("id, status, created_at")
-    .eq("appointment_id", a.id)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const [latestSession] = await db
+    .select({
+      id: sessionsT.id,
+      status: sessionsT.status,
+      created_at: sessionsT.createdAt,
+    })
+    .from(sessionsT)
+    .where(eq(sessionsT.appointmentId, a.id))
+    .orderBy(desc(sessionsT.createdAt))
+    .limit(1);
 
   const bucket: Bucket = a.scheduled_at
-    ? bucketByLocalDay(a.scheduled_at, location?.timezone ?? null, now)
+    ? bucketByLocalDay(a.scheduled_at, a.location_timezone ?? null, now)
     : "awaiting_scheduling";
 
   return {
@@ -656,13 +731,13 @@ async function fetchAppointmentById(
     session_id: latestSession?.id ?? null,
     scheduled_at: a.scheduled_at,
     created_at: a.created_at,
-    type_name: apptType?.name ?? null,
-    room_name: room?.name ?? null,
-    modality: apptType?.modality ?? null,
+    type_name: a.type_name ?? null,
+    room_name: a.room_name ?? null,
+    modality: a.modality ?? null,
     appointment_status: a.status,
     session_status: latestSession?.status ?? null,
     bucket,
-    location_timezone: location?.timezone ?? null,
+    location_timezone: a.location_timezone ?? null,
   };
 }
 
@@ -670,43 +745,49 @@ async function fetchAppointmentById(
 // caller-supplied via query param, so we must prove the session participates
 // the authorised patient before returning row metadata.
 async function fetchOnDemandSessionById(
-  supabase: SupabaseClient,
   sessionId: string,
   patientId: string,
   now: Date,
 ): Promise<AppointmentRow | null> {
-  const { data: participation } = await supabase
-    .from("session_participants")
-    .select("session_id")
-    .eq("session_id", sessionId)
-    .eq("patient_id", patientId)
-    .maybeSingle();
+  const [participation] = await db
+    .select({ session_id: sessionParticipants.sessionId })
+    .from(sessionParticipants)
+    .where(
+      and(
+        eq(sessionParticipants.sessionId, sessionId),
+        eq(sessionParticipants.patientId, patientId),
+      ),
+    )
+    .limit(1);
   if (!participation) return null;
 
-  const { data: s } = await supabase
-    .from("sessions")
-    .select(
-      `id, status, session_started_at, session_ended_at, created_at, location_id, room_id, appointment_id,
-       locations ( timezone ),
-       rooms ( name )`,
+  const [s] = await db
+    .select({
+      id: sessionsT.id,
+      status: sessionsT.status,
+      session_started_at: sessionsT.sessionStartedAt,
+      session_ended_at: sessionsT.sessionEndedAt,
+      created_at: sessionsT.createdAt,
+      location_id: sessionsT.locationId,
+      room_id: sessionsT.roomId,
+      appointment_id: sessionsT.appointmentId,
+      location_timezone: locationsT.timezone,
+      room_name: roomsT.name,
+    })
+    .from(sessionsT)
+    .leftJoin(locationsT, eq(locationsT.id, sessionsT.locationId))
+    .leftJoin(roomsT, eq(roomsT.id, sessionsT.roomId))
+    .where(
+      and(eq(sessionsT.id, sessionId), isNull(sessionsT.appointmentId)),
     )
-    .eq("id", sessionId)
-    .is("appointment_id", null)
-    .maybeSingle();
+    .limit(1);
 
   if (!s) return null;
-
-  const location = (Array.isArray(s.locations) ? s.locations[0] : s.locations) as
-    | { timezone: string | null }
-    | null;
-  const room = (Array.isArray(s.rooms) ? s.rooms[0] : s.rooms) as
-    | { name: string | null }
-    | null;
 
   const placementInstant = s.session_started_at ?? s.created_at;
   const bucket: Bucket = bucketByLocalDay(
     placementInstant,
-    location?.timezone ?? null,
+    s.location_timezone ?? null,
     now,
   );
 
@@ -716,11 +797,11 @@ async function fetchOnDemandSessionById(
     scheduled_at: s.session_started_at,
     created_at: s.created_at,
     type_name: "On-demand",
-    room_name: room?.name ?? null,
+    room_name: s.room_name ?? null,
     modality: "telehealth",
     appointment_status: null,
     session_status: s.status,
     bucket,
-    location_timezone: location?.timezone ?? null,
+    location_timezone: s.location_timezone ?? null,
   };
 }
