@@ -106,6 +106,59 @@ export async function requireAuthenticatedUser(): Promise<
   return { ok: true, userId };
 }
 
+// ---------------------------------------------------------------------------
+// Prototype staff-scope cache.
+//
+// Staff location/org membership is checked by many API routes during one page
+// load. The auth cookie already gives us the user id locally; this cache avoids
+// re-querying staff_assignments for the same user on each adjacent request.
+//
+// Trade-off: assignment changes can take up to this TTL to affect a warm server
+// process. Acceptable for the prototype; production should invalidate this on
+// staff-assignment writes or use an access-version/session-revocation model.
+// ---------------------------------------------------------------------------
+const STAFF_SCOPE_TTL_MS = 5 * 60 * 1000;
+
+interface StaffAccessScope {
+  locationRoles: Map<string, UserRole>;
+  orgIds: Set<string>;
+}
+
+const staffScopeCache = new Map<
+  string,
+  { expiresAt: number; scope: StaffAccessScope }
+>();
+
+async function getUserAccessScope(userId: string): Promise<StaffAccessScope> {
+  const cached = staffScopeCache.get(userId);
+  if (cached && cached.expiresAt > Date.now()) return cached.scope;
+
+  const assignments = await db
+    .select({
+      location_id: staffAssignments.locationId,
+      role: staffAssignments.role,
+      org_id: locationsT.orgId,
+    })
+    .from(staffAssignments)
+    .innerJoin(locationsT, eq(locationsT.id, staffAssignments.locationId))
+    .where(eq(staffAssignments.userId, userId));
+
+  const locationRoles = new Map<string, UserRole>();
+  const orgIds = new Set<string>();
+
+  for (const assignment of assignments) {
+    locationRoles.set(assignment.location_id, assignment.role as UserRole);
+    if (assignment.org_id) orgIds.add(assignment.org_id);
+  }
+
+  const scope = { locationRoles, orgIds };
+  staffScopeCache.set(userId, {
+    scope,
+    expiresAt: Date.now() + STAFF_SCOPE_TTL_MS,
+  });
+  return scope;
+}
+
 /**
  * Gate for location-scoped staff API routes: authenticates the caller, then
  * verifies a `staff_assignment` to the requested location. Returns the user +
@@ -128,20 +181,11 @@ export async function requireStaffLocationAccess(
   const userId = await getAuthenticatedUserId();
   if (!userId) return { ok: false, status: 401 };
 
-  const [assignment] = await db
-    .select({ role: staffAssignments.role })
-    .from(staffAssignments)
-    .where(
-      and(
-        eq(staffAssignments.userId, userId),
-        eq(staffAssignments.locationId, locationId)
-      )
-    )
-    .limit(1);
+  const scope = await getUserAccessScope(userId);
+  const role = scope.locationRoles.get(locationId);
+  if (!role) return { ok: false, status: 403 };
 
-  if (!assignment) return { ok: false, status: 403 };
-
-  return { ok: true, userId, role: assignment.role as UserRole };
+  return { ok: true, userId, role };
 }
 
 /**
@@ -231,15 +275,8 @@ export async function assertStaffCanAccessSubmission(
  * below so the membership rule lives in one place.
  */
 async function fetchUserOrgIds(userId: string): Promise<Set<string>> {
-  const assignments = await db
-    .select({ org_id: locationsT.orgId })
-    .from(staffAssignments)
-    .innerJoin(locationsT, eq(locationsT.id, staffAssignments.locationId))
-    .where(eq(staffAssignments.userId, userId));
-
-  return new Set(
-    assignments.map((a) => a.org_id).filter((id): id is string => !!id),
-  );
+  const scope = await getUserAccessScope(userId);
+  return scope.orgIds;
 }
 
 /**
