@@ -21,26 +21,41 @@ export interface WorkflowsInitData {
 export const fetchWorkflowsInit = cache(async (orgId: string): Promise<WorkflowsInitData> => {
   const supabase = createServiceClient();
 
-  const [
-    typesRes,
-    linksRes,
-    allBlocksRes,
-    allTemplatesRes,
-    runsRes,
-    pathwaysRes,
-  ] = await Promise.all([
+  // Phase 1: the org-scoped roots. Templates give us the bounded set of
+  // template IDs the dependent queries below scope to, so blocks/runs/links
+  // never scan the whole platform's data.
+  const [typesRes, allTemplatesRes, pathwaysRes] = await Promise.all([
     supabase.from("appointment_types").select("*").eq("org_id", orgId).order("name"),
-    supabase.from("type_workflow_links").select("appointment_type_id, workflow_template_id").eq("direction", "pre_appointment"),
-    supabase.from("workflow_action_blocks").select("*").order("sort_order"),
     supabase.from("workflow_templates").select("*").eq("org_id", orgId),
-    supabase.from("appointment_workflow_runs").select("workflow_template_id").eq("status", "active"),
     supabase.from("outcome_pathways").select("*").eq("org_id", orgId).order("name"),
   ]);
 
-  // --- Pre-appointment ---
   const types = typesRes.data ?? [];
-  const typeIds = new Set(types.map((t) => t.id));
-  const links = (linksRes.data ?? []).filter((l) => typeIds.has(l.appointment_type_id));
+  const typeIds = types.map((t) => t.id);
+  const orgTemplateIds = (allTemplatesRes.data ?? []).map((t) => t.id);
+
+  // Phase 2: dependents, all scoped to this org's types/templates.
+  const [linksRes, allBlocksRes, runsRes] = await Promise.all([
+    supabase
+      .from("type_workflow_links")
+      .select("appointment_type_id, workflow_template_id")
+      .eq("direction", "pre_appointment")
+      .in("appointment_type_id", typeIds.length ? typeIds : ["00000000-0000-0000-0000-000000000000"]),
+    supabase
+      .from("workflow_action_blocks")
+      .select("*")
+      .in("template_id", orgTemplateIds.length ? orgTemplateIds : ["00000000-0000-0000-0000-000000000000"])
+      .order("sort_order"),
+    supabase
+      .from("appointment_workflow_runs")
+      .select("workflow_template_id")
+      .eq("status", "active")
+      .in("workflow_template_id", orgTemplateIds.length ? orgTemplateIds : ["00000000-0000-0000-0000-000000000000"]),
+  ]);
+
+  // --- Pre-appointment ---
+  const typeIdSet = new Set(typeIds);
+  const links = (linksRes.data ?? []).filter((l) => typeIdSet.has(l.appointment_type_id));
   const linkByType = new Map(links.map((l) => [l.appointment_type_id, l.workflow_template_id]));
   const preTemplateIds = new Set(links.map((l) => l.workflow_template_id));
 

@@ -3,11 +3,13 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { fetchWorkflowsInit } from "@/lib/clinic/fetchers/workflows";
 import { requireStaffOrgAccess } from "@/lib/auth/staff-access";
 
-// GET /api/workflows/init?org_id=xxx&direction=pre_appointment|post_appointment
-// Returns data the workflows page needs for the requested direction.
+// GET /api/workflows/init?org_id=xxx
+// Returns everything the workflows page needs — both pre- and
+// post-appointment templates/blocks plus published forms — in ONE payload.
+// fetchWorkflowsInit already computes both directions, so a single call
+// avoids the previous two-request cold load that discarded half of each.
 export async function GET(request: NextRequest) {
   const orgId = request.nextUrl.searchParams.get("org_id");
-  const direction = request.nextUrl.searchParams.get("direction") ?? "pre_appointment";
 
   if (!orgId) {
     return NextResponse.json({ error: "org_id required" }, { status: 400 });
@@ -35,22 +37,14 @@ export async function GET(request: NextRequest) {
 
     const forms = (formsRes.data ?? []).map((f) => ({ id: f.id, name: f.name }));
 
-    if (direction === "pre_appointment") {
-      return NextResponse.json({
-        appointment_types: workflows.appointmentTypes,
-        outcome_pathways: [],
-        forms,
-        templates: workflows.preWorkflowTemplates,
-        blocks: workflows.preWorkflowBlocks,
-      });
-    }
-
     return NextResponse.json({
-      appointment_types: [],
+      appointment_types: workflows.appointmentTypes,
       outcome_pathways: workflows.outcomePathways,
       forms,
-      templates: workflows.postWorkflowTemplates,
-      blocks: workflows.postWorkflowBlocks,
+      pre_templates: workflows.preWorkflowTemplates,
+      pre_blocks: workflows.preWorkflowBlocks,
+      post_templates: workflows.postWorkflowTemplates,
+      post_blocks: workflows.postWorkflowBlocks,
     });
   } catch (err) {
     console.error("[WORKFLOWS INIT] error:", err);

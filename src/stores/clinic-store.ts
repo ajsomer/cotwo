@@ -267,8 +267,16 @@ export const useClinicStore = create<ClinicStore>()(
             sort_order: r.sort_order,
             payments_enabled: r.payments_enabled ?? false,
           }));
+          // paymentRooms is a projection of the same rooms — derive it here so
+          // refreshPaymentConfig doesn't re-fetch /api/settings/rooms.
+          const paymentRooms: RoomPayment[] = roomsWithClinicians.map((r) => ({
+            id: r.id,
+            name: r.name,
+            room_type: r.room_type,
+            payments_enabled: r.payments_enabled ?? false,
+          }));
           set(
-            { rooms, roomsWithClinicians, roomsLoaded: true, roomsFetchedAt: Date.now() },
+            { rooms, roomsWithClinicians, paymentRooms, roomsLoaded: true, roomsFetchedAt: Date.now() },
             false,
             "refreshRooms"
           );
@@ -352,28 +360,24 @@ export const useClinicStore = create<ClinicStore>()(
 
       refreshWorkflows: async (orgId) => {
         try {
-          const [preData, postData] = await Promise.all([
-            fetchJson<{
-              appointment_types: AppointmentTypeRow[];
-              outcome_pathways: OutcomePathwayRow[];
-              forms: { id: string; name: string }[];
-              templates: Record<string, DbWorkflowTemplate>;
-              blocks: Record<string, DbWorkflowActionBlock[]>;
-            }>(`/api/workflows/init?org_id=${orgId}&direction=pre_appointment`),
-            fetchJson<{
-              outcome_pathways: OutcomePathwayRow[];
-              templates: Record<string, DbWorkflowTemplate>;
-              blocks: Record<string, DbWorkflowActionBlock[]>;
-            }>(`/api/workflows/init?org_id=${orgId}&direction=post_appointment`),
-          ]);
+          // One request: the init route returns both directions + forms.
+          const data = await fetchJson<{
+            appointment_types: AppointmentTypeRow[];
+            outcome_pathways: OutcomePathwayRow[];
+            forms: { id: string; name: string }[];
+            pre_templates: Record<string, DbWorkflowTemplate>;
+            pre_blocks: Record<string, DbWorkflowActionBlock[]>;
+            post_templates: Record<string, DbWorkflowTemplate>;
+            post_blocks: Record<string, DbWorkflowActionBlock[]>;
+          }>(`/api/workflows/init?org_id=${orgId}`);
           set(
             {
-              appointmentTypes: preData.appointment_types,
-              outcomePathways: postData.outcome_pathways ?? [],
-              preWorkflowTemplates: preData.templates,
-              preWorkflowBlocks: preData.blocks,
-              postWorkflowTemplates: postData.templates,
-              postWorkflowBlocks: postData.blocks,
+              appointmentTypes: data.appointment_types,
+              outcomePathways: data.outcome_pathways ?? [],
+              preWorkflowTemplates: data.pre_templates,
+              preWorkflowBlocks: data.pre_blocks,
+              postWorkflowTemplates: data.post_templates,
+              postWorkflowBlocks: data.post_blocks,
               workflowsLoaded: true,
             },
             false,
@@ -386,25 +390,14 @@ export const useClinicStore = create<ClinicStore>()(
 
       refreshPaymentConfig: async (locationId) => {
         try {
-          const [config, roomsData] = await Promise.all([
-            fetchJson<PaymentsData>(
-              `/api/settings/payments?location_id=${locationId}`
-            ),
-            fetchJson<{ rooms: RoomWithClinicians[] }>(
-              `/api/settings/rooms?location_id=${locationId}`
-            ),
-          ]);
-          if (get().locationId !== locationId) return;
-          const paymentRooms: RoomPayment[] = (roomsData.rooms ?? []).map(
-            (r) => ({
-              id: r.id,
-              name: r.name,
-              room_type: r.room_type,
-              payments_enabled: r.payments_enabled ?? false,
-            })
+          // paymentRooms is derived in refreshRooms (same /api/settings/rooms
+          // payload); here we only need the payment config itself.
+          const config = await fetchJson<PaymentsData>(
+            `/api/settings/payments?location_id=${locationId}`
           );
+          if (get().locationId !== locationId) return;
           set(
-            { paymentConfig: config, paymentRooms: paymentRooms, paymentConfigLoaded: true },
+            { paymentConfig: config, paymentConfigLoaded: true },
             false,
             "refreshPaymentConfig"
           );

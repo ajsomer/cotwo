@@ -19,6 +19,31 @@ export const fetchRunsheetSessions = cache(async (
   const endOfDay = new Date(targetDate);
   endOfDay.setHours(23, 59, 59, 999);
 
+  // A session belongs to a day by its SCHEDULED date, not its creation date.
+  // "Plan tomorrow" creates the session today but the appointment is scheduled
+  // for tomorrow — filtering on created_at would wrongly show it today and
+  // hide it tomorrow. So: first resolve the appointments scheduled for the day
+  // at this location, then match sessions to those. On-demand sessions have no
+  // appointment and legitimately key off their own created_at.
+  const { data: dayAppointments } = await supabase
+    .from('appointments')
+    .select('id')
+    .eq('location_id', locationId)
+    .gte('scheduled_at', startOfDay.toISOString())
+    .lte('scheduled_at', endOfDay.toISOString());
+
+  const dayAppointmentIds = (dayAppointments ?? []).map((a) => a.id);
+
+  // sessions for today = (scheduled appts today) OR (on-demand created today).
+  // PostgREST .or() on a foreign key + null check, scoped to this location.
+  const apptInClause = dayAppointmentIds.length
+    ? `appointment_id.in.(${dayAppointmentIds.join(',')})`
+    : null;
+  const onDemandClause = `and(appointment_id.is.null,created_at.gte.${startOfDay.toISOString()},created_at.lte.${endOfDay.toISOString()})`;
+  const orFilter = apptInClause
+    ? `${apptInClause},${onDemandClause}`
+    : onDemandClause;
+
   const { data, error } = await supabase
     .from('sessions')
     .select(`
@@ -79,8 +104,7 @@ export const fetchRunsheetSessions = cache(async (
       )
     `)
     .eq('location_id', locationId)
-    .gte('created_at', startOfDay.toISOString())
-    .lte('created_at', endOfDay.toISOString());
+    .or(orFilter);
 
   if (error) {
     console.error('Failed to fetch runsheet sessions:', error);

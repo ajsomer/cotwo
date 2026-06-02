@@ -29,32 +29,43 @@ export const fetchReadinessSlice = cache(async (
   const supabase = createServiceClient();
   const now = new Date();
 
-  const { data: runs } = await supabase
+  // Active runs for THIS location only — scoped via the appointment's
+  // location (inner join). One query covers both directions; we partition in
+  // memory. This is a correctness fix: previously runs/counts weren't
+  // location-scoped, so the count badges leaked other locations' workflow
+  // runs in multi-location orgs.
+  const { data: allRuns } = await supabase
     .from("appointment_workflow_runs")
-    .select("id, appointment_id, workflow_template_id, direction, status")
+    .select(
+      "id, appointment_id, workflow_template_id, direction, status, appointments!inner(location_id)"
+    )
     .eq("status", "active")
-    .eq("direction", direction);
-
-  const runsByAppointment = new Map<string, string[]>();
-  const templateIdsByAppointment = new Map<string, string>();
-  for (const run of runs ?? []) {
-    const list = runsByAppointment.get(run.appointment_id) ?? [];
-    list.push(run.id);
-    runsByAppointment.set(run.appointment_id, list);
-    templateIdsByAppointment.set(run.appointment_id, run.workflow_template_id);
-  }
+    .eq("appointments.location_id", locationId);
 
   const oppositeDirection: ReadinessDirection =
     direction === "pre_appointment" ? "post_appointment" : "pre_appointment";
-  const { count: oppositeCount } = await supabase
-    .from("appointment_workflow_runs")
-    .select("id", { count: "exact", head: true })
-    .eq("status", "active")
-    .eq("direction", oppositeDirection);
 
+  const runsByAppointment = new Map<string, string[]>();
+  const templateIdsByAppointment = new Map<string, string>();
+  let oppositeApptCount = 0;
+  const oppositeAppointments = new Set<string>();
+  for (const run of allRuns ?? []) {
+    if (run.direction === direction) {
+      const list = runsByAppointment.get(run.appointment_id) ?? [];
+      list.push(run.id);
+      runsByAppointment.set(run.appointment_id, list);
+      templateIdsByAppointment.set(run.appointment_id, run.workflow_template_id);
+    } else if (run.direction === oppositeDirection) {
+      oppositeAppointments.add(run.appointment_id);
+    }
+  }
+  oppositeApptCount = oppositeAppointments.size;
+
+  // Counts are per-appointment (an appointment with N runs counts once),
+  // matching runsByAppointment.size for the active direction.
   const counts: ReadinessCounts = {
-    pre: direction === "pre_appointment" ? runsByAppointment.size : oppositeCount ?? 0,
-    post: direction === "post_appointment" ? runsByAppointment.size : oppositeCount ?? 0,
+    pre: direction === "pre_appointment" ? runsByAppointment.size : oppositeApptCount,
+    post: direction === "post_appointment" ? runsByAppointment.size : oppositeApptCount,
   };
 
   if (runsByAppointment.size === 0) {
