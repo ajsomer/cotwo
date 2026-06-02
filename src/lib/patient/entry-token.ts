@@ -23,27 +23,47 @@ export interface EntryTokenScope {
   patientId: string | null;
 }
 
+function relOrgId(value: unknown): string | undefined {
+  const v = Array.isArray(value) ? value[0] : value;
+  return (v as { org_id?: string } | null)?.org_id;
+}
+
 export async function resolveEntryTokenScope(
   service: SupabaseClient,
   token: string,
 ): Promise<EntryTokenScope | null> {
   if (!token || typeof token !== "string") return null;
 
-  // 1. Session entry token (SMS-link entry) — most specific.
-  const { data: session } = await service
-    .from("sessions")
-    .select(
-      "id, appointment_id, room_id, location_id, locations!inner(org_id)",
-    )
-    .eq("entry_token", token)
-    .maybeSingle();
+  // A token only ever matches one of these distinct token columns, so run all
+  // lookups concurrently and take the single hit. (Sequential fallthrough made
+  // a journey token pay 3 wasted round-trips before resolving.)
+  const [sessionRes, roomRes, locationRes, journeyRes] = await Promise.all([
+    service
+      .from("sessions")
+      .select("id, appointment_id, room_id, location_id, locations!inner(org_id)")
+      .eq("entry_token", token)
+      .maybeSingle(),
+    service
+      .from("rooms")
+      .select("id, location_id, locations!inner(org_id)")
+      .eq("link_token", token)
+      .maybeSingle(),
+    service
+      .from("locations")
+      .select("id, org_id")
+      .eq("qr_token", token)
+      .maybeSingle(),
+    service
+      .from("intake_package_journeys")
+      .select("patient_id, appointment_id, appointments!inner(org_id, location_id)")
+      .eq("journey_token", token)
+      .maybeSingle(),
+  ]);
 
+  // 1. Session entry token (SMS-link entry) — most specific.
+  const session = sessionRes.data;
   if (session) {
-    const loc = session.locations as
-      | { org_id: string }
-      | { org_id: string }[]
-      | null;
-    const orgId = Array.isArray(loc) ? loc[0]?.org_id : loc?.org_id;
+    const orgId = relOrgId(session.locations);
     if (orgId) {
       return {
         orgId,
@@ -57,18 +77,9 @@ export async function resolveEntryTokenScope(
   }
 
   // 2. Room link token (on-demand entry) — no session yet.
-  const { data: room } = await service
-    .from("rooms")
-    .select("id, location_id, locations!inner(org_id)")
-    .eq("link_token", token)
-    .maybeSingle();
-
+  const room = roomRes.data;
   if (room) {
-    const loc = room.locations as
-      | { org_id: string }
-      | { org_id: string }[]
-      | null;
-    const orgId = Array.isArray(loc) ? loc[0]?.org_id : loc?.org_id;
+    const orgId = relOrgId(room.locations);
     if (orgId) {
       return {
         orgId,
@@ -82,12 +93,7 @@ export async function resolveEntryTokenScope(
   }
 
   // 3. Location QR token (in-person QR entry) — no room/session.
-  const { data: location } = await service
-    .from("locations")
-    .select("id, org_id")
-    .eq("qr_token", token)
-    .maybeSingle();
-
+  const location = locationRes.data;
   if (location) {
     return {
       orgId: location.org_id,
@@ -101,14 +107,7 @@ export async function resolveEntryTokenScope(
 
   // 4. Intake journey token — used by the embedded intake flow. Binds to a
   //    patient + appointment; org/location come from the appointment.
-  const { data: journey } = await service
-    .from("intake_package_journeys")
-    .select(
-      "patient_id, appointment_id, appointments!inner(org_id, location_id)",
-    )
-    .eq("journey_token", token)
-    .maybeSingle();
-
+  const journey = journeyRes.data;
   if (journey) {
     const appt = journey.appointments as
       | { org_id: string; location_id: string }

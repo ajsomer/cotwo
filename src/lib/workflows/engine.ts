@@ -327,7 +327,8 @@ export async function executeScheduledActions(
  * already decided this should fire now.
  */
 export async function fireActionNow(
-  actionId: string
+  actionId: string,
+  options: { suppressNotification?: boolean } = {}
 ): Promise<
   | { status: "fired"; resultData: Record<string, unknown> | null }
   | { status: "skipped"; reason: string }
@@ -420,6 +421,7 @@ export async function fireActionNow(
     parentActionBlockId: block.parent_action_block_id ?? null,
     sessionId: claimed.session_id ?? null,
     sessionEndedAt: sessionData?.session_ended_at ?? null,
+    suppressNotification: options.suppressNotification ?? false,
   });
 
   if (handlerResult.status === "failed") {

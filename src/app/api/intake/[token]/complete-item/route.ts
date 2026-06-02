@@ -200,7 +200,12 @@ async function fireAddToRunsheetEarly(
   );
   if (!runsheetAction) return null;
 
-  const result = await fireActionNow(runsheetAction.id);
+  // The patient is finishing intake in-app — they're about to be routed to the
+  // waiting room, so skip the "join here" SMS. Sending it here is redundant and
+  // (with a real provider) blocks this response on the SMS round-trip.
+  const result = await fireActionNow(runsheetAction.id, {
+    suppressNotification: true,
+  });
   if (result.status !== 'fired') return null;
   return ((result.resultData as { entry_token?: string } | null)?.entry_token) ?? null;
 }

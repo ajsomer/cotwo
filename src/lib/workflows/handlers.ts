@@ -20,6 +20,13 @@ export interface HandlerContext {
   sessionId: string | null;
   /** Session ended timestamp for post-appointment merge field resolution. */
   sessionEndedAt: string | null;
+  /**
+   * When true, handlers that would send an outbound patient SMS skip it (the
+   * session/state mutation still happens). Set on the early-fire path where the
+   * patient is already in-app finishing intake — they don't need a "join here"
+   * SMS, and the request shouldn't block on the provider round-trip.
+   */
+  suppressNotification?: boolean;
 }
 
 /**
@@ -349,20 +356,25 @@ async function handleAddToRunsheet(ctx: HandlerContext): Promise<ActionHandlerRe
     });
   }
 
-  const sessionLink = `${getBaseUrl()}/entry/${entryToken}`;
-
-  const sms = getSmsProvider();
-  const phoneNumber = appointment.phone_number ?? ctx.phoneNumber;
-  const result = await sms.sendNotification(
-    phoneNumber,
-    `Hi ${ctx.patientFirstName}, your appointment is ready. Join here: ${sessionLink}`
-  );
-
-  if (!result.success) {
-    // Session was created but SMS failed — log but don't fail the action
-    console.error(
-      `[WORKFLOW] add_to_runsheet: Session ${session.id} created but SMS failed: ${result.error}`
+  // Skip the "join here" SMS when the patient is already in-app (early-fire
+  // from the intake flow). Sending it there is pointless and, with a real SMS
+  // provider, makes the patient wait on the provider round-trip before they're
+  // routed onward. The scheduled/cron path still sends it (patient absent).
+  if (!ctx.suppressNotification) {
+    const sessionLink = `${getBaseUrl()}/entry/${entryToken}`;
+    const sms = getSmsProvider();
+    const phoneNumber = appointment.phone_number ?? ctx.phoneNumber;
+    const result = await sms.sendNotification(
+      phoneNumber,
+      `Hi ${ctx.patientFirstName}, your appointment is ready. Join here: ${sessionLink}`
     );
+
+    if (!result.success) {
+      // Session was created but SMS failed — log but don't fail the action
+      console.error(
+        `[WORKFLOW] add_to_runsheet: Session ${session.id} created but SMS failed: ${result.error}`
+      );
+    }
   }
 
   return {
