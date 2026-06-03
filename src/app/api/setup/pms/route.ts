@@ -1,7 +1,6 @@
 import { db } from "@/lib/db";
 import {
   pmsConnections,
-  appointmentTypes,
   forms as formsT,
   rooms as roomsT,
   users as usersT,
@@ -10,22 +9,8 @@ import {
 import { eq } from "drizzle-orm";
 import { resolveDefaultStaffOrg, getAuthenticatedUserId } from "@/lib/auth/staff-access";
 import { seedDefaultWorkflows } from "@/lib/workflows/seed-defaults";
+import { newPatientIntakeSchema, defaultFormSchema } from "@/lib/survey/identity-page";
 import { NextResponse, type NextRequest } from "next/server";
-
-const GENTU_APPOINTMENT_TYPES = [
-  { name: "Initial Consultation", modality: "telehealth", duration_minutes: 60, default_fee_cents: 18000 },
-  { name: "Follow-up Consultation", modality: "telehealth", duration_minutes: 30, default_fee_cents: 12000 },
-  { name: "Telehealth Consultation", modality: "telehealth", duration_minutes: 45, default_fee_cents: 15000 },
-  { name: "Review Appointment", modality: "in_person", duration_minutes: 30, default_fee_cents: 12000 },
-  { name: "Brief Check-in", modality: "in_person", duration_minutes: 15, default_fee_cents: 6000 },
-  { name: "Assessment", modality: "telehealth", duration_minutes: 60, default_fee_cents: 20000 },
-  { name: "Group Session", modality: "in_person", duration_minutes: 90, default_fee_cents: 8000 },
-  { name: "Home Visit", modality: "in_person", duration_minutes: 60, default_fee_cents: 22000 },
-  { name: "Intake Assessment", modality: "telehealth", duration_minutes: 60, default_fee_cents: 20000 },
-  { name: "Discharge Planning", modality: "in_person", duration_minutes: 30, default_fee_cents: 12000 },
-  { name: "Case Conference", modality: "telehealth", duration_minutes: 45, default_fee_cents: 0 },
-  { name: "Supervision", modality: "telehealth", duration_minutes: 60, default_fee_cents: 0 },
-];
 
 const GENTU_FORMS = [
   { name: "New Patient Intake", description: "Comprehensive new patient intake form" },
@@ -98,34 +83,23 @@ export async function POST(request: NextRequest) {
 }
 
 async function seedGentuData(orgId: string, locationId: string) {
-  // Existing names (one round trip each rather than per-record)
-  const [existingTypes, existingForms, existingRooms] = await Promise.all([
-    db.select({ name: appointmentTypes.name }).from(appointmentTypes).where(eq(appointmentTypes.orgId, orgId)),
+  // NOTE: appointment types are owned solely by org/clinic setup
+  // (seedNoPmsFloor). PMS connect must NOT create them — doing so produced
+  // duplicate types across re-connects. We seed only the PMS-import demo data
+  // (forms, rooms, clinicians) here.
+  const [existingForms, existingRooms] = await Promise.all([
     db.select({ name: formsT.name }).from(formsT).where(eq(formsT.orgId, orgId)),
     db.select({ name: roomsT.name }).from(roomsT).where(eq(roomsT.locationId, locationId)),
   ]);
 
-  const typeNames = new Set((existingTypes ?? []).map((r) => r.name));
   const formNames = new Set((existingForms ?? []).map((r) => r.name));
   const roomNames = new Set((existingRooms ?? []).map((r) => r.name));
 
-  const newTypes = GENTU_APPOINTMENT_TYPES.filter((t) => !typeNames.has(t.name));
   const newForms = GENTU_FORMS.filter((f) => !formNames.has(f.name));
   const newRooms = GENTU_ROOMS.filter((r) => !roomNames.has(r));
 
   // Bulk inserts in parallel
   await Promise.all([
-    newTypes.length
-      ? db.insert(appointmentTypes).values(
-          newTypes.map((t) => ({
-            orgId,
-            name: t.name,
-            modality: t.modality as typeof appointmentTypes.$inferInsert.modality,
-            durationMinutes: t.duration_minutes,
-            defaultFeeCents: t.default_fee_cents,
-          }))
-        )
-      : Promise.resolve(),
     newForms.length
       ? db.insert(formsT).values(
           newForms.map((f) => ({
@@ -134,7 +108,11 @@ async function seedGentuData(orgId: string, locationId: string) {
             description: f.description,
             status: "published",
             isPlatformDemo: false,
-            schema: {},
+            // "New Patient Intake" ships with real fields; others are shells.
+            schema:
+              f.name === "New Patient Intake"
+                ? newPatientIntakeSchema()
+                : defaultFormSchema(),
           }))
         )
       : Promise.resolve(),

@@ -92,6 +92,39 @@ export interface WorkflowAction {
   resolved_by?: string | null;
   resolution_note?: string | null;
   pathway_name?: string | null;
+  // Workflow-run grouping (patient pane Workflows section). Nullable: legacy
+  // actions predating runs, or actions with no run linkage, carry null run id
+  // and group under a per-appointment "Other messages" fallback block.
+  workflow_run_id?: string | null;
+  workflow_template_name?: string | null;
+  workflow_direction?: "pre_appointment" | "post_appointment" | null;
+  run_appointment_id?: string | null;
+  run_started_at?: string | null;
+  // The run's appointment scheduled_at — the date shown in the block header.
+  run_appointment_scheduled_at?: string | null;
+  // Appointment type name (what the Workflows tab labels workflows by). The
+  // block header prefers this over the template name.
+  appointment_type_name?: string | null;
+  // "action" (patient must do — forms, card, consent, intake), "message" (the
+  // workflow's configurable SMS), or "system" (add_to_runsheet, plain
+  // appointment reminders — hidden from the Workflows section). Drives the
+  // Actions-first / Messages split in the pane.
+  action_kind?: "action" | "message" | "system";
+  // The configured SMS template (placeholders unresolved) for a message-type
+  // action — shown in the expandable Messages dropdown. Null when there's no
+  // meaningful template to show.
+  message_template?: string | null;
+  // For an intake_package action: its constituent to-dos broken out of the
+  // intake_package_journeys row, so the pane lists each form / card / consent
+  // with its own done/outstanding state.
+  intake_items?: IntakeItem[];
+}
+
+export interface IntakeItem {
+  key: string;
+  label: string;
+  kind: "form" | "card" | "consent";
+  completed: boolean;
 }
 
 export interface OutstandingForm {

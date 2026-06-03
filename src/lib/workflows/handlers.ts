@@ -223,6 +223,7 @@ async function handleIntakePackage(ctx: HandlerContext): Promise<ActionHandlerRe
     includes_card_capture?: boolean;
     includes_consent?: boolean;
     form_ids?: string[];
+    message_body?: string;
   };
 
   const journeyToken = crypto.randomUUID();
@@ -249,7 +250,15 @@ async function handleIntakePackage(ctx: HandlerContext): Promise<ActionHandlerRe
   }
 
   const url = `${getBaseUrl()}/intake/${journeyToken}`;
-  const message = `Hi ${ctx.patientFirstName}, please complete your intake before your appointment at ${ctx.clinicName}: ${url}`;
+  // Use the configured initial SMS if set (interpolating merge fields, same as
+  // handleIntakeReminder); otherwise fall back to the standard body.
+  const template = (config.message_body as string) ?? "";
+  const message = template
+    ? template
+        .replace(/\{patient_first_name\}/g, ctx.patientFirstName)
+        .replace(/\{link\}/g, url)
+        .replace(/\{clinic_name\}/g, ctx.clinicName)
+    : `Hi ${ctx.patientFirstName}, please complete your intake before your appointment at ${ctx.clinicName}: ${url}`;
 
   const sms = getSmsProvider();
   const result = await sms.sendNotification(ctx.phoneNumber, message);

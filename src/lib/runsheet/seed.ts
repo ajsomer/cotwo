@@ -90,22 +90,23 @@ export async function seedDemoData() {
     await db.delete(patientPhoneNumbers);
     await db.delete(patientsT);
 
-    // Upsert appointment types for this org (spec: 5 default types)
-    await db
-      .insert(appointmentTypes)
-      .values([
-        { id: "00000000-0000-0000-0000-000000003001", orgId: ORG_ID, name: "Initial Consultation", modality: "telehealth", durationMinutes: 60, defaultFeeCents: 22000, source: "coviu" },
-        { id: "00000000-0000-0000-0000-000000003002", orgId: ORG_ID, name: "Follow-up Consultation", modality: "telehealth", durationMinutes: 45, defaultFeeCents: 18000, source: "coviu" },
-        { id: "00000000-0000-0000-0000-000000003003", orgId: ORG_ID, name: "Review Appointment", modality: "in_person", durationMinutes: 30, defaultFeeCents: 15000, source: "coviu" },
-        { id: "00000000-0000-0000-0000-000000003004", orgId: ORG_ID, name: "Telehealth Consultation", modality: "telehealth", durationMinutes: 45, defaultFeeCents: 18000, source: "coviu" },
-        { id: "00000000-0000-0000-0000-000000003005", orgId: ORG_ID, name: "Brief Check-in", modality: "telehealth", durationMinutes: 15, defaultFeeCents: 9000, source: "coviu" },
-      ])
-      .onConflictDoUpdate({
-        target: appointmentTypes.id,
-        set: {
-          orgId: ORG_ID,
-        },
-      });
+    // Appointment types are owned by org/clinic setup, NOT the demo seed — the
+    // seed only creates patient/session data. Read the org's existing types to
+    // attach to the seeded appointments (no type creation here).
+    const orgTypes = await db
+      .select({ id: appointmentTypes.id })
+      .from(appointmentTypes)
+      .where(eq(appointmentTypes.orgId, ORG_ID))
+      .orderBy(appointmentTypes.createdAt);
+
+    if (!orgTypes || orgTypes.length === 0) {
+      return {
+        success: true,
+        warning:
+          "No appointment types found — seed patient data not created. Set up appointment types in Settings first.",
+      };
+    }
+    const appointmentTypeIds = orgTypes.map((t) => t.id);
 
     const patientData = [
       { id: "00000000-0000-0000-0000-000000004001", orgId: ORG_ID, firstName: "Emily", lastName: "Chen", dateOfBirth: "1992-03-15" },
@@ -210,13 +211,6 @@ export async function seedDemoData() {
       const clinicStartMs = d.getTime() - offsetMs; // time at clinic open
       return new Date(clinicStartMs + slotIdx * SLOT_MINUTES * 60_000);
     }
-
-    const appointmentTypeIds = [
-      "00000000-0000-0000-0000-000000003001",
-      "00000000-0000-0000-0000-000000003002",
-      "00000000-0000-0000-0000-000000003003",
-      "00000000-0000-0000-0000-000000003004",
-    ];
 
     // Assign each room ~4-6 slots spread across the day
     // Each room gets: past slots (done), one outstanding action, current/near slot, future slots (upcoming)

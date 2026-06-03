@@ -33,6 +33,7 @@ export async function POST(request: NextRequest) {
       reminders,
       at_risk_after_days,
       overdue_after_days,
+      initial_message,
     } = body;
 
     // --- Server-side validation ---
@@ -134,7 +135,8 @@ export async function POST(request: NextRequest) {
         ${formIdList as string[]}::uuid[],
         ${remindersJson}::jsonb,
         ${at_risk_after_days ?? null}::integer,
-        ${overdue_after_days ?? null}::integer
+        ${overdue_after_days ?? null}::integer,
+        ${initial_message ?? null}::text
       ) as result
     `);
 

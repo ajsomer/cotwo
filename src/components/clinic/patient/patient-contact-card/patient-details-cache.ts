@@ -24,12 +24,11 @@ let activePrefetches = 0;
 
 // URL builders — single source of truth so the panel loader and the prefetch
 // site produce byte-identical URLs (cache hits depend on exact match).
-export function patientSummaryUrl(
-  patientId: string,
-  activeAppointmentId: string | null,
-): string {
-  const qs = activeAppointmentId ? `?appointment_id=${activeAppointmentId}` : "";
-  return `/api/patient/${patientId}/summary${qs}`;
+export function patientSummaryUrl(patientId: string): string {
+  // Summary is patient-scoped only — workflow_actions now cover the patient's
+  // recent appointment window, not a single appointment — so the URL carries no
+  // appointment_id. Patient-only key dedups opens from different appointments.
+  return `/api/patient/${patientId}/summary`;
 }
 
 export function patientHistoryUrl(
@@ -64,7 +63,7 @@ export function prefetchPatientDetails(
   activeAppointmentId: string | null,
   activeSessionId: string | null,
 ): void {
-  const summaryUrl = patientSummaryUrl(patientId, activeAppointmentId);
+  const summaryUrl = patientSummaryUrl(patientId);
   const historyUrl = patientHistoryUrl(
     patientId,
     activeAppointmentId,

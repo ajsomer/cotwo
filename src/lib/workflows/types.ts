@@ -235,6 +235,80 @@ export function getActionTypeMeta(type: ActionType): ActionTypeMeta | undefined 
   return ACTION_TYPE_META.find((m) => m.type === type);
 }
 
+/**
+ * Classify an action as something the PATIENT must DO ("action" — forms, card
+ * capture, consent, contact verification, the intake package itself) versus a
+ * message we SENT to the patient ("message" — SMS reminders, nudges, links,
+ * resources). Drives the Actions-vs-Messages split in the patient pane's
+ * Workflows section, where actions are the higher-priority sub-group.
+ *
+ * `task` is a staff-facing to-do, not a patient one — treated as an action so
+ * it sits in the higher-priority group rather than buried among sent messages.
+ */
+export type ActionKind = "action" | "message" | "system";
+
+// Patient to-dos — things the patient must DO. Shown in the Actions sub-group.
+const PATIENT_ACTION_TYPES: ReadonlySet<string> = new Set([
+  "intake_package",
+  "deliver_form",
+  "capture_card",
+  "verify_contact",
+  "task",
+]);
+
+// The workflow's customisable SMS — what the builder lets you author per
+// template: the initial intake SMS (on the intake_package block) and the intake
+// reminders. These are the ONLY things shown in the Messages sub-group.
+const MESSAGE_TYPES: ReadonlySet<string> = new Set([
+  "intake_package",
+  "intake_reminder",
+]);
+
+export function getActionKind(actionType: string): ActionKind {
+  // intake_package is special: it's a patient to-do (Actions) AND carries the
+  // initial intake SMS (Messages). It's classified "action" here; the Messages
+  // group separately picks up its message via isWorkflowMessage().
+  if (PATIENT_ACTION_TYPES.has(actionType)) return "action";
+  if (MESSAGE_TYPES.has(actionType)) return "message";
+  // Everything else (add_to_runsheet, send_reminder appointment reminders,
+  // etc.) is system/non-intake noise — not shown in the Workflows section.
+  return "system";
+}
+
+/**
+ * Whether an action represents one of the workflow's configurable SMS (initial
+ * intake or a reminder) — i.e. belongs in the Messages sub-group. intake_package
+ * qualifies because it carries the initial intake SMS, even though it's grouped
+ * as an Action for its to-dos.
+ */
+export function isWorkflowMessage(actionType: string): boolean {
+  return MESSAGE_TYPES.has(actionType);
+}
+
+/**
+ * The configured SMS template for a message-type action, with merge-field
+ * placeholders ({patient_first_name}, {clinic_name}, {link}) left UNRESOLVED —
+ * the faithful "what was configured" view. The actual interpolated body sent to
+ * the patient is not persisted, so this is the closest recoverable text.
+ *
+ * Read ONLY from config (`message` / `message_body`). The customisable workflow
+ * messages — the initial intake SMS (intake_package) and intake reminders — both
+ * store their text there. Everything else (card capture, form links, etc.) is
+ * handler-composed and has no user-configured text, so it returns null and the
+ * pane shows no content dropdown. No hardcoded mirror strings — they would drift
+ * from the handlers and risk wrong placeholder names.
+ */
+export function getMessageTemplate(
+  config: Record<string, unknown> | null | undefined,
+): string | null {
+  const cfg = config ?? {};
+  return (
+    (typeof cfg.message === "string" && cfg.message) ||
+    (typeof cfg.message_body === "string" && cfg.message_body) ||
+    null
+  );
+}
+
 export function getActionTypesForDirection(
   direction: WorkflowDirection
 ): ActionTypeMeta[] {

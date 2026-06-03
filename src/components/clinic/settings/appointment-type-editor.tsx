@@ -22,6 +22,9 @@ interface ReminderState {
 const DEFAULT_REMINDER_MESSAGE =
   "Hi {patient_first_name}, just a reminder to complete your intake for your upcoming appointment. Tap here to continue: {link}";
 
+const DEFAULT_INITIAL_MESSAGE =
+  "Hi {patient_first_name}, please complete your intake before your appointment at {clinic_name}: {link}";
+
 export function AppointmentTypeEditor({
   appointmentType,
   onClose,
@@ -44,6 +47,7 @@ export function AppointmentTypeEditor({
     includes_card_capture?: boolean;
     includes_consent?: boolean;
     form_ids?: string[];
+    message_body?: string;
   };
   const existingReminderBlocks = existingBlocks.filter((b) => b.action_type === "intake_reminder");
 
@@ -73,6 +77,9 @@ export function AppointmentTypeEditor({
   );
   const [selectedFormIds, setSelectedFormIds] = useState<string[]>(
     existingIntakeConfig.form_ids ?? []
+  );
+  const [initialMessage, setInitialMessage] = useState(
+    existingIntakeConfig.message_body ?? DEFAULT_INITIAL_MESSAGE
   );
   const [formPickerOpen, setFormPickerOpen] = useState(false);
 
@@ -181,6 +188,7 @@ export function AppointmentTypeEditor({
           includes_card_capture: includesCardCapture,
           includes_consent: includesConsent,
           form_ids: selectedFormIds,
+          initial_message: initialMessage,
           reminders: reminders.map((r) => ({
             id: r.id,
             offset_days: r.offset_days,
@@ -460,6 +468,30 @@ export function AppointmentTypeEditor({
             <p className="text-xs text-gray-500 mt-3">
               The patient will complete {1 + (includesCardCapture ? 1 : 0) + (includesConsent ? 1 : 0) + selectedFormIds.length} items in one journey.
             </p>
+
+            <div className="mt-4 border-t border-gray-100 pt-4">
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Initial SMS
+              </label>
+              <p className="text-[11px] text-gray-500 mb-2">
+                The first message the patient receives, inviting them to complete
+                their intake.
+              </p>
+              <textarea
+                value={initialMessage}
+                onChange={(e) => setInitialMessage(e.target.value)}
+                rows={3}
+                className="w-full rounded border border-gray-200 px-2 py-1.5 text-xs focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none resize-none"
+              />
+              <div className="flex items-center justify-between mt-1">
+                <span className="text-[10px] text-gray-400">
+                  {"{patient_first_name}"}, {"{link}"}, {"{clinic_name}"}
+                </span>
+                <span className="text-[10px] text-gray-400">
+                  {initialMessage.length} / 160
+                </span>
+              </div>
+            </div>
           </CollapsibleSection>
 
           {/* Section 4: Reminders */}

@@ -10,6 +10,7 @@ import {
 import { and, eq } from "drizzle-orm";
 import { generateSlug } from "@/lib/utils/slug";
 import { seedDefaultWorkflows } from "@/lib/workflows/seed-defaults";
+import { newPatientIntakeSchema, defaultFormSchema } from "@/lib/survey/identity-page";
 import { NextResponse, type NextRequest } from "next/server";
 
 export async function POST(request: NextRequest) {
@@ -113,11 +114,25 @@ async function seedNoPmsFloor(orgId: string): Promise<void> {
     });
   }
 
-  // Default forms (referenced by workflow seeder by name)
+  // Default forms (referenced by workflow seeder by name). "New Patient Intake"
+  // ships with real fields so it's not empty when a patient opens it; the others
+  // are shells the clinic builds out. All carry the locked identity page.
   const defaultForms = [
-    { name: "New Patient Intake", description: "Standard new patient intake form" },
-    { name: "Mental Health Assessment (K10)", description: "Kessler Psychological Distress Scale" },
-    { name: "Patient Satisfaction Survey", description: "Post-appointment satisfaction survey" },
+    {
+      name: "New Patient Intake",
+      description: "Standard new patient intake form",
+      schema: newPatientIntakeSchema(),
+    },
+    {
+      name: "Mental Health Assessment (K10)",
+      description: "Kessler Psychological Distress Scale",
+      schema: defaultFormSchema(),
+    },
+    {
+      name: "Patient Satisfaction Survey",
+      description: "Post-appointment satisfaction survey",
+      schema: defaultFormSchema(),
+    },
   ];
 
   for (const form of defaultForms) {
@@ -134,7 +149,7 @@ async function seedNoPmsFloor(orgId: string): Promise<void> {
         description: form.description,
         status: "published",
         isPlatformDemo: false,
-        schema: {},
+        schema: form.schema,
       });
     }
   }

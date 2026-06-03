@@ -96,6 +96,108 @@ export function defaultFormSchema(): Record<string, unknown> {
 }
 
 /**
+ * Canonical seeded "New Patient Intake" form schema — the SAME form every
+ * seeded clinic ships with (personal/contact captured on the locked identity
+ * page, then emergency contact, Medicare details, medical history + consent).
+ * Single source of truth so clinic setup, PMS setup, and any backfill all use
+ * an identical form. Mirror of scripts/rebuild-templates.mjs's processed
+ * output. A practice manager can edit it afterwards in the form builder.
+ */
+export function newPatientIntakeSchema(): Record<string, unknown> {
+  return ensureIdentityPage({
+    title: "New patient intake form",
+    pages: [
+      {
+        name: IDENTITY_PAGE_NAME,
+        title: "Your details",
+        elements: [
+          {
+            type: "html",
+            name: "__identity_intro",
+            html: '<p style="margin:0 0 12px;font-size:14px;color:#8A8985">We need a few details so the clinic knows who you are.</p>',
+          },
+          { type: "text", name: IDENTITY_FIELD_NAMES.firstName, title: "First name", isRequired: true },
+          { type: "text", name: IDENTITY_FIELD_NAMES.lastName, title: "Last name", isRequired: true },
+          { type: "text", name: IDENTITY_FIELD_NAMES.dateOfBirth, inputType: "date", title: "Date of birth", isRequired: true },
+          { type: "text", name: IDENTITY_FIELD_NAMES.email, inputType: "email", title: "Email", isRequired: true },
+          { type: "text", name: "mobilePhone", inputType: "tel", title: "Mobile phone", isRequired: true },
+          {
+            type: "radiogroup",
+            name: "gender",
+            title: "Gender",
+            choices: ["Male", "Female", "Non-binary", "Prefer not to say"],
+            isRequired: true,
+          },
+          { type: "comment", name: "homeAddress", rows: 2, title: "Home address" },
+        ],
+      },
+      {
+        name: "emergency_contact",
+        title: "Emergency contact",
+        elements: [
+          {
+            type: "panel",
+            name: "panel_emergency",
+            elements: [
+              { type: "text", name: "emergencyContactName", title: "Emergency contact name", isRequired: true },
+              {
+                type: "dropdown",
+                name: "emergencyContactRelationship",
+                title: "Relationship to you",
+                choices: ["Partner", "Parent", "Sibling", "Child", "Friend", "Other"],
+                isRequired: true,
+              },
+              { type: "text", name: "emergencyContactPhone", inputType: "tel", title: "Emergency contact phone", isRequired: true },
+            ],
+          },
+        ],
+      },
+      {
+        name: "medicare_details",
+        title: "Medicare details",
+        elements: [
+          {
+            type: "panel",
+            name: "panel_medicare",
+            elements: [
+              { type: "text", name: "medicareNumber", title: "Medicare number" },
+              { type: "text", name: "medicareIRN", title: "Reference number (IRN)", startWithNewLine: false },
+              { type: "text", name: "medicareExpiry", title: "Expiry date", placeholder: "MM/YY" },
+              { type: "text", name: "privateHealthFund", title: "Private health fund" },
+              { type: "text", name: "privateHealthMemberNumber", title: "Member number", startWithNewLine: false },
+            ],
+          },
+        ],
+      },
+      {
+        name: "medical_history_consent",
+        title: "Medical history and consent",
+        elements: [
+          {
+            type: "panel",
+            name: "panel_health",
+            elements: [
+              { type: "boolean", name: "hasConditions", title: "Do you have any current medical conditions?" },
+              { type: "comment", name: "conditionsDescription", rows: 3, title: "Please describe your conditions", visibleIf: "{hasConditions} = true" },
+              { type: "comment", name: "currentMedications", rows: 2, title: "Current medications" },
+              { type: "comment", name: "allergies", rows: 2, title: "Allergies" },
+            ],
+          },
+          {
+            type: "panel",
+            name: "panel_consent",
+            elements: [
+              { type: "boolean", name: "consentHealthInfo", title: "I consent to the collection and use of my health information for the purposes of my care", isRequired: true, requiredErrorText: "You must provide consent to continue" },
+              { type: "boolean", name: "consentPrivacyPolicy", title: "I have read and understood the practice privacy policy", isRequired: true, requiredErrorText: "You must acknowledge the privacy policy to continue" },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+}
+
+/**
  * Returns true if a schema already contains the identity page.
  */
 export function hasIdentityPage(schema: unknown): boolean {

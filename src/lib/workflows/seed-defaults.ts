@@ -217,6 +217,7 @@ async function seedPreActionBlocks(
             includes_card_capture: plan.intakePackage.includes_card_capture,
             includes_consent: plan.intakePackage.includes_consent,
             form_ids: plan.intakePackage.form_ids,
+            message_body: plan.intakePackage.message_body,
           },
           sortOrder: 0,
         })
@@ -287,7 +288,13 @@ interface IntakePackageSpec {
   includes_card_capture: boolean;
   includes_consent: boolean;
   form_ids: string[];
+  // The initial intake SMS the patient receives when the package is sent.
+  // Configurable later in the Workflow Builder; seeded with a sensible default.
+  message_body: string;
 }
+
+const DEFAULT_INTAKE_INITIAL_MESSAGE =
+  "Hi {patient_first_name}, please complete your intake before your appointment at {clinic_name}: {link}";
 
 interface IntakeReminderSpec {
   offset_days: number;
@@ -320,6 +327,7 @@ function getPreTemplatePlan(
           includes_card_capture: true,
           includes_consent: false,
           form_ids: intakeFormId ? [intakeFormId] : [],
+          message_body: DEFAULT_INTAKE_INITIAL_MESSAGE,
         },
         intakeReminders: [
           {
@@ -345,6 +353,7 @@ function getPreTemplatePlan(
           includes_card_capture: true,
           includes_consent: false,
           form_ids: [],
+          message_body: DEFAULT_INTAKE_INITIAL_MESSAGE,
         },
         intakeReminders: [],
         appointmentReminders: [

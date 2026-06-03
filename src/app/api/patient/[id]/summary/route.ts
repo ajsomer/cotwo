@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
 import { assertStaffCanAccessPatient } from "@/lib/auth/staff-access";
-import { fetchAppointmentWorkflowActions } from "@/lib/clinic/fetchers/workflow-actions";
+import { fetchPatientWorkflowActions } from "@/lib/clinic/fetchers/workflow-actions";
 import { fetchPatientSummary } from "../_shared";
 
 /**
@@ -12,22 +11,21 @@ import { fetchPatientSummary } from "../_shared";
  * card fetches this first so DOB / contact / card paint before the heavy
  * history.
  *
- * When `appointment_id` is supplied, the response also carries
- * `workflow_actions` for that active appointment (Stage 7). Workflow is
- * active-appointment context, so it rides the fast path here rather than the
- * deferred /history payload. Scoped to the authorised patient.
+ * The response also carries `workflow_actions` — the patient's workflow-run
+ * actions across a bounded recent appointment window — for the patient pane's
+ * grouped Workflows section. Fetched unconditionally (not gated on
+ * appointment_id) so it lands in every pane mode, including readiness. Bounded
+ * so it stays light enough for the fast path. Scoped to the authorised patient.
  *
  * Staff-only; org-scoped. Auth runs independently of /history by design (see
  * the plan's "auth runs twice" trade-off) — the cost is off the critical
  * render path because the shell has already painted.
  */
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: patientId } = await params;
-  const activeAppointmentId = request.nextUrl.searchParams.get("appointment_id");
-  const supabase = createServiceClient();
 
   const access = await assertStaffCanAccessPatient(patientId);
   if (!access.ok) {
@@ -39,9 +37,7 @@ export async function GET(
 
   const [summary, workflowActions] = await Promise.all([
     fetchPatientSummary(patientId),
-    activeAppointmentId
-      ? fetchAppointmentWorkflowActions(supabase, activeAppointmentId, patientId)
-      : Promise.resolve(null),
+    fetchPatientWorkflowActions(patientId),
   ]);
 
   if (!summary) {
@@ -50,6 +46,6 @@ export async function GET(
 
   return NextResponse.json({
     ...summary,
-    ...(workflowActions ? { workflow_actions: workflowActions } : {}),
+    workflow_actions: workflowActions,
   });
 }

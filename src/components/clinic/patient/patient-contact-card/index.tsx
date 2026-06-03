@@ -6,7 +6,8 @@ import type { EnrichedSession } from "@/lib/supabase/types";
 import type { ReadinessAppointment, WorkflowAction } from "@/stores/clinic-store";
 import { DemographicsSection, PaymentSection } from "./demographics-section";
 import { AppointmentsSection } from "./appointments-section";
-import { WorkflowTimeline, CompletedFormsList } from "./forms-section";
+import { CompletedFormsList } from "./forms-section";
+import { WorkflowsSection } from "./workflows-section";
 import { ReadinessActions } from "./readiness-actions";
 import type {
   PatientDetails,
@@ -167,7 +168,7 @@ export function PatientContactCard({
 
     // Shared URL builders so these match the hover-prefetch URLs exactly (a
     // cache hit depends on byte-identical keys).
-    const summaryUrl = patientSummaryUrl(resolvedPatientId, activeApptId);
+    const summaryUrl = patientSummaryUrl(resolvedPatientId);
     const historyUrl = patientHistoryUrl(
       resolvedPatientId,
       activeApptId,
@@ -307,11 +308,13 @@ export function PatientContactCard({
     ? session?.session_id ?? null
     : null;
 
-  // Workflow timeline source: readiness mode already carries actions on the
-  // appointment; run-sheet / patient-only mode gets them from the fast-path
-  // /summary fetch. The component renders nothing on an empty array.
+  // Workflow source: the /summary fetch now returns the patient's recent
+  // workflow-run actions (with run-grouping metadata) in every mode. Prefer it
+  // once loaded; readiness's appointment.actions is only the instant fallback
+  // before the fetch lands (those lack run metadata, so they show under "Other
+  // messages" for the sub-second gap). Renders nothing on an empty array.
   const workflowActions: WorkflowAction[] =
-    appointment?.actions ?? fetchedWorkflowActions ?? [];
+    fetchedWorkflowActions ?? appointment?.actions ?? [];
 
   // Only fall back to the full-panel skeleton when we have no shell seed (a
   // bare patientId open with no row data). With a seed, sections shimmer.
@@ -374,7 +377,10 @@ export function PatientContactCard({
 
           {workflowActions.length > 0 && (
             <>
-              <WorkflowTimeline actions={workflowActions} />
+              <WorkflowsSection
+                actions={workflowActions}
+                activeAppointmentId={activeAppointmentId}
+              />
               <div className="h-px bg-gray-200" />
             </>
           )}
