@@ -10,17 +10,19 @@
 -- existing intake_reminder message_body fields). The initial intake SMS handler
 -- reads this so the text the patient receives is what the user configured.
 --
--- Appending the param creates a NEW function signature in Postgres (functions
--- are identified by name + arg types), so we DROP the prior 13-arg overload
--- first to avoid two overloads — the configure route calls positionally and
--- must resolve to exactly one function.
+-- The new param has a DEFAULT, so this ONE function serves both call shapes:
+--   * old/not-yet-deployed build calls with 13 args → resolves via the default
+--   * new build calls with 14 args → matches exactly
+-- IMPORTANT: there must be exactly ONE configure_appointment_type. Do NOT also
+-- create a separate 13-arg overload — with the 14-arg's default, a 13-arg call
+-- would then be ambiguous ("function is not unique") and every save 500s. If a
+-- prior 13-arg version exists from an earlier migration, drop it so only this
+-- one remains:
+--   DROP FUNCTION IF EXISTS public.configure_appointment_type(
+--     uuid, uuid, text, integer, appointment_modality, integer,
+--     workflow_terminal_type, boolean, boolean, uuid[], jsonb, integer, integer);
 --
--- Idempotent: the DROP uses IF EXISTS; CREATE OR REPLACE is safe to re-run.
-
-DROP FUNCTION IF EXISTS public.configure_appointment_type(
-  uuid, uuid, text, integer, appointment_modality, integer, workflow_terminal_type,
-  boolean, boolean, uuid[], jsonb, integer, integer
-);
+-- Idempotent: CREATE OR REPLACE is safe to re-run.
 
 CREATE OR REPLACE FUNCTION public.configure_appointment_type(
   p_org_id UUID,
