@@ -26,21 +26,49 @@ function isAuthRoute(pathname: string) {
 // Prototype: cookie-presence is a coarse gate, not a security boundary. The
 // real checks (valid session, org/role, setup completeness) happen server-side
 // where the DB and Neon Auth SDK are available.
+// The exact Neon Auth (Better Auth) session-token cookie name. Mirrors the
+// SDK's own internal presence check (NEON_AUTH_COOKIE_PREFIX + ".session_token",
+// see @neondatabase/auth). Matching the EXACT name — not a loose
+// includes("session")/includes("auth") substring — is what stops unrelated
+// cookies from reading as "authed" and bouncing the user into a redirect loop.
+const SESSION_COOKIE_NAME = "__Secure-neon-auth.session_token";
+
+// All Neon Auth cookies share this prefix (session_token + local.session_data).
+// Used to clear a stale session wholesale when the server rejects it.
+const AUTH_COOKIE_PREFIX = "__Secure-neon-auth";
+
 function hasSessionCookie(request: NextRequest): boolean {
-  // Neon Auth (Better Auth) session cookies are prefixed; match defensively.
-  return request.cookies
-    .getAll()
-    .some(
-      (c) =>
-        (c.name.includes("session") || c.name.includes("auth")) &&
-        !!c.value &&
-        c.value.length > 0,
-    );
+  const c = request.cookies.get(SESSION_COOKIE_NAME);
+  return !!c?.value;
+}
+
+// Clears every Neon Auth cookie on the given response. Called when a stale
+// session must be invalidated — a Server Component can't modify cookies (Next.js
+// only allows that in middleware / Server Actions / Route Handlers), so the
+// clinic layout signals the loop-break via ?clear-session and we do it here.
+function clearAuthCookies(request: NextRequest, response: NextResponse) {
+  for (const c of request.cookies.getAll()) {
+    if (c.name.startsWith(AUTH_COOKIE_PREFIX)) {
+      response.cookies.delete(c.name);
+    }
+  }
 }
 
 export async function updateSession(request: NextRequest) {
   const response = NextResponse.next({ request });
   const pathname = request.nextUrl.pathname;
+
+  // Loop-breaker: the clinic layout rejected a present-but-invalid session and
+  // redirected here. Clear the stale cookies so the next request reads as
+  // unauthed and /login renders normally — instead of bouncing back to /runsheet.
+  if (request.nextUrl.searchParams.has("clear-session")) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/login";
+    url.searchParams.delete("clear-session");
+    const redirectRes = NextResponse.redirect(url);
+    clearAuthCookies(request, redirectRes);
+    return redirectRes;
+  }
 
   // Public + API routes: no gating here.
   if (isPublicRoute(pathname) || pathname.startsWith(API_ROUTES_PREFIX)) {

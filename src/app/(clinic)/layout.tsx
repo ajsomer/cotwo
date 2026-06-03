@@ -17,7 +17,12 @@ export default async function ClinicLayout({
   const user = session?.user;
 
   if (!user) {
-    redirect("/login");
+    // A session cookie was present (it got us past the middleware gate) but the
+    // server rejected it — stale/expired/invalidated. Route through the
+    // middleware's cookie-clearing path so the dead cookie is removed instead of
+    // bouncing /login ⇄ /runsheet forever. (Server Components can't clear
+    // cookies directly.)
+    redirect("/login?clear-session=1");
   }
 
   const [userRecord] = await db
