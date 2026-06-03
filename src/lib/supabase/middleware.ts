@@ -49,7 +49,15 @@ function hasSessionCookie(request: NextRequest): boolean {
 function clearAuthCookies(request: NextRequest, response: NextResponse) {
   for (const c of request.cookies.getAll()) {
     if (c.name.startsWith(AUTH_COOKIE_PREFIX)) {
-      response.cookies.delete(c.name);
+      // The cookies use the __Secure- name prefix, so the deletion Set-Cookie
+      // MUST itself carry Secure + Path=/ — browsers reject a Set-Cookie for a
+      // __Secure- cookie that lacks the Secure attribute, which would leave the
+      // stale cookie in place and the loop unbroken.
+      response.cookies.set(c.name, "", {
+        path: "/",
+        secure: true,
+        maxAge: 0,
+      });
     }
   }
 }
