@@ -120,6 +120,13 @@ export async function POST(request: NextRequest) {
       })),
     );
 
+    // Build a Postgres array literal for form_ids. Interpolating a JS array into
+    // `::uuid[]` produces a malformed array literal (a single id arrives as a
+    // bare UUID string Postgres can't parse as an array). The ids are already
+    // validated above against the org's forms, so formatting them directly as
+    // `{id,id}` / `{}` is safe.
+    const formIdsLiteral = `{${(formIdList as string[]).join(",")}}`;
+
     // Preserve the exact positional arg order of configure_appointment_type.
     const result = await db.execute(sql`
       select public.configure_appointment_type(
@@ -132,7 +139,7 @@ export async function POST(request: NextRequest) {
         'run_sheet'::workflow_terminal_type,
         ${includes_card_capture ?? false}::boolean,
         ${includes_consent ?? false}::boolean,
-        ${formIdList as string[]}::uuid[],
+        ${formIdsLiteral}::uuid[],
         ${remindersJson}::jsonb,
         ${at_risk_after_days ?? null}::integer,
         ${overdue_after_days ?? null}::integer,
