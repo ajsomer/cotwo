@@ -15,9 +15,26 @@ interface WaitingRoomProps {
   clinicianName: string | null;
   scheduledAt: string | null;
   isOnboardingDemo?: boolean;
+  /** The session's real status at load. Without it a reused in_session/
+   *  complete/done session would strand on "waiting…" until the next event. */
+  initialStatus?: string | null;
 }
 
 type SessionStatus = 'waiting' | 'in_session' | 'complete' | 'done';
+
+/** Map a full DB session status onto the narrow set this screen renders.
+ *  queued/checked_in show as the waiting UI; everything unknown defaults to
+ *  waiting too. in_session/complete/done pass through. */
+function toWaitingUiStatus(dbStatus: string | null | undefined): SessionStatus {
+  switch (dbStatus) {
+    case 'in_session':
+    case 'complete':
+    case 'done':
+      return dbStatus;
+    default:
+      return 'waiting';
+  }
+}
 
 export function WaitingRoom({
   // sessionId/locationId still arrive from the page but are no longer used
@@ -29,8 +46,9 @@ export function WaitingRoom({
   clinicianName,
   scheduledAt,
   isOnboardingDemo = false,
+  initialStatus,
 }: WaitingRoomProps) {
-  const [status, setStatus] = useState<SessionStatus>('waiting');
+  const [status, setStatus] = useState<SessionStatus>(() => toWaitingUiStatus(initialStatus));
   const [message, setMessage] = useState<string | null>(null);
   const [dots, setDots] = useState('');
 

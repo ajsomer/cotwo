@@ -22,6 +22,7 @@ export default async function WaitingRoomPage({
   const [session] = await db
     .select({
       id: sessionsT.id,
+      status: sessionsT.status,
       is_onboarding_demo: sessionsT.isOnboardingDemo,
       room_name: roomsT.name,
       location_id: locationsT.id,
@@ -66,6 +67,7 @@ export default async function WaitingRoomPage({
       clinicianName={session.clinician_name || null}
       scheduledAt={session.scheduled_at || null}
       isOnboardingDemo={session.is_onboarding_demo ?? false}
+      initialStatus={session.status}
     />
     </div>
   );
