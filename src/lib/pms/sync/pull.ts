@@ -1,0 +1,307 @@
+import "server-only";
+import { db } from "@/lib/db";
+import {
+  appointments,
+  patients,
+  patientPhoneNumbers,
+  pmsAppointmentTypeLinks,
+  sessions,
+} from "@/lib/db/schema";
+import { and, eq, sql } from "drizzle-orm";
+import { scheduleWorkflowForAppointment } from "@/lib/workflows/scanner";
+import type { PmsAdapter } from "../adapter";
+import type { PmsAppointment, PmsPatient } from "../types";
+import {
+  type PmsConnectionRow,
+  adapterForConnection,
+  orgForLocation,
+  recordSyncResult,
+} from "../connection";
+import { getCursor, setCursor } from "./cursor";
+import {
+  getPatientIdByExternal,
+  getTypeLinkByExternal,
+  linkPatient,
+} from "./mapping";
+
+export interface PullResult {
+  ok: boolean;
+  patients: number;
+  appointmentsUpserted: number;
+  sessionsScheduled: number;
+  cancelled: number;
+  skippedNonTelehealth: number;
+  error?: string;
+}
+
+/**
+ * One full incremental read sync for a connection. Plan §5.
+ *
+ * Dependency order: businesses/practitioners/types are mapped via the Settings
+ * surfaces (we don't auto-create clinicians/locations here — those are explicit
+ * mappings). The pull focuses on the moving data: patients then appointments.
+ * Appointment types must already be CONFIRMED telehealth + sync_enabled + room
+ * for an appointment to reach the run sheet.
+ */
+export async function pullConnection(
+  connection: PmsConnectionRow
+): Promise<PullResult> {
+  const adapter = adapterForConnection(connection);
+  if (!adapter) {
+    return emptyResult({ ok: false, error: "Connection is not sync-active." });
+  }
+  const orgId = await orgForLocation(connection.locationId);
+  if (!orgId) {
+    return emptyResult({ ok: false, error: "Location has no org." });
+  }
+
+  const result: PullResult = emptyResult({ ok: true });
+
+  try {
+    // 1. Patients (changed since cursor) → upsert + link.
+    result.patients = await pullPatients(adapter, connection, orgId);
+
+    // 2. Appointments (changed since cursor) → upsert + schedule workflow.
+    const apptResult = await pullAppointments(adapter, connection, orgId);
+    result.appointmentsUpserted = apptResult.upserted;
+    result.sessionsScheduled = apptResult.scheduled;
+    result.cancelled = apptResult.cancelled;
+    result.skippedNonTelehealth = apptResult.skipped;
+
+    await recordSyncResult(connection.id, null);
+  } catch (e) {
+    result.ok = false;
+    result.error = (e as Error).message;
+    await recordSyncResult(connection.id, result.error ?? "unknown error");
+  }
+
+  return result;
+}
+
+// ───────────────────────────── Patients ─────────────────────────────
+
+async function pullPatients(
+  adapter: PmsAdapter,
+  connection: PmsConnectionRow,
+  orgId: string
+): Promise<number> {
+  const since = (await getCursor(connection.id, "patients")) ?? undefined;
+  let count = 0;
+  let maxUpdated: Date | null = null;
+
+  for await (const p of adapter.listPatients({ since })) {
+    await upsertPatient(connection.id, orgId, p);
+    count++;
+    // We don't get updated_at on the canonical PmsPatient; advance to now after.
+  }
+  // Patients lack an updated_at in the canonical shape; bump cursor to now so
+  // the next run only re-reads genuinely newer records.
+  if (count > 0) maxUpdated = new Date();
+  if (maxUpdated) await setCursor(connection.id, "patients", maxUpdated);
+  return count;
+}
+
+async function upsertPatient(
+  connectionId: string,
+  orgId: string,
+  p: PmsPatient
+): Promise<void> {
+  // Already linked? Update the existing Coviu patient.
+  const existingId = await getPatientIdByExternal(connectionId, p.externalId);
+
+  let patientId: string;
+  if (existingId) {
+    await db
+      .update(patients)
+      .set({
+        firstName: p.firstName || "Unknown",
+        lastName: p.lastName || "",
+        dateOfBirth: p.dateOfBirth,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(patients.id, existingId));
+    patientId = existingId;
+  } else {
+    const [created] = await db
+      .insert(patients)
+      .values({
+        orgId,
+        firstName: p.firstName || "Unknown",
+        lastName: p.lastName || "",
+        dateOfBirth: p.dateOfBirth,
+      })
+      .returning({ id: patients.id });
+    patientId = created.id;
+    await linkPatient(connectionId, patientId, p.externalId);
+  }
+
+  // Phone numbers — upsert each (unique on patient_id + phone_number).
+  for (const phone of p.phoneNumbers) {
+    if (!phone?.trim()) continue;
+    await db
+      .insert(patientPhoneNumbers)
+      .values({ patientId, phoneNumber: phone.trim(), isPrimary: false })
+      .onConflictDoNothing();
+  }
+}
+
+// ─────────────────────────── Appointments ───────────────────────────
+
+async function pullAppointments(
+  adapter: PmsAdapter,
+  connection: PmsConnectionRow,
+  orgId: string
+): Promise<{ upserted: number; scheduled: number; cancelled: number; skipped: number }> {
+  const since = (await getCursor(connection.id, "appointments")) ?? undefined;
+  let upserted = 0;
+  let scheduled = 0;
+  let cancelled = 0;
+  let skipped = 0;
+  let maxUpdated: Date | null = null;
+
+  for await (const a of adapter.listAppointments({
+    since,
+    businessId: connection.defaultBusinessExternalId ?? undefined,
+  })) {
+    const updated = a.updatedAt ? new Date(a.updatedAt) : null;
+    if (updated && (!maxUpdated || updated > maxUpdated)) maxUpdated = updated;
+
+    const outcome = await upsertAppointment(connection, orgId, a);
+    if (outcome === "skipped") skipped++;
+    else {
+      upserted++;
+      if (outcome === "scheduled") scheduled++;
+      if (outcome === "cancelled") cancelled++;
+    }
+  }
+
+  if (maxUpdated) await setCursor(connection.id, "appointments", maxUpdated);
+  return { upserted, scheduled, cancelled, skipped };
+}
+
+type ApptOutcome = "scheduled" | "updated" | "cancelled" | "skipped";
+
+async function upsertAppointment(
+  connection: PmsConnectionRow,
+  orgId: string,
+  a: PmsAppointment
+): Promise<ApptOutcome> {
+  if (!a.appointmentTypeExternalId) return "skipped";
+
+  // Resolve the type link — only CONFIRMED telehealth + sync_enabled + room
+  // appointments reach the run sheet (plan §5). The type link is the single
+  // source of truth for import state (§8.E/H).
+  const typeLink = await getTypeLinkByExternal(
+    connection.id,
+    a.appointmentTypeExternalId
+  );
+  if (
+    !typeLink ||
+    !typeLink.syncEnabled ||
+    typeLink.confirmedModality !== "telehealth" ||
+    !typeLink.roomId
+  ) {
+    return "skipped";
+  }
+
+  const patientId = a.patientExternalId
+    ? await getPatientIdByExternal(connection.id, a.patientExternalId)
+    : null;
+
+  // Find an existing synced appointment for this (location, external id).
+  const [existing] = await db
+    .select({ id: appointments.id, status: appointments.status })
+    .from(appointments)
+    .where(
+      and(
+        eq(appointments.locationId, connection.locationId),
+        eq(appointments.pmsExternalId, a.externalId)
+      )
+    )
+    .limit(1);
+
+  const status = a.cancelled
+    ? ("cancelled" as const)
+    : a.didNotArrive
+      ? ("no_show" as const)
+      : ("scheduled" as const);
+
+  if (existing) {
+    await db
+      .update(appointments)
+      .set({
+        patientId: patientId ?? undefined,
+        appointmentTypeId: typeLink.appointmentTypeId,
+        roomId: typeLink.roomId,
+        scheduledAt: a.startsAt,
+        status,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(appointments.id, existing.id));
+
+    // Reschedule/cancel handling: cascade cancellation to the session and drop
+    // pending workflow actions. (Reschedule of scheduled_at is reflected above;
+    // future-dated add_to_runsheet fires off the new time on the next scan.)
+    if (status === "cancelled" || status === "no_show") {
+      await cancelSessionFor(existing.id);
+      return "cancelled";
+    }
+    return "updated";
+  }
+
+  // New appointment. Cancelled/no-show on first sight: record it, no session.
+  const [created] = await db
+    .insert(appointments)
+    .values({
+      orgId,
+      locationId: connection.locationId,
+      patientId: patientId ?? undefined,
+      appointmentTypeId: typeLink.appointmentTypeId,
+      roomId: typeLink.roomId,
+      scheduledAt: a.startsAt,
+      status,
+      pmsExternalId: a.externalId,
+    })
+    .onConflictDoNothing({
+      target: [appointments.locationId, appointments.pmsExternalId],
+    })
+    .returning({ id: appointments.id });
+
+  if (!created) return "updated"; // lost a race; another run inserted it
+
+  if (status === "cancelled" || status === "no_show") return "cancelled";
+
+  // Schedule the pre-appointment workflow so the appointment reaches the run
+  // sheet via the add_to_runsheet action (plan §5). Requires a type_workflow_link.
+  await scheduleWorkflowForAppointment(
+    created.id,
+    typeLink.appointmentTypeId,
+    a.startsAt
+  );
+  return "scheduled";
+}
+
+/** Cascade a cancelled/no-show appointment to its live session(s). */
+async function cancelSessionFor(appointmentId: string): Promise<void> {
+  await db
+    .update(sessions)
+    .set({ status: "done", updatedAt: new Date().toISOString() })
+    .where(
+      and(
+        eq(sessions.appointmentId, appointmentId),
+        // Don't disturb sessions already complete/done.
+        sql`${sessions.status} NOT IN ('complete', 'done')`
+      )
+    );
+}
+
+function emptyResult(over: Partial<PullResult> & { ok: boolean }): PullResult {
+  return {
+    patients: 0,
+    appointmentsUpserted: 0,
+    sessionsScheduled: 0,
+    cancelled: 0,
+    skippedNonTelehealth: 0,
+    ...over,
+  };
+}
