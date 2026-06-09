@@ -30,14 +30,22 @@ export async function GET() {
       .where(eq(roomsT.locationId, locationId))
       .orderBy(asc(roomsT.sortOrder)),
     db
-      .select({ provider: pmsConnections.provider, status: pmsConnections.status })
+      .select({
+        provider: pmsConnections.provider,
+        status: pmsConnections.status,
+        credentialsEncrypted: pmsConnections.credentialsEncrypted,
+      })
       .from(pmsConnections)
       .where(eq(pmsConnections.orgId, orgId))
       .limit(1),
   ]);
 
   const pms = pmsRows[0];
-  const imported = pms?.provider === "gentu" && pms?.status === "connected";
+  // Rooms were imported from a PMS when: a real (sync-active) connection
+  // provisioned them, or the Gentu demo marker seeded them.
+  const imported =
+    Boolean(pms?.credentialsEncrypted) ||
+    (pms?.provider === "gentu" && pms?.status === "connected");
 
   return NextResponse.json({ rooms: rooms ?? [], imported });
 }

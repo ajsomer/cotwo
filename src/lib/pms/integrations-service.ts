@@ -88,7 +88,7 @@ export async function connectPms(args: {
 
   const encrypted = encryptCredentials(args.credentials);
 
-  await db
+  const [conn] = await db
     .insert(pmsConnections)
     .values({
       orgId,
@@ -106,7 +106,8 @@ export async function connectPms(args: {
         lastSyncError: null,
         updatedAt: new Date().toISOString(),
       },
-    });
+    })
+    .returning({ id: pmsConnections.id });
 
   // Seed a PMS-scoped "Patient Registration" write-back form so the clinic has
   // a working write-back form immediately (plan §7a). Generic over the
@@ -114,7 +115,100 @@ export async function connectPms(args: {
   // org + provider).
   await ensureRegistrationForm(orgId, args.provider);
 
+  // Provision from the appointment book: create a room per practitioner +
+  // auto-map practitioner→room, and import appointment types (sync left off
+  // for the user to confirm). Non-fatal — a failure here doesn't undo connect.
+  if (conn) {
+    try {
+      const connRow = await getConnectionForLocation(args.locationId);
+      if (connRow) await provisionFromPms(connRow);
+    } catch (e) {
+      console.error("[pms] provisionFromPms failed:", (e as Error).message);
+    }
+  }
+
   return { ok: true };
+}
+
+/**
+ * Connect-time provisioning (§7a): create one Coviu room per active PMS
+ * practitioner (the appointment-book columns), auto-map practitioner→room, and
+ * import appointment types. Idempotent — rooms match on name, links upsert,
+ * type import skips already-linked types. Sync stays off until the user
+ * confirms each type's modality in Workflows.
+ */
+export async function provisionFromPms(
+  connection: PmsConnectionRow
+): Promise<{ roomsCreated: number; practitionersMapped: number; typesImported: number }> {
+  const adapter = adapterForConnection(connection);
+  if (!adapter) return { roomsCreated: 0, practitionersMapped: 0, typesImported: 0 };
+
+  const practitioners = (await adapter.listPractitioners()).filter((p) => p.active);
+
+  // Existing rooms at this location (match by name, case-insensitive) and
+  // existing practitioner links (so re-connect doesn't duplicate).
+  const [existingRooms, existingLinks] = await Promise.all([
+    db
+      .select({ id: roomsT.id, name: roomsT.name })
+      .from(roomsT)
+      .where(eq(roomsT.locationId, connection.locationId)),
+    db
+      .select({ pmsExternalId: pmsPractitionerLinks.pmsExternalId })
+      .from(pmsPractitionerLinks)
+      .where(eq(pmsPractitionerLinks.connectionId, connection.id)),
+  ]);
+  const roomByName = new Map(
+    existingRooms.map((r) => [r.name.trim().toLowerCase(), r.id])
+  );
+  const linkedExt = new Set(existingLinks.map((l) => l.pmsExternalId));
+
+  let roomsCreated = 0;
+  let practitionersMapped = 0;
+
+  for (const p of practitioners) {
+    if (linkedExt.has(p.externalId)) continue; // already mapped — leave as-is
+
+    const key = p.displayName.trim().toLowerCase();
+    let roomId = roomByName.get(key);
+    if (!roomId) {
+      const [room] = await db
+        .insert(roomsT)
+        .values({
+          locationId: connection.locationId,
+          name: p.displayName,
+          roomType: "clinical",
+        })
+        .returning({ id: roomsT.id });
+      roomId = room.id;
+      roomByName.set(key, roomId);
+      roomsCreated++;
+    }
+
+    await db
+      .insert(pmsPractitionerLinks)
+      .values({
+        connectionId: connection.id,
+        roomId,
+        pmsExternalId: p.externalId,
+      })
+      .onConflictDoUpdate({
+        target: [
+          pmsPractitionerLinks.connectionId,
+          pmsPractitionerLinks.pmsExternalId,
+        ],
+        set: { roomId },
+      });
+    practitionersMapped++;
+  }
+
+  // Import appointment types (sync off until confirmed in Workflows).
+  const typeResult = await importAppointmentTypes(connection);
+
+  return {
+    roomsCreated,
+    practitionersMapped,
+    typesImported: typeResult.imported,
+  };
 }
 
 async function ensureRegistrationForm(
