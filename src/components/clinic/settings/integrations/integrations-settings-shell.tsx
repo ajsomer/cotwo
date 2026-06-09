@@ -185,6 +185,17 @@ export function IntegrationsSettingsShell() {
             {syncMessage && (
               <p className="text-sm text-gray-600 mt-3">{syncMessage}</p>
             )}
+
+            {/* Account subdomain — used to build "Open in {PMS}" patient links.
+                Auto-detected on connect; editable here if it's wrong/missing. */}
+            <div className="mt-4 border-t border-gray-100 pt-3">
+              <SubdomainEditor
+                locationId={locationId}
+                provider={status.providerLabel ?? "PMS"}
+                initial={status.accountSubdomain}
+                onSaved={loadStatus}
+              />
+            </div>
           </div>
 
           {mappingError && (
@@ -223,5 +234,67 @@ function Header() {
         Connect your practice management system and map its data to Coviu.
       </p>
     </>
+  );
+}
+
+function SubdomainEditor({
+  locationId,
+  provider,
+  initial,
+  onSaved,
+}: {
+  locationId: string;
+  provider: string;
+  initial: string | null;
+  onSaved: () => void;
+}) {
+  const [value, setValue] = useState(initial ?? "");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const save = async () => {
+    setSaving(true);
+    setSaved(false);
+    await fetch("/api/pms/connection", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ locationId, accountSubdomain: value.trim() || null }),
+    });
+    setSaving(false);
+    setSaved(true);
+    onSaved();
+  };
+
+  return (
+    <div>
+      <label className="block text-xs font-medium text-gray-800 mb-1">
+        {provider} account subdomain
+      </label>
+      <p className="text-xs text-gray-500 mb-2">
+        Used for &ldquo;Open in {provider}&rdquo; patient links. It&apos;s the
+        first part of your {provider} web address — e.g. for{" "}
+        <code>coviu-test.au5.cliniko.com</code> the subdomain is{" "}
+        <code>coviu-test</code>.
+      </p>
+      <div className="flex items-center gap-2">
+        <input
+          value={value}
+          onChange={(e) => {
+            setValue(e.target.value);
+            setSaved(false);
+          }}
+          placeholder="coviu-test"
+          className="w-48 rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+        />
+        <Button
+          variant="secondary"
+          onClick={save}
+          disabled={saving || value.trim() === (initial ?? "")}
+        >
+          {saving ? "Saving…" : "Save"}
+        </Button>
+        {saved && <span className="text-xs text-green-600">Saved</span>}
+      </div>
+    </div>
   );
 }

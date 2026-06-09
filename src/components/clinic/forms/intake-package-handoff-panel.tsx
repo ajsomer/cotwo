@@ -173,33 +173,55 @@ export function IntakePackageHandoffPanel({
     }
   };
 
-  // Sync to the PMS and render per-field results. Does NOT complete — that's a
-  // separate action, so staff can review what landed before completing.
+  // Sync to the PMS: push the field write-back AND attach the intake PDF in one
+  // action, then render per-field results + the attachment outcome. Does NOT
+  // complete — that's a separate action, so staff review what landed first.
+  const [attachMsg, setAttachMsg] = useState<string | null>(null);
   const handleSync = async () => {
     setMarking(true);
     setError(null);
     setPushResults(null);
+    setAttachMsg(null);
     try {
-      const res = await fetch("/api/pms/push-appointment", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ appointmentId }),
-      });
-      const data = (await res.json().catch(() => ({}))) as {
+      const [fieldRes, attachRes] = await Promise.all([
+        fetch("/api/pms/push-appointment", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ appointmentId }),
+        }),
+        fetch("/api/pms/attach-pdf", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ appointmentId }),
+        }),
+      ]);
+
+      const fieldData = (await fieldRes.json().catch(() => ({}))) as {
         ok?: boolean;
         submissions?: Array<{
           fields: Array<{ label: string; status: string; detail?: string }>;
         }>;
         error?: string;
       };
-      if (res.ok && data.ok) {
-        const fields = (data.submissions ?? []).flatMap((s) => s.fields);
+      if (fieldRes.ok && fieldData.ok) {
+        const fields = (fieldData.submissions ?? []).flatMap((s) => s.fields);
         setPushResults(
           fields.map((f) => ({ label: f.label, status: f.status, detail: f.detail }))
         );
       } else {
-        setError(data.error ?? "Sync failed.");
+        setError(fieldData.error ?? "Field sync failed.");
       }
+
+      const attachData = (await attachRes.json().catch(() => ({}))) as {
+        ok?: boolean;
+        detail?: string;
+        error?: string;
+      };
+      setAttachMsg(
+        attachRes.ok && attachData.ok
+          ? `Intake PDF attached to ${pmsGate?.label ?? "the PMS"}.`
+          : `PDF: ${attachData.detail ?? attachData.error ?? "couldn't attach."}`
+      );
     } catch {
       setError("Network error");
     } finally {
@@ -395,6 +417,11 @@ export function IntakePackageHandoffPanel({
                   </span>
                 </div>
               ))}
+              {attachMsg && (
+                <p className="pt-1 mt-1 border-t border-gray-100 text-xs text-gray-600">
+                  {attachMsg}
+                </p>
+              )}
             </div>
           )}
         </div>

@@ -4,6 +4,7 @@ import {
   connectPms,
   disconnectPms,
   getIntegrationStatus,
+  updateAccountSubdomain,
 } from "@/lib/pms/integrations-service";
 
 const PM_ROLES = new Set(["clinic_owner", "practice_manager"]);
@@ -48,6 +49,26 @@ export async function POST(request: NextRequest) {
     credentials: body.credentials,
   });
   return NextResponse.json(result, { status: result.ok ? 200 : 400 });
+}
+
+/** PATCH { locationId, accountSubdomain } → update the web-link subdomain. */
+export async function PATCH(request: NextRequest) {
+  const body = (await request.json().catch(() => ({}))) as {
+    locationId?: string;
+    accountSubdomain?: string | null;
+  };
+  if (!body.locationId) {
+    return NextResponse.json({ error: "locationId required" }, { status: 400 });
+  }
+  const access = await requireStaffLocationAccess(body.locationId);
+  if (!access.ok) {
+    return NextResponse.json({ error: "Forbidden" }, { status: access.status });
+  }
+  if (!PM_ROLES.has(access.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  await updateAccountSubdomain(body.locationId, body.accountSubdomain ?? null);
+  return NextResponse.json({ ok: true });
 }
 
 /** DELETE ?locationId= → disconnect (clears credentials, keeps mappings). */

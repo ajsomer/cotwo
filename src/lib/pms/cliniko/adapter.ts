@@ -20,12 +20,7 @@ import type {
   PmsPushResult,
 } from "../types";
 import { getPatientExternalId } from "../sync/mapping";
-import {
-  ClinikoApiError,
-  ClinikoClient,
-  baseUrlForKey,
-  webHostForShard,
-} from "./client";
+import { ClinikoApiError, ClinikoClient, baseUrlForKey } from "./client";
 import {
   clinikoTimestamp,
   mapAppointment,
@@ -56,6 +51,7 @@ const CAPABILITIES: PmsCapabilities = {
   writeForms: true,
   writePatientFields: true,
   writeNotes: false,
+  writeAttachments: true, // POST /patient_attachments
   webLinks: true,
 };
 
@@ -78,7 +74,9 @@ class ClinikoAdapter implements PmsAdapter {
 
   constructor(
     private readonly connectionId: string,
-    private readonly apiKey: string
+    private readonly apiKey: string,
+    /** Cliniko account subdomain (e.g. 'coviu-test') for web deep links. */
+    private readonly accountSubdomain: string | null = null
   ) {
     this.client = new ClinikoClient(apiKey);
     this.shard = this.client.shard;
@@ -149,6 +147,97 @@ class ClinikoAdapter implements PmsAdapter {
     } catch (e) {
       if ((e as ClinikoApiError).status === 404) return null;
       throw e;
+    }
+  }
+
+  async uploadPatientAttachment(input: {
+    externalId: string;
+    fileName: string;
+    contentType: string;
+    contentBase64: string;
+    description?: string;
+  }): Promise<{ ok: boolean; attachmentId?: string; detail?: string }> {
+    // Cliniko uploads are a 3-step presigned-POST flow (NOT inline base64):
+    //   1. GET the presigned S3 POST credentials → { url, fields, upload_url }
+    //   2. multipart POST the file to S3 `url` with `fields` + file
+    //   3. POST /patient_attachments { patient_id, description, upload_url }
+    //
+    // Step 1 endpoint is GET /patients/{id}/attachment_presigned_post —
+    // it's nested under the PATIENT (confirmed from the Cliniko OpenAPI paths
+    // list). Returns { url, fields } (an S3 presigned POST). The upload_url to
+    // register in step 3 is `url` + the object `key` from fields.
+    const presignedPath = `/patients/${input.externalId}/attachment_presigned_post`;
+    try {
+      // 1. Presigned S3 POST credentials.
+      const presigned = await this.client.get<{
+        url: string;
+        fields: Record<string, string>;
+        upload_url?: string;
+      }>(`${baseUrlForKey(this.apiKey)}${presignedPath}`);
+
+      if (!presigned?.url || !presigned?.fields) {
+        return { ok: false, detail: "Cliniko didn't return upload credentials." };
+      }
+
+      // 2. Upload the bytes to the presigned S3 target (multipart form).
+      const form = new FormData();
+      for (const [k, v] of Object.entries(presigned.fields)) {
+        form.append(k, v);
+      }
+      const bytes = Buffer.from(input.contentBase64, "base64");
+      form.append(
+        "file",
+        new Blob([bytes], { type: input.contentType }),
+        input.fileName
+      );
+      const s3 = await fetch(presigned.url, { method: "POST", body: form });
+      const s3Body = await s3.text().catch(() => "");
+      if (!s3.ok && s3.status !== 201 && s3.status !== 204) {
+        console.error("[cliniko attach] S3 upload failed:", s3.status, s3Body);
+        return { ok: false, detail: `Upload to storage failed (${s3.status}).` };
+      }
+
+      // Per the Cliniko guide, the upload_url is EXACTLY:
+      //   presigned `url` value  +  the `<Key>` from the S3 XML response.
+      // The S3 <Key> has real slashes and the real filename substituted (the
+      // <Location> is percent-encoded and must NOT be used). Fall back to the
+      // presigned key with ${filename} substituted if the XML lacks <Key>.
+      const xmlKey = s3Body.match(/<Key>([^<]+)<\/Key>/)?.[1];
+      const key =
+        xmlKey ?? presigned.fields.key?.replace("${filename}", input.fileName);
+      // url + key, with exactly one slash between (the docs show url ending in
+      // "/", but our account returns it without — normalise either way).
+      const uploadUrl = key
+        ? `${presigned.url.replace(/\/$/, "")}/${key}`
+        : null;
+      if (!uploadUrl) {
+        return { ok: false, detail: "Couldn't resolve the uploaded file URL." };
+      }
+
+      // 3. Create the attachment record. IMPORTANT: Cliniko patient ids exceed
+      // JS's safe-integer range (e.g. 1968645883121642782), so Number() mangles
+      // the last digits and the patient_id no longer matches the upload_url's
+      // patient segment → "upload_url is invalid". Send the id as a raw string
+      // to preserve full precision.
+      const created = await this.client.post<{ id: number }>(
+        "/patient_attachments",
+        {
+          patient_id: input.externalId,
+          description: input.description ?? input.fileName,
+          filename: input.fileName,
+          upload_url: uploadUrl,
+        }
+      );
+      return { ok: true, attachmentId: String(created.id) };
+    } catch (e) {
+      const err = e as ClinikoApiError;
+      console.error(
+        "[cliniko attach] error:",
+        err.status,
+        JSON.stringify(err.body)
+      );
+      const detail = transportDetail(err);
+      return { ok: false, detail: detail.detail };
     }
   }
 
@@ -462,10 +551,27 @@ class ClinikoAdapter implements PmsAdapter {
   }
 
   webLinkForPatient(externalId: string): string | null {
-    if (!externalId) return null;
-    // ⚠️ Format pinned from community reports (plan §6.2) — verify against a
-    // live account; if Cliniko changes it, it's a one-line fix here.
-    return `${webHostForShard(this.shard)}/patients/${externalId}`;
+    if (!externalId || !this.accountSubdomain) return null;
+    // Cliniko web URL: https://{subdomain}.{shard}.cliniko.com/patients/{id}
+    // e.g. https://coviu-test.au5.cliniko.com/patients/123. The account
+    // subdomain is fetched once at connect (getAccountSubdomain) and stored.
+    return `https://${this.accountSubdomain}.${this.shard}.cliniko.com/patients/${externalId}`;
+  }
+
+  /**
+   * Fetch the Cliniko account subdomain (e.g. 'coviu-test') so we can build web
+   * deep links. Called once at connect and stored on the connection.
+   * ⚠️ Verify the /account field name against a live account.
+   */
+  async getWebHint(): Promise<string | null> {
+    try {
+      const account = await this.client.get<{ subdomain?: string; shard?: string }>(
+        `${baseUrlForKey(this.apiKey)}/account`
+      );
+      return account?.subdomain ?? null;
+    } catch {
+      return null;
+    }
   }
 
   credentialFields(): PmsCredentialField[] {
@@ -542,8 +648,16 @@ function transportDetail(err: ClinikoApiError): {
 export const clinikoFactory: PmsAdapterFactory = {
   provider: "cliniko",
   displayName: "Cliniko",
-  create({ connectionId, credentials }: { connectionId: string; credentials: PmsCredentials }) {
-    return new ClinikoAdapter(connectionId, credentials.api_key ?? "");
+  create({
+    connectionId,
+    credentials,
+    webHint,
+  }: {
+    connectionId: string;
+    credentials: PmsCredentials;
+    webHint?: string | null;
+  }) {
+    return new ClinikoAdapter(connectionId, credentials.api_key ?? "", webHint ?? null);
   },
   staticMetadata() {
     return {

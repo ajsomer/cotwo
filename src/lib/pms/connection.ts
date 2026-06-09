@@ -13,6 +13,7 @@ export interface PmsConnectionRow {
   status: string;
   credentialsEncrypted: string | null;
   defaultBusinessExternalId: string | null;
+  accountSubdomain: string | null;
   lastSyncedAt: string | null;
   lastSyncError: string | null;
 }
@@ -25,6 +26,7 @@ const COLS = {
   status: pmsConnections.status,
   credentialsEncrypted: pmsConnections.credentialsEncrypted,
   defaultBusinessExternalId: pmsConnections.defaultBusinessExternalId,
+  accountSubdomain: pmsConnections.accountSubdomain,
   lastSyncedAt: pmsConnections.lastSyncedAt,
   lastSyncError: pmsConnections.lastSyncError,
 };
@@ -71,6 +73,7 @@ export function adapterForConnection(c: PmsConnectionRow): PmsAdapter | null {
     id: c.id,
     provider: c.provider,
     credentials_encrypted: c.credentialsEncrypted,
+    account_subdomain: c.accountSubdomain,
   });
 }
 

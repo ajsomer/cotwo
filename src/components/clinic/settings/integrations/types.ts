@@ -8,6 +8,7 @@ export interface IntegrationStatusDTO {
   status: string | null;
   lastSyncedAt: string | null;
   lastSyncError: string | null;
+  accountSubdomain: string | null;
   capabilities: {
     webhooks: boolean;
     writeForms: boolean;

@@ -38,6 +38,7 @@ export function buildAdapter(connection: {
   id: string;
   provider: string;
   credentials_encrypted: string | null;
+  account_subdomain?: string | null;
 }): PmsAdapter | null {
   if (!connection.credentials_encrypted) return null;
   const factory = getFactory(connection.provider);
@@ -48,5 +49,9 @@ export function buildAdapter(connection: {
   } catch {
     return null;
   }
-  return factory.create({ connectionId: connection.id, credentials });
+  return factory.create({
+    connectionId: connection.id,
+    credentials,
+    webHint: connection.account_subdomain ?? null,
+  });
 }

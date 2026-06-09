@@ -8,6 +8,7 @@ import {
 } from "@/lib/db/schema";
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { collectPmsTargets } from "@/lib/survey/pms-target-schema";
+import { buildIntakePackagePdf } from "@/lib/forms/build-intake-pdf";
 import type { PmsFieldResult, PmsFormFieldInput } from "../types";
 import {
   type PmsConnectionRow,
@@ -15,6 +16,7 @@ import {
   getConnectionForLocation,
   isSyncActive,
 } from "../connection";
+import { getPatientExternalId } from "./mapping";
 
 export interface PushSubmissionResult {
   submissionId: string;
@@ -109,6 +111,44 @@ export async function pushAppointmentFormSubmissions(args: {
   }
 
   return { ok: true, noPms: false, submissions };
+}
+
+/**
+ * Attach the appointment's intake-package PDF to the patient's PMS record
+ * (Cliniko patient_attachments). Renders the same PDF as the handoff download.
+ */
+export async function attachIntakePdfToPms(args: {
+  appointmentId: string;
+  locationId: string;
+  patientId: string;
+}): Promise<{ ok: boolean; noPms: boolean; attachmentId?: string; detail?: string }> {
+  const connection = await getConnectionForLocation(args.locationId);
+  if (!connection || !isSyncActive(connection)) {
+    return { ok: true, noPms: true };
+  }
+  const adapter = adapterForConnection(connection);
+  if (!adapter?.uploadPatientAttachment || !adapter.capabilities().writeAttachments) {
+    return { ok: false, noPms: false, detail: "This PMS doesn't support attachments." };
+  }
+
+  const externalId = await getPatientExternalId(connection.id, args.patientId);
+  if (!externalId) {
+    return { ok: false, noPms: false, detail: "Patient isn't linked to the PMS." };
+  }
+
+  const pdf = await buildIntakePackagePdf(args.appointmentId);
+  if (!pdf) {
+    return { ok: false, noPms: false, detail: "No intake package to attach." };
+  }
+
+  const result = await adapter.uploadPatientAttachment({
+    externalId,
+    fileName: pdf.fileName,
+    contentType: "application/pdf",
+    contentBase64: pdf.buffer.toString("base64"),
+    description: `Coviu intake — ${pdf.patientName}`,
+  });
+  return { ok: result.ok, noPms: false, attachmentId: result.attachmentId, detail: result.detail };
 }
 
 async function pushOneSubmission(

@@ -36,6 +36,8 @@ export interface IntegrationStatus {
   status: string | null;
   lastSyncedAt: string | null;
   lastSyncError: string | null;
+  /** Account subdomain for web deep links (Cliniko); editable in Settings. */
+  accountSubdomain: string | null;
   capabilities: PmsCapabilities | null;
   fieldCatalogue: PmsFieldCatalogueEntry[];
   credentialFields: PmsCredentialField[];
@@ -57,10 +59,25 @@ export async function getIntegrationStatus(
     status: connection?.status ?? null,
     lastSyncedAt: connection?.lastSyncedAt ?? null,
     lastSyncError: connection?.lastSyncError ?? null,
+    accountSubdomain: connection?.accountSubdomain ?? null,
     capabilities: meta?.capabilities ?? null,
     fieldCatalogue: meta?.fieldCatalogue ?? [],
     credentialFields: meta?.credentialFields ?? [],
   };
+}
+
+/** Update the account subdomain (web-link hint) for a location's connection. */
+export async function updateAccountSubdomain(
+  locationId: string,
+  subdomain: string | null
+): Promise<void> {
+  await db
+    .update(pmsConnections)
+    .set({
+      accountSubdomain: subdomain?.trim() || null,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(pmsConnections.locationId, locationId));
 }
 
 /**
@@ -86,6 +103,10 @@ export async function connectPms(args: {
   const verified = await probe.verify();
   if (!verified.ok) return verified;
 
+  // Fetch the web-link hint (e.g. Cliniko account subdomain) once at connect so
+  // patient deep links work. Best-effort — editable later in Settings.
+  const webHint = (await probe.getWebHint?.()) ?? null;
+
   const encrypted = encryptCredentials(args.credentials);
 
   const [conn] = await db
@@ -96,6 +117,7 @@ export async function connectPms(args: {
       provider: args.provider as typeof pmsConnections.$inferInsert.provider,
       status: "connected",
       credentialsEncrypted: encrypted,
+      accountSubdomain: webHint,
     })
     .onConflictDoUpdate({
       target: pmsConnections.locationId,
@@ -103,6 +125,9 @@ export async function connectPms(args: {
         provider: args.provider as typeof pmsConnections.$inferInsert.provider,
         status: "connected",
         credentialsEncrypted: encrypted,
+        // Only overwrite the stored hint when we actually fetched one (don't
+        // clobber a manual override with a null from a failed /account call).
+        ...(webHint ? { accountSubdomain: webHint } : {}),
         lastSyncError: null,
         updatedAt: new Date().toISOString(),
       },

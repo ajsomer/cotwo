@@ -827,6 +827,9 @@ export const pmsConnections = pgTable("pms_connections", {
 	// iff this is non-null (plan §8.A). Markers from onboarding leave it null.
 	credentialsEncrypted: text("credentials_encrypted"),
 	defaultBusinessExternalId: text("default_business_external_id"),
+	// Cliniko account subdomain (e.g. 'coviu-test') for web deep links:
+	// https://{subdomain}.{shard}.cliniko.com/patients/{id}. Fetched at connect.
+	accountSubdomain: text("account_subdomain"),
 	lastSyncedAt: timestamp("last_synced_at", { withTimezone: true, mode: 'string' }),
 	lastSyncError: text("last_sync_error"),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),

@@ -27,6 +27,8 @@ export interface PmsCapabilities {
   writePatientFields: boolean;
   /** Can write clinical notes (held in reserve, not used in v1). */
   writeNotes: boolean;
+  /** Can attach files (e.g. the intake PDF) to a patient record. */
+  writeAttachments: boolean;
   /** Exposes human-facing web-app deep links for entities. */
   webLinks: boolean;
 }
@@ -101,6 +103,18 @@ export interface PmsAdapter {
   // ── WRITE ──
   /** Push a completed form; returns a per-field result for the UI (§6.1). */
   pushFormSubmission(input: PmsFormSubmissionInput): Promise<PmsPushResult>;
+  /**
+   * Attach a file (e.g. the intake PDF) to a patient's record, if supported.
+   * `externalId` is the PMS patient id. Returns the created attachment id.
+   */
+  uploadPatientAttachment?(input: {
+    externalId: string;
+    fileName: string;
+    contentType: string;
+    /** Base64-encoded file content. */
+    contentBase64: string;
+    description?: string;
+  }): Promise<{ ok: boolean; attachmentId?: string; detail?: string }>;
 
   // ── METADATA for the UI ──
   capabilities(): PmsCapabilities;
@@ -110,6 +124,11 @@ export interface PmsAdapter {
   validateField(key: string, value: string): PmsFieldValidation;
   /** Human-facing web-app URL for a patient, or null if unsupported (§6.2). */
   webLinkForPatient(externalId: string): string | null;
+  /**
+   * Fetch a provider-opaque web-link hint (e.g. Cliniko account subdomain),
+   * fetched once at connect and stored for webLinkForPatient. Null if N/A.
+   */
+  getWebHint?(): Promise<string | null>;
   /** Credential fields the connect form should collect. */
   credentialFields(): PmsCredentialField[];
 }
@@ -128,6 +147,8 @@ export interface PmsAdapterFactory {
   create(args: {
     connectionId: string;
     credentials: PmsCredentials;
+    /** Provider-opaque hint for web deep links (e.g. Cliniko account subdomain). */
+    webHint?: string | null;
   }): PmsAdapter;
   /** Metadata available WITHOUT credentials (capabilities, catalogue, fields). */
   staticMetadata(): {
