@@ -31,6 +31,7 @@ export async function GET(request: Request) {
         sessionsScheduled: 0,
         cancelled: 0,
         skippedNonTelehealth: 0,
+        reconciled: 0,
         error: (err as Error).message,
       });
     }

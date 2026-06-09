@@ -128,6 +128,30 @@ class ClinikoAdapter implements PmsAdapter {
     }
   }
 
+  async getPatient(externalId: string): Promise<PmsPatient | null> {
+    try {
+      const row = await this.client.get<ClinikoPatient>(
+        `${baseUrlForKey(this.apiKey)}/patients/${externalId}`
+      );
+      return mapPatient(row);
+    } catch (e) {
+      if ((e as ClinikoApiError).status === 404) return null;
+      throw e;
+    }
+  }
+
+  async getAppointment(externalId: string): Promise<PmsAppointment | null> {
+    try {
+      const row = await this.client.get<ClinikoIndividualAppointment>(
+        `${baseUrlForKey(this.apiKey)}/individual_appointments/${externalId}`
+      );
+      return mapAppointment(row);
+    } catch (e) {
+      if ((e as ClinikoApiError).status === 404) return null;
+      throw e;
+    }
+  }
+
   async listPractitioners(): Promise<PmsPractitioner[]> {
     const out: PmsPractitioner[] = [];
     for await (const row of this.client.list<ClinikoPractitioner>(

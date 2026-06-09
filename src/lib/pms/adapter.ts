@@ -90,6 +90,10 @@ export interface PmsAdapter {
     businessId?: string;
   }): AsyncIterable<PmsAppointment>;
   listPatients(opts: { since?: Date }): AsyncIterable<PmsPatient>;
+  /** Fetch a single patient by external id (lazy link during appt sync). */
+  getPatient(externalId: string): Promise<PmsPatient | null>;
+  /** Fetch a single appointment by external id (reconciliation re-pull). */
+  getAppointment(externalId: string): Promise<PmsAppointment | null>;
   listPractitioners(): Promise<PmsPractitioner[]>;
   listAppointmentTypes(): Promise<PmsAppointmentType[]>;
   listBusinesses(): Promise<PmsBusiness[]>;

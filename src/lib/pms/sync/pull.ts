@@ -2,11 +2,12 @@ import "server-only";
 import { db } from "@/lib/db";
 import {
   appointments,
+  appointmentWorkflowRuns,
   patients,
   patientPhoneNumbers,
   sessions,
 } from "@/lib/db/schema";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { scheduleWorkflowForAppointment } from "@/lib/workflows/scanner";
 import type { PmsAdapter } from "../adapter";
 import type { PmsAppointment, PmsPatient } from "../types";
@@ -31,6 +32,7 @@ export interface PullResult {
   sessionsScheduled: number;
   cancelled: number;
   skippedNonTelehealth: number;
+  reconciled: number;
   error?: string;
 }
 
@@ -67,6 +69,11 @@ export async function pullConnection(
     result.sessionsScheduled = apptResult.scheduled;
     result.cancelled = apptResult.cancelled;
     result.skippedNonTelehealth = apptResult.skipped;
+
+    // 3. Reconcile: re-pull any synced appointment whose patient went missing
+    //    in Coviu (e.g. deleted locally). The incremental cursor would never
+    //    re-surface them on its own, so we heal them here. Cliniko wins.
+    result.reconciled = await reconcileMissingPatients(adapter, connection, orgId);
 
     await recordSyncResult(connection.id, null);
   } catch (e) {
@@ -135,13 +142,31 @@ async function upsertPatient(
     await linkPatient(connectionId, patientId, p.externalId);
   }
 
-  // Phone numbers — upsert each (unique on patient_id + phone_number).
+  // Phone numbers — upsert each (unique on patient_id + phone_number). The
+  // workflow engine (and the run sheet) resolve a patient's contact via the
+  // PRIMARY phone, so the patient needs one or add_to_runsheet fails with "No
+  // phone number on file". Mark the first synced number primary when the
+  // patient has none yet; never clobber an existing clinic-set primary.
+  const [existingPrimary] = await db
+    .select({ id: patientPhoneNumbers.id })
+    .from(patientPhoneNumbers)
+    .where(
+      and(
+        eq(patientPhoneNumbers.patientId, patientId),
+        eq(patientPhoneNumbers.isPrimary, true)
+      )
+    )
+    .limit(1);
+  let hasPrimary = Boolean(existingPrimary);
+
   for (const phone of p.phoneNumbers) {
     if (!phone?.trim()) continue;
+    const makePrimary = !hasPrimary;
     await db
       .insert(patientPhoneNumbers)
-      .values({ patientId, phoneNumber: phone.trim(), isPrimary: false })
+      .values({ patientId, phoneNumber: phone.trim(), isPrimary: makePrimary })
       .onConflictDoNothing();
+    if (makePrimary) hasPrimary = true;
   }
 }
 
@@ -166,7 +191,7 @@ async function pullAppointments(
     const updated = a.updatedAt ? new Date(a.updatedAt) : null;
     if (updated && (!maxUpdated || updated > maxUpdated)) maxUpdated = updated;
 
-    const outcome = await upsertAppointment(connection, orgId, a);
+    const outcome = await upsertAppointment(adapter, connection, orgId, a);
     if (outcome === "skipped") skipped++;
     else {
       upserted++;
@@ -182,6 +207,7 @@ async function pullAppointments(
 type ApptOutcome = "scheduled" | "updated" | "cancelled" | "skipped";
 
 async function upsertAppointment(
+  adapter: PmsAdapter,
   connection: PmsConnectionRow,
   orgId: string,
   a: PmsAppointment
@@ -215,9 +241,20 @@ async function upsertAppointment(
     return "skipped";
   }
 
-  const patientId = a.patientExternalId
+  // Resolve the Coviu patient. If the appointment references a patient that
+  // isn't linked yet (e.g. the incremental patient sweep already advanced past
+  // them, or the patient was deleted), fetch + upsert + link on demand so the
+  // appointment never lands patient-less (which would fail add_to_runsheet).
+  let patientId = a.patientExternalId
     ? await getPatientIdByExternal(connection.id, a.patientExternalId)
     : null;
+  if (!patientId && a.patientExternalId) {
+    const pmsPatient = await adapter.getPatient(a.patientExternalId);
+    if (pmsPatient) {
+      await upsertPatient(connection.id, orgId, pmsPatient);
+      patientId = await getPatientIdByExternal(connection.id, a.patientExternalId);
+    }
+  }
 
   // Find an existing synced appointment for this (location, external id).
   const [existing] = await db
@@ -296,6 +333,81 @@ async function upsertAppointment(
   return "scheduled";
 }
 
+/**
+ * Heal synced appointments whose patient went missing in Coviu (e.g. deleted
+ * locally). The incremental cursor won't re-surface them, so we re-fetch each
+ * from Cliniko, re-create + re-link the patient (Cliniko wins), update the
+ * appointment, and schedule the workflow if it still has no session.
+ */
+async function reconcileMissingPatients(
+  adapter: PmsAdapter,
+  connection: PmsConnectionRow,
+  orgId: string
+): Promise<number> {
+  // Synced appointments at this location with no linked patient.
+  const orphans = await db
+    .select({
+      id: appointments.id,
+      pmsExternalId: appointments.pmsExternalId,
+      appointmentTypeId: appointments.appointmentTypeId,
+      scheduledAt: appointments.scheduledAt,
+    })
+    .from(appointments)
+    .where(
+      and(
+        eq(appointments.locationId, connection.locationId),
+        isNotNull(appointments.pmsExternalId),
+        isNull(appointments.patientId)
+      )
+    );
+
+  let healed = 0;
+  for (const o of orphans) {
+    if (!o.pmsExternalId) continue;
+    const pmsAppt = await adapter.getAppointment(o.pmsExternalId);
+    if (!pmsAppt?.patientExternalId) continue;
+
+    // Re-create + link the patient from Cliniko.
+    const pmsPatient = await adapter.getPatient(pmsAppt.patientExternalId);
+    if (!pmsPatient) continue;
+    await upsertPatient(connection.id, orgId, pmsPatient);
+    const patientId = await getPatientIdByExternal(
+      connection.id,
+      pmsAppt.patientExternalId
+    );
+    if (!patientId) continue;
+
+    await db
+      .update(appointments)
+      .set({ patientId, updatedAt: new Date().toISOString() })
+      .where(eq(appointments.id, o.id));
+
+    // If the appointment never spawned a session AND has no workflow run yet,
+    // schedule the workflow now that it has a patient (add_to_runsheet needs
+    // the patient's phone). Guarding on the run avoids duplicate runs when an
+    // earlier run's add_to_runsheet failed (e.g. the missing-phone case).
+    const [hasSession] = await db
+      .select({ id: sessions.id })
+      .from(sessions)
+      .where(eq(sessions.appointmentId, o.id))
+      .limit(1);
+    const [hasRun] = await db
+      .select({ id: appointmentWorkflowRuns.id })
+      .from(appointmentWorkflowRuns)
+      .where(eq(appointmentWorkflowRuns.appointmentId, o.id))
+      .limit(1);
+    if (!hasSession && !hasRun && o.appointmentTypeId) {
+      await scheduleWorkflowForAppointment(
+        o.id,
+        o.appointmentTypeId,
+        o.scheduledAt
+      );
+    }
+    healed++;
+  }
+  return healed;
+}
+
 /** Cascade a cancelled/no-show appointment to its live session(s). */
 async function cancelSessionFor(appointmentId: string): Promise<void> {
   await db
@@ -317,6 +429,7 @@ function emptyResult(over: Partial<PullResult> & { ok: boolean }): PullResult {
     sessionsScheduled: 0,
     cancelled: 0,
     skippedNonTelehealth: 0,
+    reconciled: 0,
     ...over,
   };
 }
