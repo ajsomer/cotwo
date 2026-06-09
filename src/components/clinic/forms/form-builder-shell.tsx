@@ -8,12 +8,18 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { FormFillClient } from "@/components/patient/form-fill-client";
 import { useOrg } from "@/hooks/useOrg";
+import { useLocation } from "@/hooks/useLocation";
 import type { FormStatus } from "@/lib/supabase/types";
 import { coviuTheme } from "@/lib/survey/theme";
 import {
   IDENTITY_PAGE_NAME,
   IDENTITY_FIELD_NAMES,
 } from "@/lib/survey/identity-page";
+import {
+  registerPmsTargetProperty,
+  setPmsTargetChoices,
+  findDuplicatePmsTargets,
+} from "@/lib/survey/pms-target-property";
 
 import "survey-core/survey-core.min.css";
 import "survey-creator-core/survey-creator-core.min.css";
@@ -47,6 +53,7 @@ const STATUS_BADGE: Record<
 export function FormBuilderShell({ formId }: FormBuilderShellProps) {
   const router = useRouter();
   const { org } = useOrg();
+  const { selectedLocation } = useLocation();
   const [name, setName] = useState("");
   const nameRef = useRef(name);
   const [status, setStatus] = useState<FormStatus>("draft");
@@ -71,6 +78,33 @@ export function FormBuilderShell({ formId }: FormBuilderShellProps) {
         setName(form.name);
         nameRef.current = form.name;
         setStatus(form.status);
+
+        // Register the PMS write-back property and populate its dropdown from
+        // the active provider's catalogue (plan §6). Provider-neutral: choices
+        // come from whatever the connected adapter declares; with no PMS the
+        // dropdown just offers "(Don't send to PMS)".
+        registerPmsTargetProperty();
+        if (selectedLocation?.id) {
+          try {
+            const catRes = await fetch(
+              `/api/pms/catalogue?locationId=${selectedLocation.id}`
+            );
+            if (catRes.ok) {
+              const cat = (await catRes.json()) as {
+                fieldCatalogue: Array<{ key: string; label: string; group: string }>;
+              };
+              setPmsTargetChoices(
+                cat.fieldCatalogue.map((e) => ({
+                  key: e.key,
+                  label: e.label,
+                  group: e.group,
+                }))
+              );
+            }
+          } catch {
+            // Non-fatal: dropdown falls back to "don't send" only.
+          }
+        }
 
         const c = new SurveyCreator({
           showLogicTab: false,
@@ -131,10 +165,21 @@ export function FormBuilderShell({ formId }: FormBuilderShellProps) {
     }
 
     load();
-  }, [formId]);
+  }, [formId, selectedLocation?.id]);
 
   const handleSave = useCallback(async () => {
     if (!creator) return;
+
+    // Unique target per form (plan §6): refuse to save if two questions map to
+    // the same PMS field — the push would otherwise be ambiguous.
+    const dupes = findDuplicatePmsTargets(creator.JSON);
+    if (dupes.length > 0) {
+      setError(
+        `Two or more questions write back to the same PMS field. Each PMS field can only be mapped once per form.`
+      );
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
@@ -162,6 +207,15 @@ export function FormBuilderShell({ formId }: FormBuilderShellProps) {
 
   const handlePublish = useCallback(async () => {
     if (!creator) return;
+
+    const dupes = findDuplicatePmsTargets(creator.JSON);
+    if (dupes.length > 0) {
+      setError(
+        `Two or more questions write back to the same PMS field. Each PMS field can only be mapped once per form.`
+      );
+      return;
+    }
+
     setSaving(true);
     setError(null);
 

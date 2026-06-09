@@ -4,6 +4,7 @@ import { forms as formsT, formAssignments } from "@/lib/db/schema";
 import { and, eq, ne } from "drizzle-orm";
 import { fetchForms } from "@/lib/clinic/fetchers/forms";
 import { defaultFormSchema, ensureIdentityPage } from "@/lib/survey/identity-page";
+import { derivePmsProviderFromSchema } from "@/lib/survey/pms-target-schema";
 import {
   requireStaffOrgAccess,
   requireStaffCanAccessForm,
@@ -120,7 +121,15 @@ export async function PATCH(request: NextRequest) {
   // Defensive: any schema write must contain the locked identity page.
   // The builder UI prevents deleting it, but a tampered client or a
   // direct API call could submit a schema without it.
-  if (schema !== undefined) updates.schema = ensureIdentityPage(schema);
+  if (schema !== undefined) {
+    updates.schema = ensureIdentityPage(schema);
+    // Auto-tag the form's PMS provider from its bindings (plan §8.F). The tag
+    // is derived from the provider-namespaced pmsTarget keys, so it stays
+    // authoritative without trusting the client. NULL = generic, not PMS-bound.
+    updates.pmsProvider = derivePmsProviderFromSchema(
+      updates.schema
+    ) as typeof formsT.$inferInsert.pmsProvider;
+  }
   if (status !== undefined) updates.status = status;
 
   if (Object.keys(updates).length === 0) {
