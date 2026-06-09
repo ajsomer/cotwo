@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { SlideOver } from "@/components/ui/slide-over";
+import { useLocation } from "@/hooks/useLocation";
 import type { EnrichedSession } from "@/lib/supabase/types";
 import type { ReadinessAppointment, WorkflowAction } from "@/stores/clinic-store";
 import { DemographicsSection, PaymentSection } from "./demographics-section";
@@ -125,6 +126,13 @@ export function PatientContactCard({
   const [fetchedWorkflowActions, setFetchedWorkflowActions] = useState<
     WorkflowAction[] | null
   >(null);
+  // "Open in {PMS}" deep link for this patient (§6.2). Null when no sync-active
+  // PMS / no link / no web links — the button then hides.
+  const [pmsLink, setPmsLink] = useState<{
+    url: string;
+    providerLabel: string;
+  } | null>(null);
+  const { selectedLocation } = useLocation();
 
   const resolvedPatientId =
     propPatientId ||
@@ -133,6 +141,39 @@ export function PatientContactCard({
     session?.patient_id ||
     null;
   const isReadinessMode = !!appointment;
+
+  // Resolve the "Open in {PMS}" deep link. setState lives in the awaited
+  // continuation (lint-safe) with a cancellation guard.
+  useEffect(() => {
+    let cancelled = false;
+    const locationId = selectedLocation?.id;
+    if (!open || !resolvedPatientId || !locationId) {
+      setPmsLink(null);
+      return;
+    }
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/pms/patient-link?locationId=${locationId}&patientId=${resolvedPatientId}`
+        );
+        if (cancelled) return;
+        const data = res.ok
+          ? ((await res.json()) as { url: string | null; providerLabel: string | null })
+          : { url: null, providerLabel: null };
+        if (cancelled) return;
+        setPmsLink(
+          data.url && data.providerLabel
+            ? { url: data.url, providerLabel: data.providerLabel }
+            : null
+        );
+      } catch {
+        if (!cancelled) setPmsLink(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, resolvedPatientId, selectedLocation?.id]);
 
   // Whether the row gives us enough to paint a shell on open. When true, we
   // never show the full-panel skeleton — sections shimmer individually.
@@ -351,6 +392,7 @@ export function PatientContactCard({
             summaryError={summaryError}
             onTakePayment={() => {}}
             onSendSms={() => {}}
+            pmsLink={pmsLink}
             readinessActions={
               isReadinessMode && appointment && onDeleted ? (
                 <ReadinessActions

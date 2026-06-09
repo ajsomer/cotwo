@@ -13,6 +13,9 @@ interface DemographicsSectionProps {
   summaryError?: boolean;
   onTakePayment: () => void;
   onSendSms: () => void;
+  // "Open in {PMS}" deep link + provider label, when the location has a
+  // sync-active PMS and this patient is linked. Null/absent → hidden. §6.2
+  pmsLink?: { url: string; providerLabel: string } | null;
   // Readiness mode adds a delete affordance below the quick actions.
   readinessActions?: React.ReactNode;
 }
@@ -23,6 +26,7 @@ export function DemographicsSection({
   summaryError = false,
   onTakePayment,
   onSendSms,
+  pmsLink,
   readinessActions,
 }: DemographicsSectionProps) {
   const hasPhones = details.phone_numbers.length > 0;
@@ -60,6 +64,17 @@ export function DemographicsSection({
             label="Send SMS"
             onClick={onSendSms}
           />
+          {pmsLink && (
+            <a
+              href={pmsLink.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:border-gray-300"
+            >
+              <ExternalLinkIcon />
+              Open in {pmsLink.providerLabel} ↗
+            </a>
+          )}
         </div>
 
         {readinessActions}
@@ -223,6 +238,26 @@ function CreditCardIcon() {
     >
       <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
       <line x1="1" y1="10" x2="23" y2="10" />
+    </svg>
+  );
+}
+
+function ExternalLinkIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="text-gray-400 flex-shrink-0"
+    >
+      <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+      <polyline points="15 3 21 3 21 9" />
+      <line x1="10" y1="14" x2="21" y2="3" />
     </svg>
   );
 }
