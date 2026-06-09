@@ -11,6 +11,10 @@ export interface AppointmentTypeRow {
   modality: string;
   source: string;
   pms_provider: string | null;
+  // True for a PMS-imported type whose link has no confirmed modality / room /
+  // sync yet — usable for authoring workflows, but won't reach the run sheet
+  // until confirmed in Settings → Integrations. Drives the "needs setup" hint.
+  is_pms_unconfirmed?: boolean;
   pre_workflow_template_id: string | null;
   terminal_type: "run_sheet" | "collection_only" | null;
   action_count: number;

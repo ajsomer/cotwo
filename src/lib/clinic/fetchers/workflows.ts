@@ -7,6 +7,7 @@ import {
   typeWorkflowLinks,
   workflowActionBlocks,
   appointmentWorkflowRuns,
+  pmsAppointmentTypeLinks,
 } from "@/lib/db/schema";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type {
@@ -96,7 +97,7 @@ export const fetchWorkflowsInit = cache(async (orgId: string): Promise<Workflows
   const orgTemplateIds = allTemplates.map((t) => t.id);
 
   // Phase 2: dependents, all scoped to this org's types/templates.
-  const [links, allBlocks, runs] = await Promise.all([
+  const [links, allBlocks, runs, pmsTypeLinks] = await Promise.all([
     typeIds.length === 0
       ? Promise.resolve([])
       : db
@@ -129,7 +130,30 @@ export const fetchWorkflowsInit = cache(async (orgId: string): Promise<Workflows
               inArray(appointmentWorkflowRuns.workflowTemplateId, orgTemplateIds)
             )
           ),
+    // PMS type links for this org's types — used to mark imported-but-
+    // unconfirmed types (no confirmed modality / room / sync) with a hint.
+    typeIds.length === 0
+      ? Promise.resolve([])
+      : db
+          .select({
+            appointment_type_id: pmsAppointmentTypeLinks.appointmentTypeId,
+            confirmed_modality: pmsAppointmentTypeLinks.confirmedModality,
+            room_id: pmsAppointmentTypeLinks.roomId,
+            sync_enabled: pmsAppointmentTypeLinks.syncEnabled,
+          })
+          .from(pmsAppointmentTypeLinks)
+          .where(inArray(pmsAppointmentTypeLinks.appointmentTypeId, typeIds)),
   ]);
+
+  // A PMS-imported type is "unconfirmed" until its link has a modality + room
+  // and sync is enabled (Settings → Integrations). Map type id → unconfirmed.
+  const unconfirmedTypeIds = new Set(
+    pmsTypeLinks
+      .filter(
+        (l) => !l.confirmed_modality || !l.room_id || !l.sync_enabled
+      )
+      .map((l) => l.appointment_type_id)
+  );
 
   // --- Pre-appointment ---
   const typeIdSet = new Set(typeIds);
@@ -164,6 +188,7 @@ export const fetchWorkflowsInit = cache(async (orgId: string): Promise<Workflows
       terminal_type: (template?.terminal_type as AppointmentTypeRow["terminal_type"]) ?? null,
       action_count: tid ? (preWorkflowBlocks[tid] ?? []).length : 0,
       in_flight_count: tid ? (inFlightCounts[tid] ?? 0) : 0,
+      is_pms_unconfirmed: unconfirmedTypeIds.has(t.id),
     } as AppointmentTypeRow;
   });
 

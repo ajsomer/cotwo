@@ -357,6 +357,73 @@ export async function saveAppointmentTypeMapping(args: {
   return { ok: true };
 }
 
+/**
+ * Pull ALL appointment types from the connection's PMS and make sure each one
+ * exists as a Coviu appointment_type + a connection-scoped link, so the
+ * Workflows view can attach pre-appointment workflows to every real type.
+ *
+ * Types are imported UNCONFIRMED (modality stays the schema default; the link's
+ * confirmed_modality / room / sync_enabled are left untouched). A type only
+ * reaches the run sheet once confirmed in Settings → Integrations (§5). This
+ * is the "refresh appointment types" action behind the Workflows button.
+ */
+export async function importAppointmentTypes(
+  connection: PmsConnectionRow
+): Promise<{ ok: boolean; imported: number; total: number; detail?: string }> {
+  const adapter = adapterForConnection(connection);
+  if (!adapter) return { ok: false, imported: 0, total: 0, detail: "Connection is not sync-active." };
+  const orgId = await orgForLocation(connection.locationId);
+  if (!orgId) return { ok: false, imported: 0, total: 0, detail: "Location has no org." };
+
+  let pmsTypes;
+  try {
+    pmsTypes = await adapter.listAppointmentTypes();
+  } catch (e) {
+    return { ok: false, imported: 0, total: 0, detail: (e as Error).message };
+  }
+
+  // Existing links for this connection → skip re-creating the Coviu type.
+  const existingLinks = await db
+    .select({
+      pmsExternalId: pmsAppointmentTypeLinks.pmsExternalId,
+      appointmentTypeId: pmsAppointmentTypeLinks.appointmentTypeId,
+    })
+    .from(pmsAppointmentTypeLinks)
+    .where(eq(pmsAppointmentTypeLinks.connectionId, connection.id));
+  const linkedExternalIds = new Set(existingLinks.map((l) => l.pmsExternalId));
+
+  let imported = 0;
+  for (const t of pmsTypes) {
+    if (t.archived) continue;
+    if (linkedExternalIds.has(t.externalId)) continue;
+
+    // Create the org-scoped Coviu type. Insert as in_person so an unconfirmed
+    // import never silently becomes telehealth (§5); real modality is confirmed
+    // on the link in Settings.
+    const [created] = await db
+      .insert(appointmentTypes)
+      .values({
+        orgId,
+        name: t.name,
+        modality: "in_person",
+        durationMinutes: t.durationMinutes ?? 30,
+        source: "pms",
+        pmsProvider: connection.provider as "cliniko",
+      })
+      .returning({ id: appointmentTypes.id });
+
+    await db.insert(pmsAppointmentTypeLinks).values({
+      connectionId: connection.id,
+      appointmentTypeId: created.id,
+      pmsExternalId: t.externalId,
+      // confirmed_modality NULL, sync_enabled false until confirmed.
+    });
+    imported++;
+  }
+
+  return { ok: true, imported, total: pmsTypes.length };
+}
+
 export async function savePractitionerMapping(args: {
   connectionId: string;
   externalId: string;
