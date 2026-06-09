@@ -143,8 +143,16 @@ export async function scheduleWorkflowForAppointment(
       scheduledFor = anchor - block.offset_minutes * 60 * 1000;
     }
 
-    // 5. Drop actions that fall after appointment time (for run_sheet workflows)
-    if (apptTime && block.action_type !== "add_to_runsheet" && scheduledFor > apptTime) {
+    // 5. Drop actions that fall after appointment time (for run_sheet workflows).
+    //    Exempt add_to_runsheet (fires AT appointment time) and intake_package
+    //    (fires "now" — sending intake is always valid even for an imminent or
+    //    just-synced appointment; only future-dated reminders are dropped late).
+    if (
+      apptTime &&
+      block.action_type !== "add_to_runsheet" &&
+      block.action_type !== "intake_package" &&
+      scheduledFor > apptTime
+    ) {
       actionRows.push({
         appointmentId,
         actionBlockId: block.id,
