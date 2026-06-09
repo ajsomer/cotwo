@@ -1,14 +1,34 @@
 # Plan: Nookal Integration (two-way) — second provider behind the normalization layer
 
-Status: **Built** (branch `feat/nookal-integration`). The adapter is implemented
-and registered; the genericise pass and setup-grid flip are done; `tsc --noEmit`
-+ `npm run build` are clean. Auth/transport were verified against a working
-reference client (§2 box). **Not yet run against a live Nookal account** — the
-remaining open items (verify `last_modified` behaviour, exact `getServices`
-keys, the `updatePatient` endpoint name + accepted fields, and the file-upload
-PUT mechanics) are flagged with ⚠️ inline and need a live key to close. Nookal is
-added as a **second concrete `PmsAdapter`** behind the vendor-agnostic layer that
-the Cliniko build (`docs/plans/cliniko-integration.md`) already established. The
+Status: **Built & live-verified** (branch `feat/nookal-integration`, merged to
+main 2026-06-09). The adapter is implemented and registered; the genericise pass
+and setup-grid flip are done; `tsc --noEmit` + `npm run build` clean. Verified
+end-to-end against a **live Nookal account**: connect → rooms auto-created from
+practitioners → appointment types imported → appointment sync → intake PDF
+attached → patient field write-back (DOB + email) landed.
+
+Live testing corrected four API facts the docs didn't make clear (all now fixed
+in the adapter):
+- `getAppointmentTypes` returns rows under result key **`services`** (not
+  `appointmentTypes`).
+- Appointments carry **`appointmentStartDateTimeUTC`/`EndDateTimeUTC`** (already
+  UTC) — use those, not the location-local `appointmentDate`+time (which was
+  being stored as naive UTC and shifting times by the tz offset).
+- Patient write endpoint is **`editPatient`** (not `updatePatient` — 404'd).
+- Nookal is **asymmetric**: reads return PascalCase (`DOB`/`Email`), `editPatient`
+  expects snake_case (`date_of_birth`/`email`) and **silently ignores unknown
+  params with `status: success`** — so wrong casing no-op'd with a false
+  "written". Split into separate write-param / read-field maps; dropped
+  Gender/Title/Occupation (not documented as editable).
+
+Nookal is added as a **second concrete `PmsAdapter`** behind the vendor-agnostic
+layer that the Cliniko build (`docs/plans/cliniko-integration.md`) established.
+
+**Still open (not blocking):** the `add_to_runsheet` workflow action fires at
+appointment time via the scanner/cron, which doesn't run automatically in local
+dev — so a synced appointment's session spawns on schedule in a deployed env but
+needs the cron to be running. Verify once the `pms-sync`/scanner cron is wired
+on Vercel (the existing project-level deploy TODO). The
 generic spine — schema, sync engine, Settings → Integrations, form builder
 binding, push UI, deep links, connect route — is reused. The bulk of new code is
 `src/lib/pms/nookal/`, plus one line in `registry.ts`, the setup-grid flip, and a
