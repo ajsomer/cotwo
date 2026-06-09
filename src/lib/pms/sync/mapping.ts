@@ -63,13 +63,16 @@ export async function linkPatient(
     });
 }
 
-/** Coviu staff_assignment id for a Cliniko practitioner under a connection. */
-export async function getStaffAssignmentByExternal(
+/**
+ * Coviu room id for a Cliniko practitioner (the appointment-book column) under a
+ * connection. A synced appointment resolves its room from here (§025).
+ */
+export async function getRoomByPractitionerExternal(
   connectionId: string,
   externalId: string
 ): Promise<string | null> {
   const [row] = await db
-    .select({ id: pmsPractitionerLinks.staffAssignmentId })
+    .select({ roomId: pmsPractitionerLinks.roomId })
     .from(pmsPractitionerLinks)
     .where(
       and(
@@ -78,7 +81,7 @@ export async function getStaffAssignmentByExternal(
       )
     )
     .limit(1);
-  return row?.id ?? null;
+  return row?.roomId ?? null;
 }
 
 /** Resolution config for a Cliniko appointment type under a connection. */

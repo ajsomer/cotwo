@@ -884,7 +884,10 @@ export const pmsPatientLinks = pgTable("pms_patient_links", {
 export const pmsPractitionerLinks = pgTable("pms_practitioner_links", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	connectionId: uuid("connection_id").notNull(),
-	staffAssignmentId: uuid("staff_assignment_id").notNull(),
+	// Maps a PMS practitioner (the appointment-book column) to a Coviu ROOM, so
+	// a synced appointment lands the patient in the right room. The room already
+	// carries its clinician — we don't map to a staff member. §025
+	roomId: uuid("room_id"),
 	pmsExternalId: text("pms_external_id").notNull(),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
@@ -894,12 +897,11 @@ export const pmsPractitionerLinks = pgTable("pms_practitioner_links", {
 			name: "pms_practitioner_links_connection_id_fkey"
 		}).onDelete("cascade"),
 	foreignKey({
-			columns: [table.staffAssignmentId],
-			foreignColumns: [staffAssignments.id],
-			name: "pms_practitioner_links_staff_assignment_id_fkey"
-		}).onDelete("cascade"),
+			columns: [table.roomId],
+			foreignColumns: [rooms.id],
+			name: "pms_practitioner_links_room_id_fkey"
+		}).onDelete("set null"),
 	unique("pms_practitioner_links_connection_id_pms_external_id_key").on(table.connectionId, table.pmsExternalId),
-	unique("pms_practitioner_links_connection_id_staff_assignment_id_key").on(table.connectionId, table.staffAssignmentId),
 ]);
 
 export const pmsAppointmentTypeLinks = pgTable("pms_appointment_type_links", {

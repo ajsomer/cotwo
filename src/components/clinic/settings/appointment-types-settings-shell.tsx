@@ -269,7 +269,7 @@ export function AppointmentTypesSettingsShell() {
                   </div>
                   {type.is_pms_unconfirmed && (
                     <span className="text-[11px] text-amber-600">
-                      Needs setup — confirm modality &amp; room in Settings → Integrations
+                      Needs setup — open this type to confirm modality &amp; turn on sync
                     </span>
                   )}
                 </div>

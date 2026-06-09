@@ -64,6 +64,12 @@ export function AppointmentTypeEditor({
   const [name, setName] = useState(appointmentType?.name ?? "");
   const [durationMinutes, setDurationMinutes] = useState<number | "">(appointmentType?.duration_minutes ?? 30);
   const [modality, setModality] = useState(appointmentType?.modality ?? "telehealth");
+  // PMS sync toggle (only for PMS-imported types). When on + modality is
+  // telehealth, the type's appointments sync to the run sheet (room comes from
+  // the practitioner mapping). §025
+  const [pmsSyncEnabled, setPmsSyncEnabled] = useState(
+    appointmentType?.pms_sync_enabled ?? false
+  );
   const [defaultFeeDollars, setDefaultFeeDollars] = useState(
     appointmentType?.default_fee_cents ? (appointmentType.default_fee_cents / 100).toFixed(2) : ""
   );
@@ -206,6 +212,20 @@ export function AppointmentTypeEditor({
         return;
       }
 
+      // For PMS-imported types, persist the confirmed modality + sync toggle to
+      // the PMS link (this is what gates run-sheet sync). §025
+      if (isPmsSynced && appointmentType?.id) {
+        await fetch("/api/pms/confirm-type", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            appointmentTypeId: appointmentType.id,
+            confirmedModality: modality,
+            syncEnabled: pmsSyncEnabled,
+          }),
+        });
+      }
+
       onSaved();
     } catch {
       setError("Network error");
@@ -333,6 +353,29 @@ export function AppointmentTypeEditor({
                 />
               </div>
             </div>
+
+            {/* PMS sync — only for imported types. Sync to the run sheet when
+                on + telehealth; room comes from the practitioner mapping. §025 */}
+            {isPmsSynced && (
+              <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50/50 p-3">
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={pmsSyncEnabled}
+                    onChange={(e) => setPmsSyncEnabled(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <span className="text-sm text-gray-800">
+                    Sync this type from the PMS to the run sheet
+                    <span className="block text-xs text-gray-500 mt-0.5">
+                      Appointments of this type appear on the run sheet when it&apos;s
+                      set to Telehealth and the booked practitioner is mapped to a
+                      room (Settings → Integrations).
+                    </span>
+                  </span>
+                </label>
+              </div>
+            )}
           </CollapsibleSection>
 
           {/* Section 2: Intake package */}

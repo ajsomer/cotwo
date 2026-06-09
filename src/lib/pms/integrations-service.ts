@@ -8,9 +8,6 @@ import {
   pmsPractitionerLinks,
   locations as locationsT,
   rooms as roomsT,
-  staffAssignments,
-  users as usersT,
-  typeWorkflowLinks,
 } from "@/lib/db/schema";
 import { buildRegistrationFormSchema } from "./seeded-registration-form";
 import { and, eq } from "drizzle-orm";
@@ -165,109 +162,60 @@ export async function disconnectPms(locationId: string): Promise<void> {
 
 export interface MappingData {
   connectionId: string;
-  appointmentTypes: Array<{
-    externalId: string;
-    name: string;
-    durationMinutes: number | null;
-    // current mapping (if any)
-    appointmentTypeId: string | null;
-    confirmedModality: "telehealth" | "in_person" | null;
-    roomId: string | null;
-    syncEnabled: boolean;
-    hasWorkflowLink: boolean;
-  }>;
+  // Practitioners (the appointment-book columns) → Coviu rooms. A synced
+  // appointment lands the patient in its practitioner's room (§025).
   practitioners: Array<{
     externalId: string;
     displayName: string;
-    staffAssignmentId: string | null;
+    roomId: string | null;
   }>;
   businesses: Array<{ externalId: string; name: string; locationId: string | null }>;
   rooms: Array<{ id: string; name: string }>;
-  clinicians: Array<{ staffAssignmentId: string; name: string }>;
 }
 
 /**
  * Pull live PMS resources and join them against current Coviu mappings, so the
  * Integrations page can render mapping pickers. Provider-agnostic — uses only
- * the adapter's list* methods.
+ * the adapter's list* methods. Appointment types are managed in Workflows, not
+ * here, so this surface covers only practitioners→rooms and business→location.
  */
 export async function getMappingData(
   connection: PmsConnectionRow
 ): Promise<MappingData> {
   const adapter = adapterForConnection(connection);
   if (!adapter) throw new Error("Connection is not sync-active.");
-  const orgId = await orgForLocation(connection.locationId);
-  if (!orgId) throw new Error("Location has no org.");
 
-  const [pmsTypes, pmsPractitioners, pmsBusinesses] = await Promise.all([
-    adapter.listAppointmentTypes(),
+  const [pmsPractitioners, pmsBusinesses] = await Promise.all([
     adapter.listPractitioners(),
     adapter.listBusinesses(),
   ]);
 
-  const [typeLinks, practitionerLinks, rooms, cliniciansRows, workflowLinks, locRow] =
-    await Promise.all([
-      db
-        .select()
-        .from(pmsAppointmentTypeLinks)
-        .where(eq(pmsAppointmentTypeLinks.connectionId, connection.id)),
-      db
-        .select()
-        .from(pmsPractitionerLinks)
-        .where(eq(pmsPractitionerLinks.connectionId, connection.id)),
-      db
-        .select({ id: roomsT.id, name: roomsT.name })
-        .from(roomsT)
-        .where(eq(roomsT.locationId, connection.locationId)),
-      db
-        .select({
-          staffAssignmentId: staffAssignments.id,
-          name: usersT.fullName,
-        })
-        .from(staffAssignments)
-        .innerJoin(usersT, eq(usersT.id, staffAssignments.userId))
-        .where(eq(staffAssignments.locationId, connection.locationId)),
-      db
-        .select({ appointmentTypeId: typeWorkflowLinks.appointmentTypeId })
-        .from(typeWorkflowLinks)
-        .where(eq(typeWorkflowLinks.direction, "pre_appointment")),
-      db
-        .select({ id: locationsT.id, pmsExternalId: locationsT.pmsExternalId })
-        .from(locationsT)
-        .where(eq(locationsT.id, connection.locationId)),
-    ]);
+  const [practitionerLinks, rooms, locRow] = await Promise.all([
+    db
+      .select()
+      .from(pmsPractitionerLinks)
+      .where(eq(pmsPractitionerLinks.connectionId, connection.id)),
+    db
+      .select({ id: roomsT.id, name: roomsT.name })
+      .from(roomsT)
+      .where(eq(roomsT.locationId, connection.locationId)),
+    db
+      .select({ id: locationsT.id, pmsExternalId: locationsT.pmsExternalId })
+      .from(locationsT)
+      .where(eq(locationsT.id, connection.locationId)),
+  ]);
 
-  const typeLinkByExt = new Map(typeLinks.map((l) => [l.pmsExternalId, l]));
   const practLinkByExt = new Map(
     practitionerLinks.map((l) => [l.pmsExternalId, l])
-  );
-  const workflowLinkedTypes = new Set(
-    workflowLinks.map((w) => w.appointmentTypeId)
   );
   const thisLocation = locRow[0];
 
   return {
     connectionId: connection.id,
-    appointmentTypes: pmsTypes.map((t) => {
-      const link = typeLinkByExt.get(t.externalId);
-      return {
-        externalId: t.externalId,
-        name: t.name,
-        durationMinutes: t.durationMinutes,
-        appointmentTypeId: link?.appointmentTypeId ?? null,
-        confirmedModality: link?.confirmedModality ?? null,
-        roomId: link?.roomId ?? null,
-        syncEnabled: link?.syncEnabled ?? false,
-        hasWorkflowLink: link?.appointmentTypeId
-          ? workflowLinkedTypes.has(link.appointmentTypeId)
-          : false,
-      };
-    }),
     practitioners: pmsPractitioners.map((p) => ({
       externalId: p.externalId,
       displayName: p.displayName,
-      staffAssignmentId:
-        practLinkByExt.get(p.externalId)?.staffAssignmentId ?? null,
+      roomId: practLinkByExt.get(p.externalId)?.roomId ?? null,
     })),
     businesses: pmsBusinesses.map((b) => ({
       externalId: b.externalId,
@@ -276,7 +224,6 @@ export async function getMappingData(
         thisLocation?.pmsExternalId === b.externalId ? thisLocation.id : null,
     })),
     rooms,
-    clinicians: cliniciansRows,
   };
 }
 
@@ -288,72 +235,31 @@ export async function getMappingData(
  * link with confirmed_modality / room / sync_enabled, and ensures a
  * pre-workflow link exists when telehealth+enabled (so add_to_runsheet fires).
  */
-export async function saveAppointmentTypeMapping(args: {
-  connectionId: string;
-  locationId: string;
-  externalId: string;
-  externalName: string;
-  durationMinutes: number | null;
+/**
+ * Confirm a PMS-imported appointment type's modality + sync toggle, keyed on the
+ * Coviu appointment type id (what the Workflows type editor knows). Updates the
+ * type's existing PMS link. Room is NOT set here — it comes from the
+ * practitioner→room mapping (§025). Returns ok:false if the type has no PMS link
+ * (i.e. it isn't a PMS-imported type).
+ */
+export async function confirmAppointmentTypeSync(args: {
+  appointmentTypeId: string;
   confirmedModality: "telehealth" | "in_person" | null;
-  roomId: string | null;
   syncEnabled: boolean;
 }): Promise<{ ok: boolean; detail?: string }> {
-  const orgId = await orgForLocation(args.locationId);
-  if (!orgId) return { ok: false, detail: "Location has no org." };
-
-  // Resolve or create the Coviu appointment type backing this PMS type.
-  const [existingLink] = await db
-    .select({ appointmentTypeId: pmsAppointmentTypeLinks.appointmentTypeId })
-    .from(pmsAppointmentTypeLinks)
-    .where(
-      and(
-        eq(pmsAppointmentTypeLinks.connectionId, args.connectionId),
-        eq(pmsAppointmentTypeLinks.pmsExternalId, args.externalId)
-      )
-    )
-    .limit(1);
-
-  let appointmentTypeId = existingLink?.appointmentTypeId;
-  if (!appointmentTypeId) {
-    const [created] = await db
-      .insert(appointmentTypes)
-      .values({
-        orgId,
-        name: args.externalName,
-        // Insert as in_person by default so an unconfirmed import never silently
-        // becomes telehealth (plan §5). Confirmed modality lives on the link.
-        modality: args.confirmedModality ?? "in_person",
-        durationMinutes: args.durationMinutes ?? 30,
-        source: "pms",
-        pmsProvider: "cliniko",
-      })
-      .returning({ id: appointmentTypes.id });
-    appointmentTypeId = created.id;
-  }
-
-  await db
-    .insert(pmsAppointmentTypeLinks)
-    .values({
-      connectionId: args.connectionId,
-      appointmentTypeId,
-      pmsExternalId: args.externalId,
+  const result = await db
+    .update(pmsAppointmentTypeLinks)
+    .set({
       confirmedModality: args.confirmedModality,
-      roomId: args.roomId,
       syncEnabled: args.syncEnabled,
+      updatedAt: new Date().toISOString(),
     })
-    .onConflictDoUpdate({
-      target: [
-        pmsAppointmentTypeLinks.connectionId,
-        pmsAppointmentTypeLinks.pmsExternalId,
-      ],
-      set: {
-        confirmedModality: args.confirmedModality,
-        roomId: args.roomId,
-        syncEnabled: args.syncEnabled,
-        updatedAt: new Date().toISOString(),
-      },
-    });
+    .where(eq(pmsAppointmentTypeLinks.appointmentTypeId, args.appointmentTypeId))
+    .returning({ id: pmsAppointmentTypeLinks.id });
 
+  if (result.length === 0) {
+    return { ok: false, detail: "This appointment type isn't linked to a PMS." };
+  }
   return { ok: true };
 }
 
@@ -424,12 +330,13 @@ export async function importAppointmentTypes(
   return { ok: true, imported, total: pmsTypes.length };
 }
 
+/** Map a PMS practitioner (appointment-book column) → a Coviu room (§025). */
 export async function savePractitionerMapping(args: {
   connectionId: string;
   externalId: string;
-  staffAssignmentId: string | null;
+  roomId: string | null;
 }): Promise<void> {
-  if (!args.staffAssignmentId) {
+  if (!args.roomId) {
     // Unmap.
     await db
       .delete(pmsPractitionerLinks)
@@ -445,7 +352,7 @@ export async function savePractitionerMapping(args: {
     .insert(pmsPractitionerLinks)
     .values({
       connectionId: args.connectionId,
-      staffAssignmentId: args.staffAssignmentId,
+      roomId: args.roomId,
       pmsExternalId: args.externalId,
     })
     .onConflictDoUpdate({
@@ -453,7 +360,7 @@ export async function savePractitionerMapping(args: {
         pmsPractitionerLinks.connectionId,
         pmsPractitionerLinks.pmsExternalId,
       ],
-      set: { staffAssignmentId: args.staffAssignmentId },
+      set: { roomId: args.roomId },
     });
 }
 

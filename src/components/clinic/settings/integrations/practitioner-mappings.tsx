@@ -9,13 +9,18 @@ interface Props {
   onSaved: () => void;
 }
 
-/** Map each PMS practitioner → a Coviu clinician (staff_assignment-scoped). */
+/**
+ * Map each PMS practitioner (the appointment-book column) → a Coviu room. A
+ * synced appointment lands the patient in its practitioner's room (§025).
+ */
 export function PractitionerMappings({ locationId, data, onSaved }: Props) {
   return (
     <section>
-      <h3 className="text-sm font-semibold text-gray-800">Practitioners</h3>
+      <h3 className="text-sm font-semibold text-gray-800">Practitioners → rooms</h3>
       <p className="text-xs text-gray-500 mt-1">
-        Link each Cliniko practitioner to a clinician at this location.
+        Send each Cliniko practitioner&apos;s appointments to the right room. A
+        synced appointment can only reach the run sheet once its practitioner has
+        a room here.
       </p>
       <div className="mt-3 space-y-2">
         {data.practitioners.map((p) => (
@@ -23,7 +28,7 @@ export function PractitionerMappings({ locationId, data, onSaved }: Props) {
             key={p.externalId}
             locationId={locationId}
             practitioner={p}
-            clinicians={data.clinicians}
+            rooms={data.rooms}
             onSaved={onSaved}
           />
         ))}
@@ -38,20 +43,20 @@ export function PractitionerMappings({ locationId, data, onSaved }: Props) {
 function PractitionerRow({
   locationId,
   practitioner,
-  clinicians,
+  rooms,
   onSaved,
 }: {
   locationId: string;
   practitioner: MappingDataDTO["practitioners"][number];
-  clinicians: MappingDataDTO["clinicians"];
+  rooms: MappingDataDTO["rooms"];
   onSaved: () => void;
 }) {
-  const [value, setValue] = useState(practitioner.staffAssignmentId ?? "");
+  const [value, setValue] = useState(practitioner.roomId ?? "");
   const [saving, setSaving] = useState(false);
 
-  const save = async (staffAssignmentId: string) => {
+  const save = async (roomId: string) => {
     setSaving(true);
-    setValue(staffAssignmentId);
+    setValue(roomId);
     await fetch("/api/pms/mappings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -59,7 +64,7 @@ function PractitionerRow({
         locationId,
         kind: "practitioner",
         externalId: practitioner.externalId,
-        staffAssignmentId: staffAssignmentId || null,
+        roomId: roomId || null,
       }),
     });
     setSaving(false);
@@ -77,10 +82,10 @@ function PractitionerRow({
         onChange={(e) => save(e.target.value)}
         className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs"
       >
-        <option value="">— Not mapped —</option>
-        {clinicians.map((c) => (
-          <option key={c.staffAssignmentId} value={c.staffAssignmentId}>
-            {c.name}
+        <option value="">— No room —</option>
+        {rooms.map((r) => (
+          <option key={r.id} value={r.id}>
+            {r.name}
           </option>
         ))}
       </select>

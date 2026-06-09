@@ -131,27 +131,26 @@ export const fetchWorkflowsInit = cache(async (orgId: string): Promise<Workflows
             )
           ),
     // PMS type links for this org's types — used to mark imported-but-
-    // unconfirmed types (no confirmed modality / room / sync) with a hint.
+    // unconfirmed types and seed the type editor's modality + sync toggle.
+    // Room is NOT here anymore — it comes from the practitioner mapping (§025).
     typeIds.length === 0
       ? Promise.resolve([])
       : db
           .select({
             appointment_type_id: pmsAppointmentTypeLinks.appointmentTypeId,
             confirmed_modality: pmsAppointmentTypeLinks.confirmedModality,
-            room_id: pmsAppointmentTypeLinks.roomId,
             sync_enabled: pmsAppointmentTypeLinks.syncEnabled,
           })
           .from(pmsAppointmentTypeLinks)
           .where(inArray(pmsAppointmentTypeLinks.appointmentTypeId, typeIds)),
   ]);
 
-  // A PMS-imported type is "unconfirmed" until its link has a modality + room
-  // and sync is enabled (Settings → Integrations). Map type id → unconfirmed.
+  // A PMS-imported type is "unconfirmed" until it has a confirmed modality AND
+  // sync is on. (Room is per-practitioner now, so it's not part of this.)
+  const pmsLinkByType = new Map(pmsTypeLinks.map((l) => [l.appointment_type_id, l]));
   const unconfirmedTypeIds = new Set(
     pmsTypeLinks
-      .filter(
-        (l) => !l.confirmed_modality || !l.room_id || !l.sync_enabled
-      )
+      .filter((l) => !l.confirmed_modality || !l.sync_enabled)
       .map((l) => l.appointment_type_id)
   );
 
@@ -189,6 +188,7 @@ export const fetchWorkflowsInit = cache(async (orgId: string): Promise<Workflows
       action_count: tid ? (preWorkflowBlocks[tid] ?? []).length : 0,
       in_flight_count: tid ? (inFlightCounts[tid] ?? 0) : 0,
       is_pms_unconfirmed: unconfirmedTypeIds.has(t.id),
+      pms_sync_enabled: pmsLinkByType.get(t.id)?.sync_enabled ?? false,
     } as AppointmentTypeRow;
   });
 

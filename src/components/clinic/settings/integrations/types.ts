@@ -34,20 +34,11 @@ export interface IntegrationStatusDTO {
 
 export interface MappingDataDTO {
   connectionId: string;
-  appointmentTypes: Array<{
-    externalId: string;
-    name: string;
-    durationMinutes: number | null;
-    appointmentTypeId: string | null;
-    confirmedModality: "telehealth" | "in_person" | null;
-    roomId: string | null;
-    syncEnabled: boolean;
-    hasWorkflowLink: boolean;
-  }>;
+  // Practitioners (appointment-book columns) → Coviu rooms (§025).
   practitioners: Array<{
     externalId: string;
     displayName: string;
-    staffAssignmentId: string | null;
+    roomId: string | null;
   }>;
   businesses: Array<{
     externalId: string;
@@ -55,5 +46,4 @@ export interface MappingDataDTO {
     locationId: string | null;
   }>;
   rooms: Array<{ id: string; name: string }>;
-  clinicians: Array<{ staffAssignmentId: string; name: string }>;
 }

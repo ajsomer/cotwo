@@ -19,6 +19,7 @@ import {
 import { getCursor, setCursor } from "./cursor";
 import {
   getPatientIdByExternal,
+  getRoomByPractitionerExternal,
   getTypeLinkByExternal,
   linkPatient,
 } from "./mapping";
@@ -194,12 +195,23 @@ async function upsertAppointment(
     connection.id,
     a.appointmentTypeExternalId
   );
+  // Type gate: confirmed telehealth + sync enabled (§5). Modality/sync are
+  // confirmed on the type in Workflows; the type no longer carries a room.
   if (
     !typeLink ||
     !typeLink.syncEnabled ||
-    typeLink.confirmedModality !== "telehealth" ||
-    !typeLink.roomId
+    typeLink.confirmedModality !== "telehealth"
   ) {
+    return "skipped";
+  }
+
+  // Room comes from the practitioner→room mapping (§025): the appointment-book
+  // column decides which room the patient lands in. No practitioner mapped to a
+  // room → we can't place the appointment, so skip it.
+  const roomId = a.practitionerExternalId
+    ? await getRoomByPractitionerExternal(connection.id, a.practitionerExternalId)
+    : null;
+  if (!roomId) {
     return "skipped";
   }
 
@@ -231,7 +243,7 @@ async function upsertAppointment(
       .set({
         patientId: patientId ?? undefined,
         appointmentTypeId: typeLink.appointmentTypeId,
-        roomId: typeLink.roomId,
+        roomId,
         scheduledAt: a.startsAt,
         status,
         updatedAt: new Date().toISOString(),

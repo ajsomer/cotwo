@@ -6,7 +6,6 @@ import {
 } from "@/lib/pms/connection";
 import {
   getMappingData,
-  saveAppointmentTypeMapping,
   saveBusinessMapping,
   savePractitionerMapping,
 } from "@/lib/pms/integrations-service";
@@ -65,25 +64,12 @@ export async function POST(request: NextRequest) {
   }
 
   switch (kind) {
-    case "appointment_type": {
-      const result = await saveAppointmentTypeMapping({
-        connectionId: connection.id,
-        locationId,
-        externalId: body.externalId as string,
-        externalName: body.externalName as string,
-        durationMinutes: (body.durationMinutes as number | null) ?? null,
-        confirmedModality:
-          (body.confirmedModality as "telehealth" | "in_person" | null) ?? null,
-        roomId: (body.roomId as string | null) ?? null,
-        syncEnabled: Boolean(body.syncEnabled),
-      });
-      return NextResponse.json(result, { status: result.ok ? 200 : 400 });
-    }
     case "practitioner": {
+      // Map the PMS practitioner (appointment-book column) → a Coviu room (§025).
       await savePractitionerMapping({
         connectionId: connection.id,
         externalId: body.externalId as string,
-        staffAssignmentId: (body.staffAssignmentId as string | null) ?? null,
+        roomId: (body.roomId as string | null) ?? null,
       });
       return NextResponse.json({ ok: true });
     }

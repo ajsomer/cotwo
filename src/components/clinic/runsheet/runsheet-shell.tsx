@@ -206,6 +206,79 @@ export function RunsheetShell() {
     });
   }, [refetch]);
 
+  // PMS sync state. The "Sync now" button only appears when the selected
+  // location has a SYNC-ACTIVE connection (credentials present + a real
+  // adapter). Stubbed Gentu markers and no-PMS report syncActive:false, so the
+  // button stays hidden and we never attempt a pull.
+  const [pmsSync, setPmsSync] = useState<{ active: boolean; label: string } | null>(
+    null
+  );
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!locationId) {
+      setPmsSync(null);
+      return;
+    }
+    (async () => {
+      try {
+        const res = await fetch(`/api/pms/connection?locationId=${locationId}`);
+        if (cancelled) return;
+        const data = res.ok
+          ? ((await res.json()) as {
+              syncActive?: boolean;
+              providerLabel?: string | null;
+            })
+          : null;
+        if (cancelled) return;
+        setPmsSync(
+          data?.syncActive
+            ? { active: true, label: data.providerLabel ?? "PMS" }
+            : { active: false, label: "" }
+        );
+      } catch {
+        if (!cancelled) setPmsSync({ active: false, label: "" });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [locationId]);
+
+  const handleSyncNow = useCallback(async () => {
+    if (!locationId) return;
+    setIsSyncing(true);
+    setSyncMsg(null);
+    try {
+      const res = await fetch("/api/pms/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ locationId }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        appointmentsUpserted?: number;
+        sessionsScheduled?: number;
+        skippedNonTelehealth?: number;
+        error?: string;
+      };
+      if (res.ok && data.ok) {
+        setSyncMsg(
+          `Synced — ${data.sessionsScheduled ?? 0} new session(s), ${data.appointmentsUpserted ?? 0} appointment(s) updated.`
+        );
+        await refetch();
+      } else {
+        setSyncMsg(data.error ?? "Sync failed.");
+      }
+    } catch {
+      setSyncMsg("Couldn't reach the server.");
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [locationId, refetch]);
+
   // Add session panel state
   const [addSessionOpen, setAddSessionOpen] = useState(false);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
@@ -425,7 +498,14 @@ export function RunsheetShell() {
           onNuke={handleNuke}
           isNuking={isNuking}
           onBulkProcess={handleBulkProcess}
+          showSync={isReceptionist && !!pmsSync?.active}
+          syncLabel={pmsSync?.label}
+          isSyncing={isSyncing}
+          onSync={handleSyncNow}
         />
+        {syncMsg && (
+          <p className="mt-2 text-[13px] text-gray-600">{syncMsg}</p>
+        )}
       </div>
 
       {sessionsFailed && (

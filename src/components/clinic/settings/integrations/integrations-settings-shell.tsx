@@ -6,7 +6,6 @@ import { Badge } from "@/components/ui/badge";
 import { useLocation } from "@/hooks/useLocation";
 import type { IntegrationStatusDTO, MappingDataDTO } from "./types";
 import { ConnectForm } from "./connect-form";
-import { AppointmentTypeMappings } from "./appointment-type-mappings";
 import { PractitionerMappings } from "./practitioner-mappings";
 import { BusinessMappings } from "./business-mappings";
 
@@ -199,16 +198,15 @@ export function IntegrationsSettingsShell() {
                 data={mappings}
                 onSaved={loadMappings}
               />
-              <AppointmentTypeMappings
-                locationId={locationId}
-                data={mappings}
-                onSaved={loadMappings}
-              />
               <PractitionerMappings
                 locationId={locationId}
                 data={mappings}
                 onSaved={loadMappings}
               />
+              <p className="text-xs text-gray-400">
+                Appointment types and their pre-appointment workflows are managed
+                in the Workflows section.
+              </p>
             </div>
           )}
         </>

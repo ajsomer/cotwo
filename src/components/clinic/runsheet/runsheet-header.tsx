@@ -13,6 +13,12 @@ interface RunsheetHeaderProps {
   onNuke?: () => void;
   isNuking?: boolean;
   onBulkProcess?: () => void;
+  // PMS "Sync now" — only rendered when the location has a sync-active PMS
+  // (gating decided by the shell). Pulls sessions from the appointment book.
+  showSync?: boolean;
+  syncLabel?: string;
+  isSyncing?: boolean;
+  onSync?: () => void;
 }
 
 export function RunsheetHeader({
@@ -24,6 +30,10 @@ export function RunsheetHeader({
   onNuke,
   isNuking,
   onBulkProcess,
+  showSync = false,
+  syncLabel = "PMS",
+  isSyncing = false,
+  onSync,
 }: RunsheetHeaderProps) {
   const hasLate = summary.late > 0;
   const hasUpcoming = summary.upcoming > 0;
@@ -74,7 +84,7 @@ export function RunsheetHeader({
       {/* Spacer */}
       <div className="flex-1" />
 
-      {/* Right: bulk actions + add session */}
+      {/* Right: bulk actions + sync + add session */}
       <div className="flex items-center gap-2 flex-shrink-0">
         {hasComplete && (
           <Button
@@ -85,7 +95,19 @@ export function RunsheetHeader({
             Bulk process ({summary.complete})
           </Button>
         )}
-        {showAddButton && hasBulkActions && (
+        {showSync && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onSync}
+            disabled={isSyncing}
+            title={`Pull sessions from ${syncLabel}`}
+          >
+            <RefreshIcon spinning={isSyncing} />
+            {isSyncing ? "Syncing…" : "Sync now"}
+          </Button>
+        )}
+        {showAddButton && (hasBulkActions || showSync) && (
           <div className="w-px h-5 bg-gray-200" />
         )}
         {showAddButton && (
@@ -93,5 +115,23 @@ export function RunsheetHeader({
         )}
       </div>
     </div>
+  );
+}
+
+function RefreshIcon({ spinning }: { spinning?: boolean }) {
+  return (
+    <svg
+      className={`h-3.5 w-3.5 ${spinning ? "animate-spin" : ""}`}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={2}
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+      />
+    </svg>
   );
 }
