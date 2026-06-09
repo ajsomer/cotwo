@@ -2,6 +2,7 @@ import "server-only";
 import { db } from "@/lib/db";
 import {
   appointmentTypes,
+  forms as formsT,
   pmsAppointmentTypeLinks,
   pmsConnections,
   pmsPractitionerLinks,
@@ -11,6 +12,7 @@ import {
   users as usersT,
   typeWorkflowLinks,
 } from "@/lib/db/schema";
+import { buildRegistrationFormSchema } from "./seeded-registration-form";
 import { and, eq } from "drizzle-orm";
 import type {
   PmsCapabilities,
@@ -109,7 +111,42 @@ export async function connectPms(args: {
       },
     });
 
+  // Seed a PMS-scoped "Patient Registration" write-back form so the clinic has
+  // a working write-back form immediately (plan §7a). Generic over the
+  // adapter's catalogue; idempotent (skipped if one already exists for this
+  // org + provider).
+  await ensureRegistrationForm(orgId, args.provider);
+
   return { ok: true };
+}
+
+async function ensureRegistrationForm(
+  orgId: string,
+  provider: string
+): Promise<void> {
+  const meta = getStaticMetadata(provider);
+  if (!meta) return;
+
+  const existing = await db
+    .select({ id: formsT.id })
+    .from(formsT)
+    .where(
+      and(
+        eq(formsT.orgId, orgId),
+        eq(formsT.pmsProvider, provider as "cliniko")
+      )
+    )
+    .limit(1);
+  if (existing.length > 0) return;
+
+  await db.insert(formsT).values({
+    orgId,
+    name: "Patient Registration",
+    description: "Write-back registration form, generated from your PMS fields.",
+    status: "draft",
+    pmsProvider: provider as typeof formsT.$inferInsert.pmsProvider,
+    schema: buildRegistrationFormSchema(meta.fieldCatalogue),
+  });
 }
 
 /** Disconnect: clear credentials but keep the marker row + mappings. */

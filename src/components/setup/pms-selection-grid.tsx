@@ -15,8 +15,8 @@ interface PmsOption {
 }
 
 const PMS_OPTIONS: PmsOption[] = [
-  { id: "gentu", name: "Gentu", description: "Australian allied health PMS", comingSoon: false },
-  { id: "cliniko", name: "Cliniko", description: "Practice management software", comingSoon: true },
+  { id: "cliniko", name: "Cliniko", description: "Practice management software", comingSoon: false },
+  { id: "gentu", name: "Gentu", description: "Australian allied health PMS (demo)", comingSoon: false },
   { id: "halaxy", name: "Halaxy", description: "Healthcare practice management", comingSoon: true },
   { id: "nookal", name: "Nookal", description: "Allied health practice software", comingSoon: true },
   { id: "power_diary", name: "Power Diary", description: "Practice management system", comingSoon: true },
@@ -27,6 +27,8 @@ export function PmsSelectionGrid() {
   const [connecting, setConnecting] = useState<PmsProvider | null>(null);
   const [connected, setConnected] = useState<PmsProvider | null>(null);
   const [comingSoonModal, setComingSoonModal] = useState<PmsProvider | null>(null);
+  const [clinikoModal, setClinikoModal] = useState(false);
+  const [clinikoKey, setClinikoKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -36,7 +38,14 @@ export function PmsSelectionGrid() {
       return;
     }
 
-    // Gentu
+    // Cliniko: real connect via an API key.
+    if (provider.id === "cliniko") {
+      setError(null);
+      setClinikoModal(true);
+      return;
+    }
+
+    // Gentu (demo simulation)
     setConnecting(provider.id);
     setError(null);
 
@@ -54,6 +63,31 @@ export function PmsSelectionGrid() {
     }
 
     setConnected(provider.id);
+  }
+
+  async function handleConnectCliniko() {
+    setConnecting("cliniko");
+    setError(null);
+    const res = await fetch("/api/setup/pms/connect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: "cliniko",
+        credentials: { api_key: clinikoKey.trim() },
+      }),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      detail?: string;
+      error?: string;
+    };
+    setConnecting(null);
+    if (res.ok && data.ok) {
+      setClinikoModal(false);
+      setConnected("cliniko");
+    } else {
+      setError(data.detail ?? data.error ?? "Couldn't connect to Cliniko.");
+    }
   }
 
   async function handleContinue() {
@@ -138,7 +172,9 @@ export function PmsSelectionGrid() {
       {connected ? (
         <div className="space-y-3">
           <p className="text-sm text-green-700 font-medium">
-            Connected to Gentu — appointment types, forms, and rooms imported.
+            {connected === "cliniko"
+              ? "Connected to Cliniko. Next, confirm your appointment types and rooms in Settings → Integrations."
+              : "Connected to Gentu — appointment types, forms, and rooms imported."}
           </p>
           <Button
             type="button"
@@ -159,6 +195,55 @@ export function PmsSelectionGrid() {
         >
           Skip for now
         </button>
+      )}
+
+      {/* Cliniko connect modal */}
+      {clinikoModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl">
+            <div className="flex items-start justify-between mb-3">
+              <h2 className="text-base font-semibold text-gray-800">Connect Cliniko</h2>
+              <button
+                type="button"
+                onClick={() => setClinikoModal(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <p className="text-sm text-gray-500 mb-3">
+              Paste your Cliniko API key. We verify it before saving and store it
+              encrypted. The region is read from the key.
+            </p>
+            <input
+              type="password"
+              value={clinikoKey}
+              onChange={(e) => setClinikoKey(e.target.value)}
+              placeholder="…-au1"
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+            />
+            {error && <p className="text-sm text-red-500 mt-2">{error}</p>}
+            <div className="flex gap-3 mt-5">
+              <Button
+                type="button"
+                variant="secondary"
+                className="flex-1"
+                onClick={() => setClinikoModal(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                className="flex-1"
+                onClick={handleConnectCliniko}
+                disabled={connecting === "cliniko" || !clinikoKey.trim()}
+              >
+                {connecting === "cliniko" ? "Verifying…" : "Connect"}
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Coming soon modal */}
