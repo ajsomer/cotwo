@@ -200,14 +200,15 @@ class ClinikoAdapter implements PmsAdapter {
     }
 
     // 2. Self-contained patient_form for the form answers.
-    let createdFormId: string | undefined;
+    let createdFormId: string | undefined = input.existingFormExternalId;
     if (formAnswers.length > 0) {
       const { id, fieldResults } = await this.writePatientForm(
         externalId,
         input.formName,
-        formAnswers
+        formAnswers,
+        input.existingFormExternalId
       );
-      createdFormId = id;
+      createdFormId = id ?? input.existingFormExternalId;
       results.push(...fieldResults);
     }
 
@@ -304,11 +305,12 @@ class ClinikoAdapter implements PmsAdapter {
     return results;
   }
 
-  /** POST a self-contained patient_form (no template). */
+  /** POST a self-contained patient_form, or PATCH an existing one (idempotent). */
   private async writePatientForm(
     externalId: string,
     formName: string,
-    fields: PmsFormFieldInput[]
+    fields: PmsFormFieldInput[],
+    existingFormId?: string
   ): Promise<{ id?: string; fieldResults: PmsFieldResult[] }> {
     const fieldResults: PmsFieldResult[] = [];
     const questions: ClinikoPatientFormPayload["content"]["sections"][number]["questions"] =
@@ -346,11 +348,14 @@ class ClinikoAdapter implements PmsAdapter {
     };
 
     try {
-      const created = await this.client.post<ClinikoPatientForm>(
-        "/patient_forms",
-        payload
-      );
-      return { id: String(created.id), fieldResults };
+      // Re-send: PATCH the existing form rather than POSTing a duplicate (§8.G).
+      const saved = existingFormId
+        ? await this.client.patch<ClinikoPatientForm>(
+            `/patient_forms/${existingFormId}`,
+            payload
+          )
+        : await this.client.post<ClinikoPatientForm>("/patient_forms", payload);
+      return { id: String(saved.id), fieldResults };
     } catch (e) {
       const detail = transportDetail(e as ClinikoApiError);
       for (const r of fieldResults) {

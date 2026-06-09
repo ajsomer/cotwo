@@ -4,7 +4,6 @@ import {
   appointments,
   patients,
   patientPhoneNumbers,
-  pmsAppointmentTypeLinks,
   sessions,
 } from "@/lib/db/schema";
 import { and, eq, sql } from "drizzle-orm";

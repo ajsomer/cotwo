@@ -21,9 +21,10 @@ export function IntegrationsSettingsShell() {
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
+  // Imperative reloads (after sync/connect/disconnect/save) — safe to call
+  // outside effects from event handlers.
   const loadStatus = useCallback(async () => {
     if (!locationId) return;
-    setLoading(true);
     const res = await fetch(`/api/pms/connection?locationId=${locationId}`);
     const data = res.ok ? ((await res.json()) as IntegrationStatusDTO) : null;
     setStatus(data);
@@ -32,10 +33,10 @@ export function IntegrationsSettingsShell() {
 
   const loadMappings = useCallback(async () => {
     if (!locationId) return;
-    setMappingError(null);
     const res = await fetch(`/api/pms/mappings?locationId=${locationId}`);
     if (res.ok) {
       setMappings((await res.json()) as MappingDataDTO);
+      setMappingError(null);
     } else {
       const err = (await res.json().catch(() => ({}))) as { error?: string };
       setMappingError(err.error ?? "Couldn't load mappings from the PMS.");
@@ -43,14 +44,44 @@ export function IntegrationsSettingsShell() {
     }
   }, [locationId]);
 
+  // Fetch status on mount / location change. The async work + setState live
+  // inside the promise continuation (not a synchronous effect-body call), with
+  // a cancellation guard so a stale location switch can't clobber newer state.
   useEffect(() => {
-    void loadStatus();
-  }, [loadStatus]);
+    let cancelled = false;
+    if (!locationId) return;
+    (async () => {
+      const res = await fetch(`/api/pms/connection?locationId=${locationId}`);
+      const data = res.ok ? ((await res.json()) as IntegrationStatusDTO) : null;
+      if (cancelled) return;
+      setStatus(data);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [locationId]);
 
   useEffect(() => {
-    if (status?.syncActive) void loadMappings();
-    else setMappings(null);
-  }, [status?.syncActive, loadMappings]);
+    let cancelled = false;
+    if (!status?.syncActive) return;
+    (async () => {
+      const res = await fetch(`/api/pms/mappings?locationId=${locationId}`);
+      if (cancelled) return;
+      if (res.ok) {
+        setMappings((await res.json()) as MappingDataDTO);
+        setMappingError(null);
+      } else {
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        if (cancelled) return;
+        setMappingError(err.error ?? "Couldn't load mappings from the PMS.");
+        setMappings(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [status?.syncActive, locationId]);
 
   const handleSyncNow = useCallback(async () => {
     if (!locationId) return;

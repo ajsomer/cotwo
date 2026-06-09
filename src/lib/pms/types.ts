@@ -87,6 +87,8 @@ export interface PmsFormSubmissionInput {
   connectionId: string;
   /** Human label for the posted form (e.g. the Coviu form name). */
   formName: string;
+  /** Existing patient_form id to PATCH (idempotent re-send), if known. §8.G */
+  existingFormExternalId?: string;
   fields: PmsFormFieldInput[];
 }
 
