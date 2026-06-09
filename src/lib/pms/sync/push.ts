@@ -53,13 +53,27 @@ export async function pushSessionFormSubmissions(args: {
   if (!session) {
     return { ok: false, noPms: false, submissions: [], error: "Session not found." };
   }
-
-  const connection = await getConnectionForLocation(session.locationId);
-  if (!connection || !isSyncActive(connection)) {
-    return { ok: true, noPms: true, submissions: [] };
-  }
   if (!session.appointmentId) {
     return { ok: true, noPms: false, submissions: [] };
+  }
+  return pushAppointmentFormSubmissions({
+    appointmentId: session.appointmentId,
+    locationId: session.locationId,
+  });
+}
+
+/**
+ * Appointment-keyed push (used by the intake handoff "Sync to {PMS}" action,
+ * which is appointment-scoped). Pushes every PMS-bound form submission for the
+ * appointment. Provider-agnostic.
+ */
+export async function pushAppointmentFormSubmissions(args: {
+  appointmentId: string;
+  locationId: string;
+}): Promise<SessionPushResult> {
+  const connection = await getConnectionForLocation(args.locationId);
+  if (!connection || !isSyncActive(connection)) {
+    return { ok: true, noPms: true, submissions: [] };
   }
 
   // Find PMS-bound form submissions for this appointment.
@@ -77,7 +91,7 @@ export async function pushSessionFormSubmissions(args: {
     .innerJoin(formsT, eq(formsT.id, formSubmissions.formId))
     .where(
       and(
-        eq(formSubmissions.appointmentId, session.appointmentId),
+        eq(formSubmissions.appointmentId, args.appointmentId),
         isNotNull(formsT.pmsProvider)
       )
     );

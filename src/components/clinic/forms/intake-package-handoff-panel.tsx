@@ -87,6 +87,15 @@ export function IntakePackageHandoffPanel({
   const [marking, setMarking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // PMS write-back gate: shown only when this appointment has pushable PMS-bound
+  // form data (a form with field mappings + values). Plain "Complete" otherwise.
+  const [pmsGate, setPmsGate] = useState<{ active: boolean; label: string } | null>(
+    null
+  );
+  const [pushResults, setPushResults] = useState<
+    Array<{ label: string; status: string; detail?: string }> | null
+  >(null);
+
   const loadHandoff = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -111,21 +120,89 @@ export function IntakePackageHandoffPanel({
     loadHandoff();
   }, [loadHandoff]);
 
+  // Resolve the PMS write-back gate for this appointment.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/pms/push-appointment?appointmentId=${appointmentId}`
+        );
+        if (cancelled) return;
+        const data = res.ok
+          ? ((await res.json()) as { active?: boolean; providerLabel?: string | null })
+          : null;
+        if (cancelled) return;
+        setPmsGate(
+          data?.active
+            ? { active: true, label: data.providerLabel ?? "PMS" }
+            : { active: false, label: "" }
+        );
+      } catch {
+        if (!cancelled) setPmsGate({ active: false, label: "" });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [appointmentId]);
+
+  const markTranscribed = async (): Promise<boolean> => {
+    const res = await fetch("/api/tasks/mark-intake-transcribed", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action_id: actionId }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error ?? "Failed to mark as transcribed");
+      return false;
+    }
+    return true;
+  };
+
   const handleMarkTranscribed = async () => {
     setMarking(true);
     setError(null);
     try {
-      const res = await fetch("/api/tasks/mark-intake-transcribed", {
+      if (await markTranscribed()) onTranscribed();
+    } catch {
+      setError("Network error");
+    } finally {
+      setMarking(false);
+    }
+  };
+
+  // Sync to the PMS, render per-field results, then mark transcribed.
+  const handleSyncAndComplete = async () => {
+    setMarking(true);
+    setError(null);
+    setPushResults(null);
+    try {
+      const res = await fetch("/api/pms/push-appointment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action_id: actionId }),
+        body: JSON.stringify({ appointmentId }),
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(data.error ?? "Failed to mark as transcribed");
-        return;
+      const data = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        submissions?: Array<{
+          fields: Array<{ label: string; status: string; detail?: string }>;
+        }>;
+        error?: string;
+      };
+      if (res.ok && data.ok) {
+        const fields = (data.submissions ?? []).flatMap((s) => s.fields);
+        setPushResults(
+          fields.map((f) => ({ label: f.label, status: f.status, detail: f.detail }))
+        );
+        await markTranscribed();
+        // Leave the panel open so staff can see what landed; onTranscribed
+        // refreshes the dashboard behind it.
+        onTranscribed();
+      } else {
+        setError(data.error ?? "Sync failed.");
       }
-      onTranscribed();
     } catch {
       setError("Network error");
     } finally {
@@ -286,6 +363,43 @@ export function IntakePackageHandoffPanel({
           {error && payload && (
             <p className="text-xs text-red-500">{error}</p>
           )}
+
+          {/* Per-field push results (after a Sync). */}
+          {pushResults && (
+            <div className="rounded-lg border border-gray-200 p-3 space-y-1">
+              <p className="text-xs font-medium text-gray-700">
+                {pmsGate?.label ?? "PMS"} sync results
+              </p>
+              {pushResults.length === 0 && (
+                <p className="text-xs text-gray-500">No fields to send.</p>
+              )}
+              {pushResults.map((r, i) => (
+                <div key={i} className="flex items-center justify-between gap-2 text-xs">
+                  <span className="text-gray-700">{r.label}</span>
+                  <span
+                    className={
+                      r.status === "written"
+                        ? "text-green-600"
+                        : r.status === "skipped_existing"
+                          ? "text-amber-600"
+                          : r.status === "failed"
+                            ? "text-red-500"
+                            : "text-gray-400"
+                    }
+                    title={r.detail}
+                  >
+                    {r.status === "written"
+                      ? "Sent"
+                      : r.status === "skipped_existing"
+                        ? "Kept existing"
+                        : r.status === "failed"
+                          ? "Failed"
+                          : "Coviu only"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Footer */}
@@ -308,13 +422,23 @@ export function IntakePackageHandoffPanel({
           >
             Download
           </button>
-          <button
-            onClick={handleMarkTranscribed}
-            disabled={marking || loading || !payload}
-            className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 disabled:opacity-50"
-          >
-            {marking ? "Completing..." : "Complete"}
-          </button>
+          {pmsGate?.active ? (
+            <button
+              onClick={handleSyncAndComplete}
+              disabled={marking || loading || !payload}
+              className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 disabled:opacity-50"
+            >
+              {marking ? "Syncing…" : `Sync to ${pmsGate.label} & complete`}
+            </button>
+          ) : (
+            <button
+              onClick={handleMarkTranscribed}
+              disabled={marking || loading || !payload}
+              className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 disabled:opacity-50"
+            >
+              {marking ? "Completing..." : "Complete"}
+            </button>
+          )}
         </div>
       </div>
     </SlideOver>

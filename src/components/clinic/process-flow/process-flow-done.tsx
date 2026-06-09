@@ -159,7 +159,7 @@ export function ProcessFlowDone({
         </div>
         <div>
           <p className="text-base font-semibold text-gray-800">
-            Complete &amp; send to {providerLabel}
+            Sync to {providerLabel}
           </p>
           <p className="text-sm text-gray-500 mt-1">{patientName}</p>
           <p className="text-xs text-gray-500 mt-2 max-w-xs">
@@ -169,7 +169,7 @@ export function ProcessFlowDone({
         </div>
         {pushError && <p className="text-sm text-red-500">{pushError}</p>}
         <Button onClick={handleCompleteAndSend} disabled={pushing} className="mt-2">
-          {pushing ? "Sending…" : `Complete & send to ${providerLabel}`}
+          {pushing ? "Syncing…" : `Sync to ${providerLabel}`}
         </Button>
       </div>
     );
