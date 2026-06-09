@@ -289,6 +289,73 @@ export function ReadinessShell() {
     });
   }, [locationId, refreshReadiness]);
 
+  // PMS "Sync now" — only when the location has a SYNC-ACTIVE connection
+  // (credentials present + a real adapter). Hidden for stubbed Gentu / no PMS.
+  const [pmsSync, setPmsSync] = useState<{ active: boolean; label: string } | null>(
+    null
+  );
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!locationId) return;
+    (async () => {
+      try {
+        const res = await fetch(`/api/pms/connection?locationId=${locationId}`);
+        if (cancelled) return;
+        const data = res.ok
+          ? ((await res.json()) as {
+              syncActive?: boolean;
+              providerLabel?: string | null;
+            })
+          : null;
+        if (cancelled) return;
+        setPmsSync(
+          data?.syncActive
+            ? { active: true, label: data.providerLabel ?? "PMS" }
+            : { active: false, label: "" }
+        );
+      } catch {
+        if (!cancelled) setPmsSync({ active: false, label: "" });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [locationId]);
+
+  const handleSyncNow = useCallback(async () => {
+    if (!locationId) return;
+    setIsSyncing(true);
+    setSyncMsg(null);
+    try {
+      const res = await fetch("/api/pms/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ locationId }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        appointmentsUpserted?: number;
+        sessionsScheduled?: number;
+        error?: string;
+      };
+      if (res.ok && data.ok) {
+        setSyncMsg(
+          `Synced — ${data.sessionsScheduled ?? 0} new session(s), ${data.appointmentsUpserted ?? 0} appointment(s) updated.`
+        );
+        await refreshReadiness(locationId);
+      } else {
+        setSyncMsg(data.error ?? "Sync failed.");
+      }
+    } catch {
+      setSyncMsg("Couldn't reach the server.");
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [locationId, refreshReadiness]);
+
   const handlePatientDetail = useCallback(
     (
       appointment: ReadinessAppointment | null,
@@ -393,6 +460,18 @@ export function ReadinessShell() {
             onChange={setDirection}
           />
           <div className="w-px h-5 bg-gray-200" />
+          {pmsSync?.active && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleSyncNow}
+              disabled={isSyncing}
+              title={`Pull appointments from ${pmsSync.label}`}
+            >
+              <RefreshIcon spinning={isSyncing} />
+              {isSyncing ? "Syncing…" : "Sync now"}
+            </Button>
+          )}
           <button
             onClick={() => setActivePanel({ type: "add-patient" })}
             className="inline-flex items-center gap-2 rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 transition-colors"
@@ -401,6 +480,7 @@ export function ReadinessShell() {
           </button>
         </div>
       </div>
+      {syncMsg && <p className="-mt-2 mb-4 text-[13px] text-gray-600">{syncMsg}</p>}
 
       {/* Filter bar */}
       <div className="mb-4">
@@ -549,5 +629,23 @@ export function ReadinessShell() {
         </>
       )}
     </div>
+  );
+}
+
+function RefreshIcon({ spinning }: { spinning?: boolean }) {
+  return (
+    <svg
+      className={`h-3.5 w-3.5 ${spinning ? "animate-spin" : ""}`}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={2}
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+      />
+    </svg>
   );
 }
