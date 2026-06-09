@@ -21,6 +21,12 @@ const settingsCards = [
     description: "Stripe Connect setup and routing configuration.",
     href: "/settings/payments",
   },
+  {
+    title: "Integrations",
+    description:
+      "Connect your practice management system (Cliniko) and map appointment types, practitioners, and fields.",
+    href: "/settings/integrations",
+  },
 ];
 
 export default function SettingsPage() {
