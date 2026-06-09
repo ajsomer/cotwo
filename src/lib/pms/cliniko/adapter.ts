@@ -311,14 +311,30 @@ class ClinikoAdapter implements PmsAdapter {
       });
     }
 
-    if (Object.keys(patch).length > 0) {
+    // The fields we intend to write, paired with their result rows so we can
+    // attribute a per-field outcome.
+    const toWrite = results
+      .filter((r) => r.status === "written")
+      .map((r) => ({ result: r, prop: PATIENT_PATCH_FIELD[r.target] }));
+
+    if (toWrite.length > 0) {
       try {
+        // Happy path: one PATCH for everything.
         await this.client.patch(`/patients/${externalId}`, patch);
-      } catch (e) {
-        const detail = transportDetail(e as ClinikoApiError);
-        // Flip the tentatively-written rows to failed.
-        for (const r of results) {
-          if (r.status === "written") {
+      } catch {
+        // A single invalid field (e.g. a malformed DVA number) rejects the
+        // whole batch. Don't poison the good fields — retry each on its own so
+        // valid ones still land and only the offending field is marked failed
+        // with Cliniko's specific message.
+        for (const { result: r, prop } of toWrite) {
+          if (!prop) continue;
+          try {
+            await this.client.patch(`/patients/${externalId}`, {
+              [prop]: r.attemptedValue,
+            });
+            // stays "written"
+          } catch (e2) {
+            const detail = transportDetail(e2 as ClinikoApiError);
             r.status = "failed";
             r.failureKind = detail.failureKind;
             r.detail = detail.detail;
@@ -473,6 +489,15 @@ function failResult(
   };
 }
 
+/** "dva_card_number" → "DVA card number". */
+function humanise(field: string): string {
+  return field
+    .split("_")
+    .map((w) => (w === "dva" || w === "irn" ? w.toUpperCase() : w))
+    .join(" ")
+    .replace(/^./, (c) => c.toUpperCase());
+}
+
 /** Translate a Cliniko transport error into an actionable failureKind/detail. */
 function transportDetail(err: ClinikoApiError): {
   failureKind: PmsFieldResult["failureKind"];
@@ -485,12 +510,22 @@ function transportDetail(err: ClinikoApiError): {
     };
   }
   if (err.status === 422 || err.status === 400) {
+    // Cliniko returns { errors: { field: "message" } } or { errors: [...] }.
+    // Render it as a readable "field: message" rather than raw JSON.
     const body = err.body as { errors?: unknown } | string | undefined;
-    const msg =
-      typeof body === "object" && body?.errors
-        ? JSON.stringify(body.errors)
-        : "Cliniko rejected the value.";
-    return { failureKind: "validation", detail: msg };
+    let msg = "Cliniko rejected the value.";
+    const errors = typeof body === "object" ? body?.errors : undefined;
+    if (errors && typeof errors === "object" && !Array.isArray(errors)) {
+      msg =
+        Object.entries(errors as Record<string, unknown>)
+          .map(([field, m]) => `${humanise(field)} ${String(m)}`)
+          .join("; ") || msg;
+    } else if (Array.isArray(errors)) {
+      msg = errors.map((m) => String(m)).join("; ") || msg;
+    } else if (typeof errors === "string") {
+      msg = errors;
+    }
+    return { failureKind: "validation", detail: `Cliniko: ${msg}` };
   }
   if (err.status === 0) {
     return {

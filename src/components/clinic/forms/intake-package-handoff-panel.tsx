@@ -173,8 +173,9 @@ export function IntakePackageHandoffPanel({
     }
   };
 
-  // Sync to the PMS, render per-field results, then mark transcribed.
-  const handleSyncAndComplete = async () => {
+  // Sync to the PMS and render per-field results. Does NOT complete — that's a
+  // separate action, so staff can review what landed before completing.
+  const handleSync = async () => {
     setMarking(true);
     setError(null);
     setPushResults(null);
@@ -196,10 +197,6 @@ export function IntakePackageHandoffPanel({
         setPushResults(
           fields.map((f) => ({ label: f.label, status: f.status, detail: f.detail }))
         );
-        await markTranscribed();
-        // Leave the panel open so staff can see what landed; onTranscribed
-        // refreshes the dashboard behind it.
-        onTranscribed();
       } else {
         setError(data.error ?? "Sync failed.");
       }
@@ -422,23 +419,22 @@ export function IntakePackageHandoffPanel({
           >
             Download
           </button>
-          {pmsGate?.active ? (
+          {pmsGate?.active && (
             <button
-              onClick={handleSyncAndComplete}
+              onClick={handleSync}
               disabled={marking || loading || !payload}
-              className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 disabled:opacity-50"
+              className="rounded-lg border border-teal-500 px-4 py-2 text-sm font-medium text-teal-600 hover:bg-teal-50 disabled:opacity-50"
             >
-              {marking ? "Syncing…" : `Sync to ${pmsGate.label} & complete`}
-            </button>
-          ) : (
-            <button
-              onClick={handleMarkTranscribed}
-              disabled={marking || loading || !payload}
-              className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 disabled:opacity-50"
-            >
-              {marking ? "Completing..." : "Complete"}
+              {marking ? "Syncing…" : `Sync to ${pmsGate.label}`}
             </button>
           )}
+          <button
+            onClick={handleMarkTranscribed}
+            disabled={marking || loading || !payload}
+            className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 disabled:opacity-50"
+          >
+            {marking ? "Completing..." : "Complete"}
+          </button>
         </div>
       </div>
     </SlideOver>
