@@ -203,7 +203,7 @@ export const fetchReadinessSlice = cache(async (
       ? db.select({ id: workflowTemplates.id, terminal_type: workflowTemplates.terminalType, at_risk_after_days: workflowTemplates.atRiskAfterDays, overdue_after_days: workflowTemplates.overdueAfterDays }).from(workflowTemplates).where(inArray(workflowTemplates.id, templateIds))
       : Promise.resolve([]),
     locationApptIds.length > 0
-      ? db.select({ appointment_id: intakePackageJourneys.appointmentId, status: intakePackageJourneys.status, form_ids: intakePackageJourneys.formIds, forms_completed: intakePackageJourneys.formsCompleted, includes_card_capture: intakePackageJourneys.includesCardCapture, card_captured_at: intakePackageJourneys.cardCapturedAt, includes_consent: intakePackageJourneys.includesConsent, consent_completed_at: intakePackageJourneys.consentCompletedAt, created_at: intakePackageJourneys.createdAt, completed_at: intakePackageJourneys.completedAt }).from(intakePackageJourneys).where(inArray(intakePackageJourneys.appointmentId, locationApptIds))
+      ? db.select({ appointment_id: intakePackageJourneys.appointmentId, journey_token: intakePackageJourneys.journeyToken, status: intakePackageJourneys.status, form_ids: intakePackageJourneys.formIds, forms_completed: intakePackageJourneys.formsCompleted, includes_card_capture: intakePackageJourneys.includesCardCapture, card_captured_at: intakePackageJourneys.cardCapturedAt, includes_consent: intakePackageJourneys.includesConsent, consent_completed_at: intakePackageJourneys.consentCompletedAt, created_at: intakePackageJourneys.createdAt, completed_at: intakePackageJourneys.completedAt }).from(intakePackageJourneys).where(inArray(intakePackageJourneys.appointmentId, locationApptIds))
       : Promise.resolve([]),
     sessionIds.length > 0
       ? db.select({ id: sessionsT.id, session_ended_at: sessionsT.sessionEndedAt, outcome_pathway_id: sessionsT.outcomePathwayId }).from(sessionsT).where(inArray(sessionsT.id, sessionIds))
@@ -370,6 +370,7 @@ export const fetchReadinessSlice = cache(async (
     outstanding_actions: number;
     priority: ReadinessPriority;
     package_status: string | null;
+    intake_journey_token: string | null;
     package_total_items: number;
     package_completed_items: number;
     pathway_name: string | null;
@@ -414,6 +415,7 @@ export const fetchReadinessSlice = cache(async (
         outstanding_actions: 0,
         priority: "in_progress",
         package_status: journey?.status ?? null,
+        intake_journey_token: journey?.journey_token ?? null,
         package_total_items: totalItems,
         package_completed_items: completedItems,
         pathway_name: null,

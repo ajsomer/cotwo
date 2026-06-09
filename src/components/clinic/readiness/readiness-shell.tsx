@@ -141,6 +141,21 @@ export function ReadinessShell() {
   const handleActionButton = useCallback((appt: ReadinessAppointment) => {
     const priority = appt.priority as ReadinessPriority;
 
+    // Testing affordance: for in-flight rows (in progress / late-at_risk /
+    // overdue), the action button opens the patient's intake package in a new
+    // tab so staff can jump straight in and fill out the data. Gated on the
+    // appointment having a journey token; otherwise fall through to the normal
+    // resolve/review behaviour.
+    if (
+      appt.intake_journey_token &&
+      (priority === "in_progress" ||
+        priority === "at_risk" ||
+        priority === "overdue")
+    ) {
+      window.open(`/intake/${appt.intake_journey_token}`, "_blank", "noopener");
+      return;
+    }
+
     // Post-appointment: check for task actions needing resolution
     const isPost = appt.actions.some((a) => a.session_id);
     if (isPost && priority === "overdue") {

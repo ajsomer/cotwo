@@ -173,6 +173,8 @@ export interface ReadinessAppointment {
   actions: WorkflowAction[];
   outstanding_forms: OutstandingForm[];
   completed_form_submissions: CompletedFormSubmission[];
+  // Intake package journey token for this appointment (opens /intake/{token}).
+  intake_journey_token?: string | null;
   // Post-appointment fields
   pathway_name?: string | null;
   session_ended_at?: string | null;

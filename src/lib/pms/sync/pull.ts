@@ -9,6 +9,7 @@ import {
 } from "@/lib/db/schema";
 import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { scheduleWorkflowForAppointment } from "@/lib/workflows/scanner";
+import { normalisePhone } from "@/lib/phone/normalise";
 import type { PmsAdapter } from "../adapter";
 import type { PmsAppointment, PmsPatient } from "../types";
 import {
@@ -160,11 +161,15 @@ async function upsertPatient(
   let hasPrimary = Boolean(existingPrimary);
 
   for (const phone of p.phoneNumbers) {
-    if (!phone?.trim()) continue;
+    // Normalise to canonical E.164 (the same form the patient OTP entry flow
+    // and verify endpoint use). Without this, a Cliniko "0450336880" is stored
+    // raw and never matches the verified "+61450336880" → "phone not on file".
+    const normalised = normalisePhone(phone);
+    if (!normalised) continue;
     const makePrimary = !hasPrimary;
     await db
       .insert(patientPhoneNumbers)
-      .values({ patientId, phoneNumber: phone.trim(), isPrimary: makePrimary })
+      .values({ patientId, phoneNumber: normalised, isPrimary: makePrimary })
       .onConflictDoNothing();
     if (makePrimary) hasPrimary = true;
   }

@@ -27,8 +27,10 @@ export async function POST(request: NextRequest) {
   // Rate limit: count recent sends for this phone number (last 10 minutes)
   // Onboarding demo number is exempt — the test session creates a new patient
   // contact every time, so the same number gets exercised repeatedly during demos.
+  // DISABLE_OTP_RATE_LIMIT short-circuits the whole check for testing.
   const ONBOARDING_DEMO_NUMBER = '+61400000000';
-  if (phone_number !== ONBOARDING_DEMO_NUMBER) {
+  const rateLimitDisabled = process.env.DISABLE_OTP_RATE_LIMIT === 'true';
+  if (!rateLimitDisabled && phone_number !== ONBOARDING_DEMO_NUMBER) {
     const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
     const [{ count }] = await db
       .select({ count: sql<number>`count(*)::int` })

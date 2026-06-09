@@ -435,6 +435,11 @@ export function getActionButtonConfig(
       return { label: 'Review', variant: 'amber', action: 'review' };
     case 'at_risk':
       return { label: 'Nudge', variant: 'amber', action: 'nudge' };
+    // Testing affordance: in-flight rows get a button so staff can jump
+    // straight into the patient's intake package (opens in a new tab). See
+    // handleActionButton — gated on the appointment having a journey token.
+    case 'in_progress':
+      return { label: 'Open intake', variant: 'teal', action: 'open_intake' };
     default:
       return null;
   }
