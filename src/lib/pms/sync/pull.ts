@@ -188,9 +188,9 @@ async function upsertAppointment(
 ): Promise<ApptOutcome> {
   if (!a.appointmentTypeExternalId) return "skipped";
 
-  // Resolve the type link — only CONFIRMED telehealth + sync_enabled + room
-  // appointments reach the run sheet (plan §5). The type link is the single
-  // source of truth for import state (§8.E/H).
+  // Resolve the type link — only CONFIRMED telehealth + sync_enabled types
+  // reach the run sheet (plan §5). The type link is the source of truth for
+  // import state (§8.E/H); room comes from the practitioner mapping (§025).
   const typeLink = await getTypeLinkByExternal(
     connection.id,
     a.appointmentTypeExternalId
@@ -268,13 +268,17 @@ async function upsertAppointment(
       locationId: connection.locationId,
       patientId: patientId ?? undefined,
       appointmentTypeId: typeLink.appointmentTypeId,
-      roomId: typeLink.roomId,
+      roomId,
       scheduledAt: a.startsAt,
       status,
       pmsExternalId: a.externalId,
     })
     .onConflictDoNothing({
       target: [appointments.locationId, appointments.pmsExternalId],
+      // The unique index is PARTIAL (WHERE pms_external_id IS NOT NULL), so the
+      // conflict target must repeat that predicate or Postgres can't match it
+      // ("no unique or exclusion constraint matching the ON CONFLICT spec").
+      where: sql`${appointments.pmsExternalId} IS NOT NULL`,
     })
     .returning({ id: appointments.id });
 
