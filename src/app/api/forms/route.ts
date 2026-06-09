@@ -118,17 +118,17 @@ export async function PATCH(request: NextRequest) {
   const updates: Partial<typeof formsT.$inferInsert> = {};
   if (name !== undefined) updates.name = name;
   if (description !== undefined) updates.description = description;
-  // Defensive: any schema write must contain the locked identity page.
-  // The builder UI prevents deleting it, but a tampered client or a
-  // direct API call could submit a schema without it.
   if (schema !== undefined) {
-    updates.schema = ensureIdentityPage(schema);
     // Auto-tag the form's PMS provider from its bindings (plan §8.F). The tag
     // is derived from the provider-namespaced pmsTarget keys, so it stays
     // authoritative without trusting the client. NULL = generic, not PMS-bound.
-    updates.pmsProvider = derivePmsProviderFromSchema(
-      updates.schema
-    ) as typeof formsT.$inferInsert.pmsProvider;
+    const provider = derivePmsProviderFromSchema(schema);
+    updates.pmsProvider = provider as typeof formsT.$inferInsert.pmsProvider;
+    // PMS write-back forms (e.g. Patient Registration) intentionally omit the
+    // locked identity page — the patient flow confirms identity separately and
+    // the bound fields already capture name/DOB/email. For generic forms keep
+    // the defensive guarantee that the identity page is present.
+    updates.schema = provider ? schema : ensureIdentityPage(schema);
   }
   if (status !== undefined) updates.status = status;
 

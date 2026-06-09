@@ -1,5 +1,4 @@
 import "server-only";
-import { ensureIdentityPage } from "@/lib/survey/identity-page";
 import type { PmsFieldCatalogueEntry } from "./adapter";
 
 /**
@@ -9,6 +8,12 @@ import type { PmsFieldCatalogueEntry } from "./adapter";
  *
  * Separate from "New Patient Intake" (clinical capture) — registration is the
  * PMS write-back surface. Editable like any other form afterwards.
+ *
+ * NOTE: this form intentionally does NOT include the locked identity page. The
+ * intake journey confirms the patient's identity (phone OTP + contact match)
+ * before the form renders, and the registration fields below already capture
+ * first/last/DOB/email with PMS write-back bindings — so an identity page would
+ * be a redundant section that doesn't write anything back.
  */
 export function buildRegistrationFormSchema(
   catalogue: PmsFieldCatalogueEntry[]
@@ -19,7 +24,7 @@ export function buildRegistrationFormSchema(
 
   const elements = patientTargets.map((e) => questionForEntry(e));
 
-  return ensureIdentityPage({
+  return {
     title: "Patient Registration",
     pages: [
       {
@@ -37,7 +42,7 @@ export function buildRegistrationFormSchema(
               ],
       },
     ],
-  });
+  };
 }
 
 function questionForEntry(e: PmsFieldCatalogueEntry): Record<string, unknown> {
