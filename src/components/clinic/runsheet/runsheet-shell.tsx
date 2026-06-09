@@ -14,6 +14,7 @@ import { PatientSlideOverProvider } from "@/components/clinic/patient/patient-sl
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import { useLocation } from "@/hooks/useLocation";
 import { useRole } from "@/hooks/useRole";
+import { usePmsConnection } from "@/hooks/usePmsConnection";
 // ONBOARDING DISABLED — the first-login walkthrough is currently turned off.
 // To re-enable: uncomment the two mounts in the JSX below (search "ONBOARDING DISABLED")
 // and remove the eslint-disable comments on these two imports.
@@ -206,46 +207,11 @@ export function RunsheetShell() {
     });
   }, [refetch]);
 
-  // PMS sync state. The "Sync now" button only appears when the selected
-  // location has a SYNC-ACTIVE connection (credentials present + a real
-  // adapter). Stubbed Gentu markers and no-PMS report syncActive:false, so the
-  // button stays hidden and we never attempt a pull.
-  const [pmsSync, setPmsSync] = useState<{ active: boolean; label: string } | null>(
-    null
-  );
+  // PMS connection — shared from context (fetched once), no per-component poll.
+  // The "Sync now" button only appears when the location is sync-active.
+  const pms = usePmsConnection();
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!locationId) {
-      setPmsSync(null);
-      return;
-    }
-    (async () => {
-      try {
-        const res = await fetch(`/api/pms/connection?locationId=${locationId}`);
-        if (cancelled) return;
-        const data = res.ok
-          ? ((await res.json()) as {
-              syncActive?: boolean;
-              providerLabel?: string | null;
-            })
-          : null;
-        if (cancelled) return;
-        setPmsSync(
-          data?.syncActive
-            ? { active: true, label: data.providerLabel ?? "PMS" }
-            : { active: false, label: "" }
-        );
-      } catch {
-        if (!cancelled) setPmsSync({ active: false, label: "" });
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [locationId]);
 
   const handleSyncNow = useCallback(async () => {
     if (!locationId) return;
@@ -498,8 +464,8 @@ export function RunsheetShell() {
           onNuke={handleNuke}
           isNuking={isNuking}
           onBulkProcess={handleBulkProcess}
-          showSync={isReceptionist && !!pmsSync?.active}
-          syncLabel={pmsSync?.label}
+          showSync={isReceptionist && pms.syncActive}
+          syncLabel={pms.providerLabel ?? "PMS"}
           isSyncing={isSyncing}
           onSync={handleSyncNow}
         />

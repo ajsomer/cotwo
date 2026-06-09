@@ -55,8 +55,9 @@ export function RunsheetHeader({
 
   return (
     <div className="flex items-center bg-white rounded-xl border border-gray-200 px-6 py-2.5">
-      {/* Left: lightning bolt + seed */}
+      {/* Left: heading + lightning bolt + seed */}
       <div className="flex items-center gap-2">
+        <h1 className="text-lg font-semibold text-gray-800">Runsheet</h1>
         <button
           onClick={onNuke}
           disabled={isNuking}

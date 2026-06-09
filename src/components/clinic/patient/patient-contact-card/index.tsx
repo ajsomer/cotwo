@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { SlideOver } from "@/components/ui/slide-over";
 import { useLocation } from "@/hooks/useLocation";
+import { usePmsConnection } from "@/hooks/usePmsConnection";
 import type { EnrichedSession } from "@/lib/supabase/types";
 import type { ReadinessAppointment, WorkflowAction } from "@/stores/clinic-store";
 import { DemographicsSection, PaymentSection } from "./demographics-section";
@@ -133,6 +134,7 @@ export function PatientContactCard({
     providerLabel: string;
   } | null>(null);
   const { selectedLocation } = useLocation();
+  const { syncActive: pmsSyncActive } = usePmsConnection();
 
   const resolvedPatientId =
     propPatientId ||
@@ -142,12 +144,14 @@ export function PatientContactCard({
     null;
   const isReadinessMode = !!appointment;
 
-  // Resolve the "Open in {PMS}" deep link. setState lives in the awaited
-  // continuation (lint-safe) with a cancellation guard.
+  // Resolve the "Open in {PMS}" deep link — but only when the location has a
+  // sync-active PMS (from shared context, no extra connection poll). The
+  // patient-link call still needs the patient id, so it can't be fully shared,
+  // but gating on syncActive means it never fires when there's no PMS.
   useEffect(() => {
     let cancelled = false;
     const locationId = selectedLocation?.id;
-    if (!open || !resolvedPatientId || !locationId) {
+    if (!open || !resolvedPatientId || !locationId || !pmsSyncActive) {
       setPmsLink(null);
       return;
     }
@@ -173,7 +177,7 @@ export function PatientContactCard({
     return () => {
       cancelled = true;
     };
-  }, [open, resolvedPatientId, selectedLocation?.id]);
+  }, [open, resolvedPatientId, selectedLocation?.id, pmsSyncActive]);
 
   // Whether the row gives us enough to paint a shell on open. When true, we
   // never show the full-panel skeleton — sections shimmer individually.

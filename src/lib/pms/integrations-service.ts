@@ -164,9 +164,41 @@ export async function connectPms(args: {
  */
 export async function provisionFromPms(
   connection: PmsConnectionRow
-): Promise<{ roomsCreated: number; practitionersMapped: number; typesImported: number }> {
+): Promise<{
+  roomsCreated: number;
+  practitionersMapped: number;
+  typesImported: number;
+  businessMapped: boolean;
+}> {
   const adapter = adapterForConnection(connection);
-  if (!adapter) return { roomsCreated: 0, practitionersMapped: 0, typesImported: 0 };
+  if (!adapter) {
+    return { roomsCreated: 0, practitionersMapped: 0, typesImported: 0, businessMapped: false };
+  }
+
+  // Auto-map the Cliniko business → this location when it's unambiguous. The
+  // connection is 1:1 with a location, so if Cliniko exposes exactly one
+  // business (the common case), wire it up automatically. Multiple businesses
+  // are left for the user to choose. Never clobber an existing mapping.
+  let businessMapped = false;
+  const [locRow] = await db
+    .select({ pmsExternalId: locationsT.pmsExternalId })
+    .from(locationsT)
+    .where(eq(locationsT.id, connection.locationId))
+    .limit(1);
+  if (!locRow?.pmsExternalId) {
+    const businesses = (await adapter.listBusinesses()).filter((b) => !b.archived);
+    const only =
+      businesses.length === 1
+        ? businesses[0].externalId
+        : (connection.defaultBusinessExternalId ?? null);
+    if (only) {
+      await db
+        .update(locationsT)
+        .set({ pmsExternalId: only, updatedAt: new Date().toISOString() })
+        .where(eq(locationsT.id, connection.locationId));
+      businessMapped = true;
+    }
+  }
 
   const practitioners = (await adapter.listPractitioners()).filter((p) => p.active);
 
@@ -233,6 +265,7 @@ export async function provisionFromPms(
     roomsCreated,
     practitionersMapped,
     typesImported: typeResult.imported,
+    businessMapped,
   };
 }
 

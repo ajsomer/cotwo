@@ -1,9 +1,13 @@
 "use client";
 
-import { useState, useMemo, useCallback, type ReactNode } from "react";
+import { useState, useMemo, useCallback, useEffect, type ReactNode } from "react";
 import { LocationContext } from "@/hooks/useLocation";
 import { OrgContext } from "@/hooks/useOrg";
 import { RoleContext } from "@/hooks/useRole";
+import {
+  PmsConnectionContext,
+  type PmsConnectionStatus,
+} from "@/hooks/usePmsConnection";
 import { Sidebar } from "./sidebar";
 import { TopBar } from "./top-bar";
 import { ClinicDataProvider } from "./clinic-data-provider";
@@ -79,10 +83,68 @@ export function ClinicProviders({
     setDevUserId(userId);
   }, []);
 
+  // PMS connection status — fetched ONCE per selected location and shared via
+  // context, so the Cliniko-dependent UI across the app doesn't each poll
+  // /api/pms/connection (which caused it to flicker in after mount).
+  const [pms, setPms] = useState<{
+    syncActive: boolean;
+    providerLabel: string | null;
+    accountSubdomain: string | null;
+    loaded: boolean;
+  }>({ syncActive: false, providerLabel: null, accountSubdomain: null, loaded: false });
+  const [pmsRefreshKey, setPmsRefreshKey] = useState(0);
+  const refreshPms = useCallback(() => setPmsRefreshKey((k) => k + 1), []);
+
+  useEffect(() => {
+    let cancelled = false;
+    // All setState lives in the awaited continuation (never synchronously in
+    // the effect body) so it doesn't trigger cascading renders.
+    (async () => {
+      if (!selectedLocationId) {
+        if (!cancelled) {
+          setPms({ syncActive: false, providerLabel: null, accountSubdomain: null, loaded: true });
+        }
+        return;
+      }
+      try {
+        const res = await fetch(
+          `/api/pms/connection?locationId=${selectedLocationId}`
+        );
+        const data = res.ok
+          ? ((await res.json()) as {
+              syncActive?: boolean;
+              providerLabel?: string | null;
+              accountSubdomain?: string | null;
+            })
+          : null;
+        if (cancelled) return;
+        setPms({
+          syncActive: Boolean(data?.syncActive),
+          providerLabel: data?.providerLabel ?? null,
+          accountSubdomain: data?.accountSubdomain ?? null,
+          loaded: true,
+        });
+      } catch {
+        if (!cancelled) {
+          setPms({ syncActive: false, providerLabel: null, accountSubdomain: null, loaded: true });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedLocationId, pmsRefreshKey]);
+
+  const pmsValue = useMemo<PmsConnectionStatus>(
+    () => ({ ...pms, refresh: refreshPms }),
+    [pms, refreshPms]
+  );
+
   return (
     <LocationContext value={locationValue}>
       <OrgContext value={orgValue}>
         <RoleContext value={roleValue}>
+          <PmsConnectionContext value={pmsValue}>
           <div className="flex h-screen bg-gray-50">
             <Sidebar onDevSwitch={handleDevSwitch} />
             <div className="flex flex-1 flex-col min-w-0">
@@ -94,6 +156,7 @@ export function ClinicProviders({
               </main>
             </div>
           </div>
+          </PmsConnectionContext>
         </RoleContext>
       </OrgContext>
     </LocationContext>

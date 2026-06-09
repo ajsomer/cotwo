@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useLocation } from "@/hooks/useLocation";
+import { usePmsConnection } from "@/hooks/usePmsConnection";
 import type { IntegrationStatusDTO, MappingDataDTO } from "./types";
 import { ConnectForm } from "./connect-form";
 import { PractitionerMappings } from "./practitioner-mappings";
@@ -12,6 +13,9 @@ import { BusinessMappings } from "./business-mappings";
 export function IntegrationsSettingsShell() {
   const { selectedLocation } = useLocation();
   const locationId = selectedLocation?.id ?? null;
+  // This management page keeps its own detailed fetch, but pushes changes to the
+  // shared context so the rest of the app updates without re-polling.
+  const { refresh: refreshPmsContext } = usePmsConnection();
 
   const [status, setStatus] = useState<IntegrationStatusDTO | null>(null);
   const [mappings, setMappings] = useState<MappingDataDTO | null>(null);
@@ -28,7 +32,9 @@ export function IntegrationsSettingsShell() {
     const data = res.ok ? ((await res.json()) as IntegrationStatusDTO) : null;
     setStatus(data);
     setLoading(false);
-  }, [locationId]);
+    // Keep the shared context in sync after connect/disconnect/subdomain edits.
+    refreshPmsContext();
+  }, [locationId, refreshPmsContext]);
 
   const loadMappings = useCallback(async () => {
     if (!locationId) return;

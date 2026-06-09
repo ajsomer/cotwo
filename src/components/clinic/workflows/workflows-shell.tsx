@@ -19,6 +19,11 @@ import type {
   OutcomePathwayRow,
 } from "@/stores/clinic-store";
 
+// Post-appointment workflows are hidden for now to simplify the product. The
+// engine, schema, store, and OutcomePathwaysPanel all remain — flip this to
+// true to bring the post-appointment tab + surface back.
+const SHOW_POST_APPOINTMENT = false;
+
 export function WorkflowsShell() {
   const { org } = useOrg();
   const orgId = org?.id ?? "";
@@ -397,44 +402,48 @@ export function WorkflowsShell() {
         <div>
           <h1 className="text-2xl font-semibold text-gray-800">Workflows</h1>
           <p className="text-sm text-gray-500">
-            Configure what happens before and after each appointment
+            {SHOW_POST_APPOINTMENT
+              ? "Configure what happens before and after each appointment"
+              : "Configure what happens before each appointment"}
           </p>
         </div>
 
-        {/* Tab bar */}
-        <div className="flex gap-6 mt-4">
-          <button
-            onClick={() => handleDirectionChange("pre_appointment")}
-            className={`pb-2.5 text-sm font-medium transition-colors border-b-2 ${
-              isPre
-                ? "border-teal-500 text-teal-600"
-                : "border-transparent text-gray-500 hover:text-gray-700"
-            }`}
-          >
-            Pre-appointment
-          </button>
-          <button
-            onClick={() => handleDirectionChange("post_appointment")}
-            className={`pb-2.5 text-sm font-medium transition-colors border-b-2 ${
-              !isPre
-                ? "border-teal-500 text-teal-600"
-                : "border-transparent text-gray-500 hover:text-gray-700"
-            }`}
-          >
-            Post-appointment
-          </button>
-        </div>
+        {/* Tab bar — only shown when post-appointment is enabled. */}
+        {SHOW_POST_APPOINTMENT && (
+          <div className="flex gap-6 mt-4">
+            <button
+              onClick={() => handleDirectionChange("pre_appointment")}
+              className={`pb-2.5 text-sm font-medium transition-colors border-b-2 ${
+                isPre
+                  ? "border-teal-500 text-teal-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              Pre-appointment
+            </button>
+            <button
+              onClick={() => handleDirectionChange("post_appointment")}
+              className={`pb-2.5 text-sm font-medium transition-colors border-b-2 ${
+                !isPre
+                  ? "border-teal-500 text-teal-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              Post-appointment
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Pre-appointment: new intake package configuration surface */}
+      {/* Pre-appointment: intake package configuration surface */}
       {isPre && (
         <div className="flex-1 overflow-y-auto">
           <AppointmentTypesSettingsShell />
         </div>
       )}
 
-      {/* Post-appointment: outcome pathways configuration */}
-      {!isPre && (
+      {/* Post-appointment: outcome pathways (hidden unless re-enabled). */}
+      {SHOW_POST_APPOINTMENT && !isPre && (
         <div className="flex-1 overflow-y-auto">
           <OutcomePathwaysPanel />
         </div>

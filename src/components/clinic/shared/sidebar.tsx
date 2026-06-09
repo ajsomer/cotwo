@@ -54,7 +54,7 @@ const icons = {
 const NAV_ITEMS: NavItemDef[] = [
   {
     href: "/runsheet",
-    label: "Run Sheet",
+    label: "Runsheet",
     icon: icons.runsheet,
     roles: ["clinic_owner", "practice_manager", "receptionist", "clinician"],
     tiers: ["core", "complete"],

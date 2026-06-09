@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo, useCallback, useTransition } from "react";
 import { Zap } from "lucide-react";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
+import { usePmsConnection } from "@/hooks/usePmsConnection";
 import type {
   ReadinessAppointment,
   StandaloneSubmissionRow as StandaloneSubmissionRowType,
@@ -40,8 +41,16 @@ const AddPatientPanel = dynamic(
   { ssr: false }
 );
 
+// Post-appointment tasks are hidden for now to simplify the product. The
+// store, fetchers, and post-appointment data all remain — flip this to true to
+// bring the Pre/Post toggle and post-appointment view back.
+const SHOW_POST_APPOINTMENT = false;
+
 export function ReadinessShell() {
-  const direction = useClinicStore((s) => s.readinessDirection);
+  const storeDirection = useClinicStore((s) => s.readinessDirection);
+  // When post is hidden, lock the dashboard to pre-appointment regardless of
+  // any stale store value.
+  const direction = SHOW_POST_APPOINTMENT ? storeDirection : "pre_appointment";
   const appointmentsPre = useClinicStore((s) => s.readinessAppointmentsPre);
   const appointmentsPost = useClinicStore((s) => s.readinessAppointmentsPost);
   const appointments =
@@ -304,41 +313,11 @@ export function ReadinessShell() {
     });
   }, [locationId, refreshReadiness]);
 
-  // PMS "Sync now" — only when the location has a SYNC-ACTIVE connection
-  // (credentials present + a real adapter). Hidden for stubbed Gentu / no PMS.
-  const [pmsSync, setPmsSync] = useState<{ active: boolean; label: string } | null>(
-    null
-  );
+  // PMS "Sync now" — shared from context (fetched once). Only shown when the
+  // location is sync-active. Hidden for stubbed Gentu / no PMS.
+  const pms = usePmsConnection();
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!locationId) return;
-    (async () => {
-      try {
-        const res = await fetch(`/api/pms/connection?locationId=${locationId}`);
-        if (cancelled) return;
-        const data = res.ok
-          ? ((await res.json()) as {
-              syncActive?: boolean;
-              providerLabel?: string | null;
-            })
-          : null;
-        if (cancelled) return;
-        setPmsSync(
-          data?.syncActive
-            ? { active: true, label: data.providerLabel ?? "PMS" }
-            : { active: false, label: "" }
-        );
-      } catch {
-        if (!cancelled) setPmsSync({ active: false, label: "" });
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [locationId]);
 
   const handleSyncNow = useCallback(async () => {
     if (!locationId) return;
@@ -467,32 +446,36 @@ export function ReadinessShell() {
           </button>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
-          <ReadinessModeToggle
-            direction={direction}
-            counts={counts}
-            hasPreOverdue={hasPreOverdue}
-            hasPostOverdue={hasPostOverdue}
-            onChange={setDirection}
-          />
-          <div className="w-px h-5 bg-gray-200" />
-          {pmsSync?.active && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleSyncNow}
-              disabled={isSyncing}
-              title={`Pull appointments from ${pmsSync.label}`}
-            >
-              <RefreshIcon spinning={isSyncing} />
-              {isSyncing ? "Syncing…" : "Sync now"}
-            </Button>
+          {SHOW_POST_APPOINTMENT && (
+            <>
+              <ReadinessModeToggle
+                direction={direction}
+                counts={counts}
+                hasPreOverdue={hasPreOverdue}
+                hasPostOverdue={hasPostOverdue}
+                onChange={setDirection}
+              />
+              <div className="w-px h-5 bg-gray-200" />
+            </>
           )}
-          <button
-            onClick={() => setActivePanel({ type: "add-patient" })}
-            className="inline-flex items-center gap-2 rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 transition-colors"
-          >
+          {pms.syncActive && (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleSyncNow}
+                disabled={isSyncing}
+                title={`Pull appointments from ${pms.providerLabel ?? "PMS"}`}
+              >
+                <RefreshIcon spinning={isSyncing} />
+                {isSyncing ? "Syncing…" : "Sync now"}
+              </Button>
+              <div className="w-px h-5 bg-gray-200" />
+            </>
+          )}
+          <Button size="sm" onClick={() => setActivePanel({ type: "add-patient" })}>
             + Add patient
-          </button>
+          </Button>
         </div>
       </div>
       {syncMsg && <p className="-mt-2 mb-4 text-[13px] text-gray-600">{syncMsg}</p>}

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { SlideOver } from "@/components/ui/slide-over";
+import { usePmsConnection } from "@/hooks/usePmsConnection";
 import { fetchReviewData, intakeHandoffUrl } from "./review-prefetch-cache";
 
 interface IntakePackageHandoffPanelProps {
@@ -82,6 +83,7 @@ export function IntakePackageHandoffPanel({
   onClose,
   onTranscribed,
 }: IntakePackageHandoffPanelProps) {
+  const { syncActive: pmsSyncActive } = usePmsConnection();
   const [payload, setPayload] = useState<HandoffPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [marking, setMarking] = useState(false);
@@ -120,9 +122,16 @@ export function IntakePackageHandoffPanel({
     loadHandoff();
   }, [loadHandoff]);
 
-  // Resolve the PMS write-back gate for this appointment.
+  // Resolve the PMS write-back gate for this appointment — but only when the
+  // location has a sync-active PMS (from shared context). This gate is still
+  // per-appointment (it checks for pushable field data), so it needs its own
+  // call, but gating on syncActive avoids firing it when there's no PMS.
   useEffect(() => {
     let cancelled = false;
+    if (!pmsSyncActive) {
+      setPmsGate({ active: false, label: "" });
+      return;
+    }
     (async () => {
       try {
         const res = await fetch(
@@ -145,7 +154,7 @@ export function IntakePackageHandoffPanel({
     return () => {
       cancelled = true;
     };
-  }, [appointmentId]);
+  }, [appointmentId, pmsSyncActive]);
 
   const markTranscribed = async (): Promise<boolean> => {
     const res = await fetch("/api/tasks/mark-intake-transcribed", {
