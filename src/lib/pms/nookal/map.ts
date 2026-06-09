@@ -53,12 +53,12 @@ export function mapPractitioner(n: NookalPractitioner): PmsPractitioner {
 }
 
 export function mapService(n: NookalService): PmsAppointmentType {
-  const duration = n.Duration ?? n.duration;
   return {
     externalId: String(n.ID),
-    name: n.Name ?? n.name ?? `Service ${n.ID}`,
-    durationMinutes: duration != null ? Number(duration) || null : null,
-    archived: false,
+    name: n.Name ?? `Service ${n.ID}`,
+    durationMinutes: n.Duration != null ? Number(n.Duration) || null : null,
+    // active "0" → inactive service; surface as archived so it's filtered out.
+    archived: n.active === "0",
   };
 }
 
@@ -78,17 +78,30 @@ export function mapAppointment(n: NookalAppointment): PmsAppointment {
     practitionerExternalId: nullableId(n.practitionerID),
     appointmentTypeExternalId: nullableId(n.appointmentTypeID),
     businessExternalId: nullableId(n.locationID),
-    // Nookal splits date + time. We compose a single timestamp. ⚠️ Nookal times
-    // are LOCAL to the location's timezone, not UTC — without a tz-aware combine
-    // this is naive local time. The run sheet displays in the location tz, and
-    // for the prototype this is acceptable; flagged for live verification.
-    startsAt: combineDateTime(n.appointmentDate, n.appointmentStartTime),
-    endsAt: combineDateTime(n.appointmentDate, n.appointmentEndTime),
+    // VERIFIED: Nookal returns the times PRE-CONVERTED to UTC in
+    // appointmentStartDateTimeUTC/EndDateTimeUTC. Use those directly (tagged Z).
+    // The local appointmentDate/Start/End fields are location-local and would be
+    // wrong without a tz-aware combine — only fall back to them if the UTC field
+    // is missing (then treat as the location-local naive time we have).
+    startsAt:
+      utcTimestamp(n.appointmentStartDateTimeUTC) ??
+      combineDateTime(n.appointmentDate, n.appointmentStartTime),
+    endsAt:
+      utcTimestamp(n.appointmentEndDateTimeUTC) ??
+      combineDateTime(n.appointmentDate, n.appointmentEndTime),
     cancelled: isTrue(n.cancelled),
     didNotArrive: isTrue(n.DNA),
     archived: false,
     updatedAt: normaliseTimestamp(n.lastModified),
   };
+}
+
+/** Nookal's `...UTC` field is "YYYY-MM-DD HH:MM:SS" in UTC → ISO with 'Z'. */
+function utcTimestamp(v: string | null | undefined): string | null {
+  if (!v) return null;
+  const t = v.trim();
+  if (!t) return null;
+  return `${t.replace(" ", "T")}Z`;
 }
 
 // ── helpers ──

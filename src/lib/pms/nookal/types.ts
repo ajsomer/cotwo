@@ -90,6 +90,11 @@ export interface NookalAppointment {
   Notes?: string | null;
   dateCreated?: string | null;
   lastModified?: string | null; // "YYYY-MM-DD HH:MM:SS"
+  TimeZone?: string | null; // IANA, e.g. "Australia/Brisbane"
+  // Nookal provides the times pre-converted to UTC — PREFER these over the
+  // local appointmentDate/Start/End fields, which are location-local (verified).
+  appointmentStartDateTimeUTC?: string | null; // "YYYY-MM-DD HH:MM:SS" UTC
+  appointmentEndDateTimeUTC?: string | null;
 }
 
 /** Practitioner — keys: ID, FirstName, LastName, Email, Speciality, Title. */
@@ -111,35 +116,39 @@ export interface NookalLocation {
 }
 
 /**
- * Service → canonical PmsAppointmentType. ⚠️ Keys UNVERIFIED (the reference
- * client doesn't fetch services). Best-known conventional keys; verify against
- * a live `getServices` response. We read defensively with fallbacks in map.ts.
+ * Service → canonical PmsAppointmentType. VERIFIED against a live account:
+ * `getAppointmentTypes` returns these under result key `services`.
  */
 export interface NookalService {
   ID: string;
   Name?: string | null;
-  name?: string | null; // fallback if Nookal lowercases it
-  Duration?: string | null; // minutes
-  duration?: string | null;
   Description?: string | null;
+  Duration?: string | null; // minutes, e.g. "30"
+  Category?: string | null;
+  Price?: string | null;
+  hasTax?: string | null;
+  Locations?: Array<string | number> | null;
+  ServiceCode?: string | null;
+  active?: string | null; // "1" | "0"
 }
 
 // ── Write payloads ──
 
-/** Fields PATCHable on a patient (verify the exact accepted set on a live acct). */
+/**
+ * editPatient WRITE params (snake_case — DIFFERENT from the read object's
+ * PascalCase). Verified against the live docs/account: editPatient silently
+ * ignores unknown params, so the casing must be exact.
+ */
 export interface NookalPatientPatch {
-  FirstName?: string;
-  LastName?: string;
-  DOB?: string; // Nookal date input — verify format on a live account
-  Email?: string;
-  Mobile?: string;
-  Addr1?: string;
-  City?: string;
-  State?: string;
-  Postcode?: string;
-  Gender?: string;
-  Title?: string;
-  Occupation?: string;
+  first_name?: string;
+  last_name?: string;
+  date_of_birth?: string; // YYYY-MM-DD
+  email?: string;
+  mobile?: string;
+  address_line_1?: string;
+  city?: string;
+  state?: string;
+  postcode?: string;
 }
 
 /** uploadFile (step 1) result scalars (read from data.results). */

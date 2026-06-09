@@ -31,8 +31,8 @@ import {
 } from "./map";
 import {
   NOOKAL_FIELD_CATALOGUE,
-  NOOKAL_GENDER_VALUES,
-  PATIENT_PATCH_FIELD,
+  PATIENT_READ_FIELD,
+  PATIENT_WRITE_PARAM,
   catalogueEntry,
 } from "./field-map";
 import type {
@@ -184,10 +184,12 @@ class NookalAdapter implements PmsAdapter {
   }
 
   async listAppointmentTypes(): Promise<PmsAppointmentType[]> {
-    // ⚠️ getServices keys unverified (reference client doesn't fetch services);
-    // map.ts reads defensively. Verify the function name + result key live.
+    // VERIFIED against a live account (2026-06-09): the function is
+    // `getAppointmentTypes` and the result key is `services` (NOT
+    // `appointmentTypes`). Fields: ID, Name, Description, Duration, Category,
+    // Price, hasTax, Locations, ServiceCode, active.
     const rows = await this.client.listOnce<NookalService>(
-      "getServices",
+      "getAppointmentTypes",
       "services"
     );
     return rows.map(mapService);
@@ -248,13 +250,12 @@ class NookalAdapter implements PmsAdapter {
   }
 
   /**
-   * Fill-blanks-only: read the current patient, PATCH only currently-empty
+   * Fill-blanks-only: read the current patient, write only currently-empty
    * fields, so we never clobber clinic-entered data.
    *
-   * ⚠️ Nookal's patient-update endpoint name + accepted fields are unverified.
-   * We use `updatePatient` (conventional) and surface any rejection per-field
-   * with an actionable message. Verify against a live account before the first
-   * real write (operational guardrail — manual sign-off required).
+   * VERIFIED: the patient-update endpoint is `editPatient` (takes patient_id +
+   * the same field names as the patient object — FirstName/DOB/Email/…). Any
+   * rejection is surfaced per-field with an actionable message.
    */
   private async writePatientFields(
     externalId: string,
@@ -281,8 +282,11 @@ class NookalAdapter implements PmsAdapter {
     const results: PmsFieldResult[] = [];
 
     for (const f of fields) {
-      const prop = PATIENT_PATCH_FIELD[f.targetKey];
-      if (!prop) {
+      // Nookal reads (PascalCase) and writes (snake_case) use DIFFERENT names:
+      // readField checks the current value; writeParam is the editPatient param.
+      const writeParam = PATIENT_WRITE_PARAM[f.targetKey];
+      const readField = PATIENT_READ_FIELD[f.targetKey];
+      if (!writeParam) {
         results.push(failResult(f, "mapping", "Unknown Nookal field."));
         continue;
       }
@@ -291,7 +295,7 @@ class NookalAdapter implements PmsAdapter {
         results.push(failResult(f, v.failureKind, v.detail));
         continue;
       }
-      const existing = current[prop];
+      const existing = readField ? current[readField] : undefined;
       if (existing !== null && existing !== undefined && existing !== "") {
         results.push({
           coviuQuestionName: f.questionName,
@@ -303,7 +307,7 @@ class NookalAdapter implements PmsAdapter {
         });
         continue;
       }
-      patch[prop] = f.value;
+      patch[writeParam] = f.value;
       results.push({
         coviuQuestionName: f.questionName,
         target: f.targetKey,
@@ -316,7 +320,7 @@ class NookalAdapter implements PmsAdapter {
     const toWrite = results.filter((r) => r.status === "written");
     if (toWrite.length > 0) {
       try {
-        await this.client.request("updatePatient", {
+        await this.client.request("editPatient", {
           patient_id: externalId,
           ...stringifyPatch(patch),
         });
@@ -324,12 +328,12 @@ class NookalAdapter implements PmsAdapter {
         // A single invalid field can reject the batch; retry each in isolation
         // so valid fields still land and only the offender is marked failed.
         for (const r of toWrite) {
-          const prop = PATIENT_PATCH_FIELD[r.target];
-          if (!prop) continue;
+          const writeParam = PATIENT_WRITE_PARAM[r.target];
+          if (!writeParam) continue;
           try {
-            await this.client.request("updatePatient", {
+            await this.client.request("editPatient", {
               patient_id: externalId,
-              [prop]: r.attemptedValue,
+              [writeParam]: r.attemptedValue,
             });
           } catch (e2) {
             const detail = transportDetail(e2 as NookalApiError);
@@ -548,5 +552,3 @@ export const nookalFactory: PmsAdapterFactory = {
     };
   },
 };
-
-export { NOOKAL_GENDER_VALUES };
