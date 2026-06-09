@@ -1,9 +1,27 @@
 # Plan: Cliniko Integration (two-way) via a Normalization Layer
 
-Status: **Design / not yet built.** This plan supersedes the sketch-level
-detail in `docs/claude-project/feature-pms-integration.md` for the Cliniko
-specifics. The feature doc remains the higher-level "why"; reconcile the two
-once this is built (notably the auth method — see §10).
+Status: **Built** (branch `feat/cliniko-integration`, all build-order steps).
+The Cliniko HTTP client is real and key-gated (dormant without a key); first
+write to a live account still needs manual sign-off (§12). This plan supersedes
+the sketch-level detail in `docs/claude-project/feature-pms-integration.md` for
+the Cliniko specifics. The feature doc remains the higher-level "why" — its
+OAuth line is now superseded by §10 (Cliniko uses an API key).
+
+**Implementation map:** normalization layer `src/lib/pms/` (`types.ts`,
+`adapter.ts`, `registry.ts`, `credentials.ts`); Cliniko adapter
+`src/lib/pms/cliniko/`; sync `src/lib/pms/sync/` (`pull.ts`, `push.ts`,
+`cursor.ts`, `mapping.ts`); schema migration
+`supabase/migrations/024_pms_integration.sql` (applied to Neon); cron
+`src/app/api/cron/pms-sync/`; Settings → Integrations
+`src/app/(clinic)/settings/integrations/` + `src/components/clinic/settings/integrations/`;
+form binding `src/lib/survey/pms-target-property.ts` + `pms-target-schema.ts`;
+seeded form `src/lib/pms/seeded-registration-form.ts`; push UI
+`process-flow-done.tsx` + `pms-push-feedback.tsx`; deep link
+`src/lib/pms/web-link.ts` + the patient slideout's `demographics-section.tsx`.
+
+**Deploy TODO (not code):** add the `pms-sync` cron to Vercel (every 2–3 min)
+and set `PMS_ENCRYPTION_KEY` (dev falls back to a derived key — see
+`credentials.ts`).
 
 ## 1. Goal
 
