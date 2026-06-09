@@ -297,7 +297,7 @@ async function persistResults(
       .insert(pmsPushFieldResults)
       .values({
         submissionId,
-        provider: provider as "cliniko",
+        provider: provider as typeof pmsPushFieldResults.$inferInsert.provider,
         surveyQuestionName: f.coviuQuestionName,
         pmsTargetKey: f.target,
         status: f.status,

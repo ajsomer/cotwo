@@ -29,6 +29,14 @@ A two-way Cliniko integration, structured behind a vendor-agnostic
 normalization layer so future PMS systems (Halaxy, Power Diary, Nookal, …) drop
 in without rewriting core logic.
 
+> **Update:** Nookal is now built as the second provider behind this same layer
+> — see `docs/plans/nookal-integration.md`. It validated the abstraction: the
+> entire generic spine (schema, sync engine, Settings → Integrations, push UI)
+> was reused, the only changes outside `src/lib/pms/nookal/` being one registry
+> line, the setup-grid flip, and a small genericise pass to remove three
+> Cliniko-hardcoded leaks (the Settings connect form's provider, and two
+> `as "cliniko"` enum casts in `integrations-service.ts` + `sync/push.ts`).
+
 - **Read (inbound):** pull Cliniko appointments into the Coviu appointment book
   so the run sheet reflects what the PMS has. Telehealth appointments are the
   primary target. Pulls supporting records (patients, practitioners,

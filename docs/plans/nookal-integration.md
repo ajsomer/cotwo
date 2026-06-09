@@ -1,8 +1,14 @@
 # Plan: Nookal Integration (two-way) — second provider behind the normalization layer
 
-Status: **Planned** (branch `feat/nookal-integration`). Nookal is added as a
-**second concrete `PmsAdapter`** behind the vendor-agnostic layer that the
-Cliniko build (`docs/plans/cliniko-integration.md`) already established. The
+Status: **Built** (branch `feat/nookal-integration`). The adapter is implemented
+and registered; the genericise pass and setup-grid flip are done; `tsc --noEmit`
++ `npm run build` are clean. Auth/transport were verified against a working
+reference client (§2 box). **Not yet run against a live Nookal account** — the
+remaining open items (verify `last_modified` behaviour, exact `getServices`
+keys, the `updatePatient` endpoint name + accepted fields, and the file-upload
+PUT mechanics) are flagged with ⚠️ inline and need a live key to close. Nookal is
+added as a **second concrete `PmsAdapter`** behind the vendor-agnostic layer that
+the Cliniko build (`docs/plans/cliniko-integration.md`) already established. The
 generic spine — schema, sync engine, Settings → Integrations, form builder
 binding, push UI, deep links, connect route — is reused. The bulk of new code is
 `src/lib/pms/nookal/`, plus one line in `registry.ts`, the setup-grid flip, and a
@@ -112,10 +118,34 @@ value as a **clearly-commented constant with a "⚠️ verify against a live
 account" note**, and surface a specific, actionable error if it's wrong — never
 a bare status code (mirror Cliniko's `transportDetail`).
 
+> **✅ Auth + transport VERIFIED (2026-06-09)** against the working Elixir client
+> [`theo-agilelab/nookal-api`](https://github.com/theo-agilelab/nookal-api)
+> (`lib/nookal/client.ex`) + the Nookal docs. Items 1–2 below are now settled —
+> the step-0 blocker is cleared:
+> - **Base URL:** `https://api.nookal.com/production/v2/<function>` — single host,
+>   **no shard** (unlike Cliniko).
+> - **Method:** every call is **`POST`**.
+> - **Auth:** `api_key` is a **form-body field** (not header, not query),
+>   Content-Type `application/x-www-form-urlencoded; charset=UTF-8`.
+> - **Envelope:** `{ "status": "success" | "failure", "data": { "results": {
+>   <resourceKey>: [...] } }, "details": {...}, "settings": { currentPage,
+>   nextPage, pageLength } }`. Failure → `details.errorMessage` (object spec also
+>   names `errorCode` / `errorDescription`). Results at
+>   `payload.data.results.<resourceKey>`.
+> - **Pagination:** `page` / `page_length` form params (cap **200**);
+>   `settings.nextPage` is null on the last page → loop terminator.
+> - **Endpoints confirmed:** `verify`, `getLocations`, `getPractitioners`,
+>   `getPatients`, `getAppointments`, `getPatientFiles`, `getFileUrl`,
+>   `getTreatmentNotes`, `addTreatmentNote`, `uploadFile`, `setFileActive`.
+>
+> Still verify against a **live account**: that `last_modified` filters as
+> documented (§4), exact field names per resource object, and the file-upload
+> PUT mechanics (§5). Those don't block `client.ts`.
+
 | # | What to confirm | Where it lands | Cliniko comparison |
 |---|---|---|---|
-| 1 | **🚧 BLOCKER for `client.ts`. Auth + base URL.** Exact header/param the API key goes in; base URL; any region/shard component. The docs show SDK `setApiKey(...)` and endpoint URLs but **not enough to implement raw `fetch` auth transport from docs alone** — confirm against a live account (or by inspecting the SDK's HTTP layer) *before* writing `client.ts`, not as a later TODO. `verify()` makes one cheap authenticated call. | `nookal/client.ts` | Cliniko = HTTP Basic `base64(key+":")`, shard in key suffix. Nookal = API key — confirm transport (header vs query param vs POST body field). |
-| 2 | **Request/response format.** GET vs POST; JSON vs form-encoded body; the **response envelope shape** + success/error indicator. | `client.ts` + `types.ts` | Cliniko = JSON, `{ <resource>: [...], links }`. Nookal historically wraps as `{ status, data: { results: { ... } } }` — confirm the real structure and where the array lives. |
+| 1 | ~~Auth + base URL~~ ✅ **VERIFIED** (see box above): POST, `api_key` in form body, base `…/production/v2/`, no shard. | `nookal/client.ts` | Cliniko = HTTP Basic, shard in key. Nookal = `api_key` form-body field. |
+| 2 | ~~Request/response format~~ ✅ **VERIFIED**: form-encoded POST; envelope `{status, data.results.<key>, settings.nextPage}`. | `client.ts` + `types.ts` | Cliniko = JSON `{ <resource>: [...], links }`. |
 | 3 | **Incremental sync (mostly settled — verify behaviour).** Docs show `last_modified` on `getAppointments`/`getPatients` → prefer true incremental (§4). Confirm the param actually filters as documented on a live account. | `nookal/adapter.ts` `listAppointments`/`listPatients` | Cliniko = `q[]=updated_at:>{cursor}` ascending. |
 | 4 | **Pagination.** `page` / `page_length` (docs show page_length cap **200**); confirm the page/last-page indicator. | `client.ts` `list()` async-iterator | Cliniko = `per_page=100`, follow `links.next`. |
 | 5 | **Rate limits.** Confirm + honour with bounded backoff (respect any `Retry-After`). | `client.ts` | Cliniko = 200/min → 429 + backoff. |

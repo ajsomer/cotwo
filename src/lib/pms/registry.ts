@@ -2,6 +2,7 @@ import "server-only";
 import type { PmsAdapter, PmsAdapterFactory } from "./adapter";
 import { decryptCredentials } from "./credentials";
 import { clinikoFactory } from "./cliniko/adapter";
+import { nookalFactory } from "./nookal/adapter";
 
 /**
  * Provider registry. The single place that knows which concrete adapters exist.
@@ -12,6 +13,7 @@ import { clinikoFactory } from "./cliniko/adapter";
  */
 const FACTORIES: Record<string, PmsAdapterFactory> = {
   [clinikoFactory.provider]: clinikoFactory,
+  [nookalFactory.provider]: nookalFactory,
 };
 
 /** Provider enum values that have a real adapter wired up. */

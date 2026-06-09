@@ -6,9 +6,13 @@ import {
   pmsAppointmentTypeLinks,
   pmsConnections,
   pmsPractitionerLinks,
+  pmsProvider as pmsProviderEnum,
   locations as locationsT,
   rooms as roomsT,
 } from "@/lib/db/schema";
+
+/** The non-null `pms_provider` enum value union (for narrowing string casts). */
+type PmsProviderValue = (typeof pmsProviderEnum.enumValues)[number];
 import { buildRegistrationFormSchema } from "./seeded-registration-form";
 import { and, eq } from "drizzle-orm";
 import type {
@@ -282,7 +286,7 @@ async function ensureRegistrationForm(
     .where(
       and(
         eq(formsT.orgId, orgId),
-        eq(formsT.pmsProvider, provider as "cliniko")
+        eq(formsT.pmsProvider, provider as PmsProviderValue)
       )
     )
     .limit(1);
@@ -466,7 +470,7 @@ export async function importAppointmentTypes(
         modality: "in_person",
         durationMinutes: t.durationMinutes ?? 30,
         source: "pms",
-        pmsProvider: connection.provider as "cliniko",
+        pmsProvider: connection.provider as typeof appointmentTypes.$inferInsert.pmsProvider,
       })
       .returning({ id: appointmentTypes.id });
 

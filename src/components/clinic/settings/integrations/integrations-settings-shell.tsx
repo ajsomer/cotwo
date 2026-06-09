@@ -152,6 +152,8 @@ export function IntegrationsSettingsShell() {
         <div className="mt-6">
           <ConnectForm
             locationId={locationId}
+            provider={status?.provider ?? null}
+            providerLabel={status?.providerLabel ?? null}
             credentialFields={status?.credentialFields ?? []}
             onConnected={loadStatus}
           />

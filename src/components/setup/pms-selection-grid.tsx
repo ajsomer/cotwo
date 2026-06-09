@@ -16,21 +16,40 @@ interface PmsOption {
 
 const PMS_OPTIONS: PmsOption[] = [
   { id: "cliniko", name: "Cliniko", description: "Practice management software", comingSoon: false },
+  { id: "nookal", name: "Nookal", description: "Allied health practice software", comingSoon: false },
   { id: "gentu", name: "Gentu", description: "Australian allied health PMS (demo)", comingSoon: false },
   { id: "halaxy", name: "Halaxy", description: "Healthcare practice management", comingSoon: true },
-  { id: "nookal", name: "Nookal", description: "Allied health practice software", comingSoon: true },
   { id: "power_diary", name: "Power Diary", description: "Practice management system", comingSoon: true },
 ];
+
+/** Providers that connect with a real API key via /api/setup/pms/connect. */
+const API_KEY_PROVIDERS: Partial<
+  Record<PmsProvider, { label: string; placeholder: string; help: string }>
+> = {
+  cliniko: {
+    label: "Cliniko",
+    placeholder: "…-au1",
+    help: "Cliniko → My Info → Manage API keys. The region is read from the key.",
+  },
+  nookal: {
+    label: "Nookal",
+    placeholder: "Your Nookal API key",
+    help: "Nookal → Practice → Setup → API Keys.",
+  },
+};
 
 export function PmsSelectionGrid() {
   const router = useRouter();
   const [connecting, setConnecting] = useState<PmsProvider | null>(null);
   const [connected, setConnected] = useState<PmsProvider | null>(null);
   const [comingSoonModal, setComingSoonModal] = useState<PmsProvider | null>(null);
-  const [clinikoModal, setClinikoModal] = useState(false);
-  const [clinikoKey, setClinikoKey] = useState("");
+  /** Which API-key provider's connect modal is open (cliniko / nookal). */
+  const [apiKeyModal, setApiKeyModal] = useState<PmsProvider | null>(null);
+  const [apiKey, setApiKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  const apiKeyConfig = apiKeyModal ? API_KEY_PROVIDERS[apiKeyModal] : null;
 
   async function handleSelect(provider: PmsOption) {
     if (provider.comingSoon) {
@@ -38,10 +57,11 @@ export function PmsSelectionGrid() {
       return;
     }
 
-    // Cliniko: real connect via an API key.
-    if (provider.id === "cliniko") {
+    // Real API-key connect (Cliniko, Nookal): open the key modal.
+    if (API_KEY_PROVIDERS[provider.id]) {
       setError(null);
-      setClinikoModal(true);
+      setApiKey("");
+      setApiKeyModal(provider.id);
       return;
     }
 
@@ -65,15 +85,17 @@ export function PmsSelectionGrid() {
     setConnected(provider.id);
   }
 
-  async function handleConnectCliniko() {
-    setConnecting("cliniko");
+  async function handleConnectApiKey() {
+    if (!apiKeyModal) return;
+    const provider = apiKeyModal;
+    setConnecting(provider);
     setError(null);
     const res = await fetch("/api/setup/pms/connect", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        provider: "cliniko",
-        credentials: { api_key: clinikoKey.trim() },
+        provider,
+        credentials: { api_key: apiKey.trim() },
       }),
     });
     const data = (await res.json().catch(() => ({}))) as {
@@ -83,10 +105,14 @@ export function PmsSelectionGrid() {
     };
     setConnecting(null);
     if (res.ok && data.ok) {
-      setClinikoModal(false);
-      setConnected("cliniko");
+      setApiKeyModal(null);
+      setConnected(provider);
     } else {
-      setError(data.detail ?? data.error ?? "Couldn't connect to Cliniko.");
+      setError(
+        data.detail ??
+          data.error ??
+          `Couldn't connect to ${API_KEY_PROVIDERS[provider]?.label ?? "your PMS"}.`
+      );
     }
   }
 
@@ -172,8 +198,8 @@ export function PmsSelectionGrid() {
       {connected ? (
         <div className="space-y-3">
           <p className="text-sm text-green-700 font-medium">
-            {connected === "cliniko"
-              ? "Connected to Cliniko. Next, confirm your appointment types and rooms in Settings → Integrations."
+            {connected && API_KEY_PROVIDERS[connected]
+              ? `Connected to ${API_KEY_PROVIDERS[connected]?.label}. Next, confirm your appointment types and rooms in Settings → Integrations.`
               : "Connected to Gentu — appointment types, forms, and rooms imported."}
           </p>
           <Button
@@ -197,29 +223,31 @@ export function PmsSelectionGrid() {
         </button>
       )}
 
-      {/* Cliniko connect modal */}
-      {clinikoModal && (
+      {/* API-key connect modal (Cliniko, Nookal) */}
+      {apiKeyModal && apiKeyConfig && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl">
             <div className="flex items-start justify-between mb-3">
-              <h2 className="text-base font-semibold text-gray-800">Connect Cliniko</h2>
+              <h2 className="text-base font-semibold text-gray-800">
+                Connect {apiKeyConfig.label}
+              </h2>
               <button
                 type="button"
-                onClick={() => setClinikoModal(false)}
+                onClick={() => setApiKeyModal(null)}
                 className="text-gray-400 hover:text-gray-600"
               >
                 <X size={18} />
               </button>
             </div>
             <p className="text-sm text-gray-500 mb-3">
-              Paste your Cliniko API key. We verify it before saving and store it
-              encrypted. The region is read from the key.
+              Paste your {apiKeyConfig.label} API key. We verify it before saving
+              and store it encrypted. {apiKeyConfig.help}
             </p>
             <input
               type="password"
-              value={clinikoKey}
-              onChange={(e) => setClinikoKey(e.target.value)}
-              placeholder="…-au1"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={apiKeyConfig.placeholder}
               className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
             />
             {error && <p className="text-sm text-red-500 mt-2">{error}</p>}
@@ -228,7 +256,7 @@ export function PmsSelectionGrid() {
                 type="button"
                 variant="secondary"
                 className="flex-1"
-                onClick={() => setClinikoModal(false)}
+                onClick={() => setApiKeyModal(null)}
               >
                 Cancel
               </Button>
@@ -236,10 +264,10 @@ export function PmsSelectionGrid() {
                 type="button"
                 variant="primary"
                 className="flex-1"
-                onClick={handleConnectCliniko}
-                disabled={connecting === "cliniko" || !clinikoKey.trim()}
+                onClick={handleConnectApiKey}
+                disabled={connecting === apiKeyModal || !apiKey.trim()}
               >
-                {connecting === "cliniko" ? "Verifying…" : "Connect"}
+                {connecting === apiKeyModal ? "Verifying…" : "Connect"}
               </Button>
             </div>
           </div>
