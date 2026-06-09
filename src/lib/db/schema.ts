@@ -101,6 +101,7 @@ export const locations = pgTable("locations", {
 	timezone: text().default('Australia/Sydney').notNull(),
 	qrToken: text("qr_token").default(sql`gen_random_uuid()::text`),
 	stripeAccountId: text("stripe_account_id"),
+	pmsExternalId: text("pms_external_id"),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
@@ -403,6 +404,9 @@ export const forms = pgTable("forms", {
 	schema: jsonb().default({}).notNull(),
 	status: text().default('draft').notNull(),
 	isPlatformDemo: boolean("is_platform_demo").default(false).notNull(),
+	// NULL = generic form. Set = PMS-bound (its pmsTarget keys belong to this
+	// provider's vocabulary; only offered at locations running that PMS). §8.F
+	pmsProvider: pmsProvider("pms_provider"),
 	publicToken: text("public_token").default(sql`gen_random_uuid()::text`).notNull(),
 	publicTokenRotatedAt: timestamp("public_token_rotated_at", { withTimezone: true, mode: 'string' }),
 	publicTokenRotatedBy: uuid("public_token_rotated_by"),
@@ -454,6 +458,10 @@ export const formSubmissions = pgTable("form_submissions", {
 	reviewStatus: text("review_status"),
 	reviewedAt: timestamp("reviewed_at", { withTimezone: true, mode: 'string' }),
 	reviewedBy: uuid("reviewed_by"),
+	// PMS write-back roll-up (per-field detail lives in pms_push_field_results). §8.G
+	pmsExternalId: text("pms_external_id"),
+	pmsPushStatus: text("pms_push_status"),
+	pmsPushedAt: timestamp("pms_pushed_at", { withTimezone: true, mode: 'string' }),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
 	index("idx_form_submissions_appointment_created").using("btree", table.appointmentId.asc().nullsLast().op("timestamptz_ops"), table.createdAt.desc().nullsFirst().op("uuid_ops")),
@@ -811,17 +819,139 @@ export const fileDeliveries = pgTable("file_deliveries", {
 export const pmsConnections = pgTable("pms_connections", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	orgId: uuid("org_id").notNull(),
+	locationId: uuid("location_id").notNull(),
 	provider: pmsProvider().notNull(),
 	status: pmsConnectionStatus().notNull(),
 	importedData: jsonb("imported_data"),
+	// Opaque, adapter-owned encrypted credentials. A connection is "sync-active"
+	// iff this is non-null (plan §8.A). Markers from onboarding leave it null.
+	credentialsEncrypted: text("credentials_encrypted"),
+	defaultBusinessExternalId: text("default_business_external_id"),
+	lastSyncedAt: timestamp("last_synced_at", { withTimezone: true, mode: 'string' }),
+	lastSyncError: text("last_sync_error"),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
 	foreignKey({
 			columns: [table.orgId],
 			foreignColumns: [organisations.id],
 			name: "pms_connections_org_id_fkey"
 		}).onDelete("cascade"),
-	unique("pms_connections_org_id_key").on(table.orgId),
+	foreignKey({
+			columns: [table.locationId],
+			foreignColumns: [locations.id],
+			name: "pms_connections_location_id_fkey"
+		}).onDelete("cascade"),
+	unique("pms_connections_location_id_key").on(table.locationId),
+]);
+
+export const pmsSyncCursors = pgTable("pms_sync_cursors", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	connectionId: uuid("connection_id").notNull(),
+	resource: text().notNull(),
+	cursorUpdatedAt: timestamp("cursor_updated_at", { withTimezone: true, mode: 'string' }),
+}, (table) => [
+	foreignKey({
+			columns: [table.connectionId],
+			foreignColumns: [pmsConnections.id],
+			name: "pms_sync_cursors_connection_id_fkey"
+		}).onDelete("cascade"),
+	unique("pms_sync_cursors_connection_id_resource_key").on(table.connectionId, table.resource),
+]);
+
+export const pmsPatientLinks = pgTable("pms_patient_links", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	connectionId: uuid("connection_id").notNull(),
+	patientId: uuid("patient_id").notNull(),
+	pmsExternalId: text("pms_external_id").notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_pms_patient_links_patient").using("btree", table.patientId.asc().nullsLast().op("uuid_ops")),
+	foreignKey({
+			columns: [table.connectionId],
+			foreignColumns: [pmsConnections.id],
+			name: "pms_patient_links_connection_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.patientId],
+			foreignColumns: [patients.id],
+			name: "pms_patient_links_patient_id_fkey"
+		}).onDelete("cascade"),
+	unique("pms_patient_links_connection_id_pms_external_id_key").on(table.connectionId, table.pmsExternalId),
+	unique("pms_patient_links_connection_id_patient_id_key").on(table.connectionId, table.patientId),
+]);
+
+export const pmsPractitionerLinks = pgTable("pms_practitioner_links", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	connectionId: uuid("connection_id").notNull(),
+	staffAssignmentId: uuid("staff_assignment_id").notNull(),
+	pmsExternalId: text("pms_external_id").notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	foreignKey({
+			columns: [table.connectionId],
+			foreignColumns: [pmsConnections.id],
+			name: "pms_practitioner_links_connection_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.staffAssignmentId],
+			foreignColumns: [staffAssignments.id],
+			name: "pms_practitioner_links_staff_assignment_id_fkey"
+		}).onDelete("cascade"),
+	unique("pms_practitioner_links_connection_id_pms_external_id_key").on(table.connectionId, table.pmsExternalId),
+	unique("pms_practitioner_links_connection_id_staff_assignment_id_key").on(table.connectionId, table.staffAssignmentId),
+]);
+
+export const pmsAppointmentTypeLinks = pgTable("pms_appointment_type_links", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	connectionId: uuid("connection_id").notNull(),
+	appointmentTypeId: uuid("appointment_type_id").notNull(),
+	pmsExternalId: text("pms_external_id").notNull(),
+	confirmedModality: appointmentModality("confirmed_modality"),
+	roomId: uuid("room_id"),
+	syncEnabled: boolean("sync_enabled").default(false).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	foreignKey({
+			columns: [table.connectionId],
+			foreignColumns: [pmsConnections.id],
+			name: "pms_appointment_type_links_connection_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.appointmentTypeId],
+			foreignColumns: [appointmentTypes.id],
+			name: "pms_appointment_type_links_appointment_type_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.roomId],
+			foreignColumns: [rooms.id],
+			name: "pms_appointment_type_links_room_id_fkey"
+		}).onDelete("set null"),
+	unique("pms_appointment_type_links_connection_id_pms_external_id_key").on(table.connectionId, table.pmsExternalId),
+	unique("pms_appointment_type_links_connection_id_appointment_type_id_key").on(table.connectionId, table.appointmentTypeId),
+]);
+
+export const pmsPushFieldResults = pgTable("pms_push_field_results", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	submissionId: uuid("submission_id").notNull(),
+	provider: pmsProvider().notNull(),
+	surveyQuestionName: text("survey_question_name").notNull(),
+	pmsTargetKey: text("pms_target_key").notNull(),
+	status: text().notNull(),
+	attemptedValue: text("attempted_value"),
+	failureKind: text("failure_kind"),
+	detail: text(),
+	attempts: integer().default(1).notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_pms_push_field_results_submission").using("btree", table.submissionId.asc().nullsLast().op("uuid_ops")),
+	foreignKey({
+			columns: [table.submissionId],
+			foreignColumns: [formSubmissions.id],
+			name: "pms_push_field_results_submission_id_fkey"
+		}).onDelete("cascade"),
+	unique("pms_push_field_results_submission_id_survey_question_name_key").on(table.submissionId, table.surveyQuestionName),
 ]);
 
 export const stripeConnections = pgTable("stripe_connections", {

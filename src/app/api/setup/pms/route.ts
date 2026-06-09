@@ -49,16 +49,18 @@ export async function POST(request: NextRequest) {
       .insert(pmsConnections)
       .values({
         orgId,
+        locationId,
         provider: "gentu",
         status: "connected",
         importedData: { clinicians: 4, appointment_types: 12, rooms: 3 },
       })
       .onConflictDoUpdate({
-        target: pmsConnections.orgId,
+        target: pmsConnections.locationId,
         set: {
           provider: "gentu",
           status: "connected",
           importedData: { clinicians: 4, appointment_types: 12, rooms: 3 },
+          updatedAt: new Date().toISOString(),
         },
       });
     try { await seedDefaultWorkflows(orgId); } catch (e) { console.error("[setup/pms] workflow re-seed failed:", e); }
@@ -67,14 +69,16 @@ export async function POST(request: NextRequest) {
       .insert(pmsConnections)
       .values({
         orgId,
+        locationId,
         provider: (provider ?? "cliniko") as typeof pmsConnections.$inferInsert.provider,
         status: "skipped",
       })
       .onConflictDoUpdate({
-        target: pmsConnections.orgId,
+        target: pmsConnections.locationId,
         set: {
           provider: (provider ?? "cliniko") as typeof pmsConnections.$inferInsert.provider,
           status: "skipped",
+          updatedAt: new Date().toISOString(),
         },
       });
   }
