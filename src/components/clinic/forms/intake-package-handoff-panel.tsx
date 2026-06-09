@@ -136,25 +136,49 @@ export function IntakePackageHandoffPanel({
   // Fetched action time overrides the seed once present.
   const submittedAt = payload?.action.completed_at ?? seedSubmittedAt;
 
-  return (
-    <SlideOver open onClose={onClose} title="" width="w-[420px]">
-      <div className="flex h-full flex-col">
-        {/* Header */}
-        <div className="border-b border-gray-200 px-5 py-4">
-          <h2 className="text-sm font-semibold text-gray-800">
-            Intake package completed
-          </h2>
-          <p className="text-xs text-gray-500 mt-0.5">
-            {patientName}
-            {submittedAt && (
-              <>
-                {" "}
-                &middot; Submitted {formatTimestamp(submittedAt)}
-              </>
-            )}
-          </p>
-        </div>
+  const header = (
+    <div className="flex items-start justify-between gap-3 border-b border-gray-200 px-5 py-4">
+      <div className="min-w-0">
+        <h2 className="text-sm font-semibold text-gray-800">
+          Intake package completed
+        </h2>
+        <p className="text-xs text-gray-500 mt-0.5">
+          {patientName}
+          {submittedAt && (
+            <>
+              {" "}
+              &middot; Submitted {formatTimestamp(submittedAt)}
+            </>
+          )}
+        </p>
+      </div>
+      <button
+        onClick={onClose}
+        className="shrink-0 -mt-0.5 p-1 text-gray-500 hover:text-gray-800 transition-colors rounded"
+        aria-label="Close"
+      >
+        <svg
+          className="h-5 w-5"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+  );
 
+  return (
+    <SlideOver
+      open
+      onClose={onClose}
+      title="Intake package completed"
+      width="w-[420px]"
+      customHeader={header}
+    >
+      <div className="flex h-full flex-col">
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
           {loading ? (
@@ -273,11 +297,23 @@ export function IntakePackageHandoffPanel({
             Back
           </button>
           <button
+            onClick={() =>
+              window.open(
+                `/api/tasks/intake-handoff/pdf?appointment_id=${appointmentId}`,
+                "_blank",
+              )
+            }
+            disabled={loading || !payload}
+            className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Download
+          </button>
+          <button
             onClick={handleMarkTranscribed}
             disabled={marking || loading || !payload}
             className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 disabled:opacity-50"
           >
-            {marking ? "Marking..." : "Mark as transcribed"}
+            {marking ? "Completing..." : "Complete"}
           </button>
         </div>
       </div>

@@ -24,6 +24,8 @@ interface SurveyElement {
 }
 
 const PANEL_TYPES = new Set(["panel", "paneldynamic"]);
+/** SurveyJS element types that display content but collect no response. */
+const DISPLAY_ONLY_TYPES = new Set(["html", "image", "expression"]);
 
 export function extractFieldsFromSchema(
   schema: Record<string, unknown>,
@@ -66,6 +68,9 @@ function walk(
       walk(children, responses, out);
       continue;
     }
+
+    // Display-only elements (html, image, expression) carry no response.
+    if (element.type && DISPLAY_ONLY_TYPES.has(element.type)) continue;
 
     if (!element.name) continue;
     out.push({

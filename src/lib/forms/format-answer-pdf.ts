@@ -12,6 +12,9 @@
 
 const EM_DASH = "—";
 
+/** SurveyJS element types that display content but collect no response. */
+const DISPLAY_ONLY_TYPES = new Set(["html", "image", "expression"]);
+
 export interface SchemaElement {
   type?: string;
   name?: string;
@@ -176,6 +179,9 @@ export function normaliseQuestions(
         walk(el.elements);
         continue;
       }
+      // Display-only elements (html, image, expression) carry no response —
+      // skip them so they don't render as empty field rows.
+      if (DISPLAY_ONLY_TYPES.has(el.type ?? "")) continue;
       const name = el.name;
       if (!name) continue;
       const label = el.title ?? name;
