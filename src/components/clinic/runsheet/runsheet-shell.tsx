@@ -17,6 +17,7 @@ import type { OnboardingState } from "@/stores/clinic-store";
 import { useLocation } from "@/hooks/useLocation";
 import { useRole } from "@/hooks/useRole";
 import { usePmsConnection } from "@/hooks/usePmsConnection";
+import { usePmsSync } from "@/hooks/usePmsSync";
 import { useNow } from "@/hooks/useNow";
 // ONBOARDING DISABLED — the first-login walkthrough is currently turned off.
 // To re-enable: uncomment the two mounts in the JSX below (search "ONBOARDING DISABLED")
@@ -205,40 +206,11 @@ export function RunsheetShell() {
   // PMS connection — shared from context (fetched once), no per-component poll.
   // The "Sync now" button only appears when the location is sync-active.
   const pms = usePmsConnection();
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncMsg, setSyncMsg] = useState<string | null>(null);
-
-  const handleSyncNow = useCallback(async () => {
-    if (!locationId) return;
-    setIsSyncing(true);
-    setSyncMsg(null);
-    try {
-      const res = await fetch("/api/pms/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ locationId }),
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        ok?: boolean;
-        appointmentsUpserted?: number;
-        sessionsScheduled?: number;
-        skippedNonTelehealth?: number;
-        error?: string;
-      };
-      if (res.ok && data.ok) {
-        setSyncMsg(
-          `Synced — ${data.sessionsScheduled ?? 0} new session(s), ${data.appointmentsUpserted ?? 0} appointment(s) updated.`
-        );
-        await refetch();
-      } else {
-        setSyncMsg(data.error ?? "Sync failed.");
-      }
-    } catch {
-      setSyncMsg("Couldn't reach the server.");
-    } finally {
-      setIsSyncing(false);
-    }
-  }, [locationId, refetch]);
+  const {
+    isSyncing,
+    syncMsg,
+    syncNow: handleSyncNow,
+  } = usePmsSync({ locationId, onSynced: refetch });
 
   // Add session panel state
   const [addSessionOpen, setAddSessionOpen] = useState(false);

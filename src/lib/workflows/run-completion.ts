@@ -9,7 +9,15 @@ import { inArray, sql } from "drizzle-orm";
  * never closed.
  */
 
-/** Action statuses that count as "this action will never fire again". */
+/**
+ * Action statuses that count as "this action will never fire again".
+ *
+ * NOT the same set as the readiness dashboard's `TERMINAL_STATUSES`
+ * (`src/lib/readiness/derived-state.ts`), which is a UI-display notion of
+ * "nothing left to do" — it includes patient-completion states (`captured`,
+ * `verified`, `transcribed`) and excludes `cancelled`/`dropped`. Don't merge
+ * them without reconciling those semantics.
+ */
 export const TERMINAL_ACTION_STATUSES = [
   "completed",
   "failed",

@@ -10,6 +10,7 @@ import {
 } from "@/lib/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import { getSmsProvider } from "@/lib/sms";
+import { getBaseUrl } from "@/lib/utils/url";
 import { normalisePhone } from "@/lib/phone/normalise";
 
 interface SessionInput {
@@ -127,8 +128,7 @@ export async function createSessions(
     }
 
     // Send SMS based on timing
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-    const entryLink = `${appUrl}/entry/${session.entry_token}`;
+    const entryLink = `${getBaseUrl()}/entry/${session.entry_token}`;
     const scheduledTime = new Date(input.scheduled_at).toLocaleTimeString(
       "en-AU",
       { hour: "numeric", minute: "2-digit", hour12: true }

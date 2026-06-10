@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo, useCallback, useTransition } from "react"
 import { Zap } from "lucide-react";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import { usePmsConnection } from "@/hooks/usePmsConnection";
+import { usePmsSync } from "@/hooks/usePmsSync";
 import { useNow } from "@/hooks/useNow";
 import type {
   ReadinessAppointment,
@@ -11,6 +12,7 @@ import type {
 } from "@/stores/clinic-store";
 import type { ReadinessPriority } from "@/lib/readiness/derived-state";
 import { Button } from "@/components/ui/button";
+import { SyncButton } from "@/components/clinic/shared/sync-button";
 import { ReadinessModeToggle } from "@/components/clinic/readiness/readiness-mode-toggle";
 import {
   ReadinessFilterBar,
@@ -317,39 +319,14 @@ export function ReadinessShell() {
   // PMS "Sync now" — shared from context (fetched once). Only shown when the
   // location is sync-active. Hidden for stubbed Gentu / no PMS.
   const pms = usePmsConnection();
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncMsg, setSyncMsg] = useState<string | null>(null);
-
-  const handleSyncNow = useCallback(async () => {
-    if (!locationId) return;
-    setIsSyncing(true);
-    setSyncMsg(null);
-    try {
-      const res = await fetch("/api/pms/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ locationId }),
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        ok?: boolean;
-        appointmentsUpserted?: number;
-        sessionsScheduled?: number;
-        error?: string;
-      };
-      if (res.ok && data.ok) {
-        setSyncMsg(
-          `Synced — ${data.sessionsScheduled ?? 0} new session(s), ${data.appointmentsUpserted ?? 0} appointment(s) updated.`
-        );
-        await refreshReadiness(locationId);
-      } else {
-        setSyncMsg(data.error ?? "Sync failed.");
-      }
-    } catch {
-      setSyncMsg("Couldn't reach the server.");
-    } finally {
-      setIsSyncing(false);
-    }
+  const handleSynced = useCallback(async () => {
+    if (locationId) await refreshReadiness(locationId);
   }, [locationId, refreshReadiness]);
+  const {
+    isSyncing,
+    syncMsg,
+    syncNow: handleSyncNow,
+  } = usePmsSync({ locationId, onSynced: handleSynced });
 
   const handlePatientDetail = useCallback(
     (
@@ -461,16 +438,11 @@ export function ReadinessShell() {
           )}
           {pms.syncActive && (
             <>
-              <Button
-                variant="secondary"
-                size="sm"
+              <SyncButton
+                isSyncing={isSyncing}
                 onClick={handleSyncNow}
-                disabled={isSyncing}
                 title={`Pull appointments from ${pms.providerLabel ?? "PMS"}`}
-              >
-                <RefreshIcon spinning={isSyncing} />
-                {isSyncing ? "Syncing…" : "Sync now"}
-              </Button>
+              />
               <div className="w-px h-5 bg-gray-200" />
             </>
           )}
@@ -628,23 +600,5 @@ export function ReadinessShell() {
         </>
       )}
     </div>
-  );
-}
-
-function RefreshIcon({ spinning }: { spinning?: boolean }) {
-  return (
-    <svg
-      className={`h-3.5 w-3.5 ${spinning ? "animate-spin" : ""}`}
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={2}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-      />
-    </svg>
   );
 }

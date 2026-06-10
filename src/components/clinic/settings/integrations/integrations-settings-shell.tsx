@@ -1,15 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { getJson, postJson } from "@/lib/api-client";
+import { getJson } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useLocation } from "@/hooks/useLocation";
 import { usePmsConnection } from "@/hooks/usePmsConnection";
+import { usePmsSync, type PmsSyncResponse } from "@/hooks/usePmsSync";
 import type { IntegrationStatusDTO, MappingDataDTO } from "./types";
 import { ConnectForm } from "./connect-form";
 import { PractitionerMappings } from "./practitioner-mappings";
 import { BusinessMappings } from "./business-mappings";
+
+// This page's success copy is more detailed than the run-sheet/readiness
+// default ("Synced — …") — it also reports the skipped count.
+const syncSuccessMessage = (data: PmsSyncResponse) =>
+  `Synced. ${data.appointmentsUpserted ?? 0} appointment(s) updated, ${data.sessionsScheduled ?? 0} scheduled to the run sheet, ${data.skippedNonTelehealth ?? 0} skipped.`;
 
 export function IntegrationsSettingsShell() {
   const { selectedLocation } = useLocation();
@@ -22,8 +28,6 @@ export function IntegrationsSettingsShell() {
   const [mappings, setMappings] = useState<MappingDataDTO | null>(null);
   const [loading, setLoading] = useState(true);
   const [mappingError, setMappingError] = useState<string | null>(null);
-  const [syncing, setSyncing] = useState(false);
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   // Imperative reloads (after sync/connect/disconnect/save) — safe to call
   // outside effects from event handlers.
@@ -94,29 +98,17 @@ export function IntegrationsSettingsShell() {
     };
   }, [status?.syncActive, locationId]);
 
-  const handleSyncNow = useCallback(async () => {
-    if (!locationId) return;
-    setSyncing(true);
-    setSyncMessage(null);
-    const result = await postJson<{
-      ok?: boolean;
-      appointmentsUpserted?: number;
-      sessionsScheduled?: number;
-      skippedNonTelehealth?: number;
-      error?: string;
-    }>("/api/pms/sync", { locationId }, "Sync failed.");
-    if (result.ok && result.data?.ok) {
-      const data = result.data;
-      setSyncMessage(
-        `Synced. ${data.appointmentsUpserted ?? 0} appointment(s) updated, ${data.sessionsScheduled ?? 0} scheduled to the run sheet, ${data.skippedNonTelehealth ?? 0} skipped.`
-      );
-    } else {
-      // A 200 body can still carry ok:false + error.
-      setSyncMessage(result.ok ? (result.data?.error ?? "Sync failed.") : result.error);
-    }
-    setSyncing(false);
-    void loadStatus();
-  }, [locationId, loadStatus]);
+  // Sync state + request via the shared hook; this shell refreshes the
+  // connection status (last-synced timestamp / error) after every attempt.
+  const {
+    isSyncing: syncing,
+    syncMsg: syncMessage,
+    syncNow: handleSyncNow,
+  } = usePmsSync({
+    locationId,
+    successMessage: syncSuccessMessage,
+    onSettled: loadStatus,
+  });
 
   const handleDisconnect = useCallback(async () => {
     if (!locationId) return;

@@ -9,8 +9,6 @@ import {
   forms as formsT,
   formSubmissions,
   intakePackageJourneys,
-  locations as locationsT,
-  organisations as organisationsT,
   patients as patientsT,
   patientPhoneNumbers,
   paymentMethods,
@@ -19,7 +17,10 @@ import {
   workflowActionBlocks,
 } from "@/lib/db/schema";
 import { and, asc, eq, inArray } from "drizzle-orm";
-import { getAuthenticatedUserId } from "@/lib/auth/staff-access";
+import {
+  getAuthenticatedUserId,
+  resolveDefaultStaffOrg,
+} from "@/lib/auth/staff-access";
 
 /**
  * Seeds the Tasks (Readiness) dashboard with pre-appointment intake demo data.
@@ -238,23 +239,14 @@ async function resolveContext(): Promise<ResolvedContext | { error: string }> {
   const userId = await getAuthenticatedUserId();
   if (!userId) return { error: "Not authenticated" };
 
-  const [assignment] = await db
-    .select({
-      location_id: staffAssignments.locationId,
-      org_id: locationsT.orgId,
-    })
-    .from(staffAssignments)
-    .innerJoin(locationsT, eq(locationsT.id, staffAssignments.locationId))
-    .innerJoin(organisationsT, eq(organisationsT.id, locationsT.orgId))
-    .where(eq(staffAssignments.userId, userId))
-    .limit(1);
+  const assignment = await resolveDefaultStaffOrg(userId);
 
   if (!assignment) {
     return { error: "No staff assignment found. Complete clinic setup first." };
   }
 
-  const ORG_ID = assignment.org_id;
-  const LOCATION_ID = assignment.location_id;
+  const ORG_ID = assignment.orgId;
+  const LOCATION_ID = assignment.locationId;
 
   // Find an "Initial consultation"-style appointment type in this org that has a
   // linked pre-appointment workflow template. Joining through appointment_types
@@ -658,17 +650,12 @@ export async function clearTasksData() {
   const userId = await getAuthenticatedUserId();
   if (!userId) return { success: false, error: "Not authenticated" };
 
-  const [assignment] = await db
-    .select({ org_id: locationsT.orgId })
-    .from(staffAssignments)
-    .innerJoin(locationsT, eq(locationsT.id, staffAssignments.locationId))
-    .where(eq(staffAssignments.userId, userId))
-    .limit(1);
+  const assignment = await resolveDefaultStaffOrg(userId);
 
   if (!assignment) return { success: false, error: "No staff assignment found." };
 
   try {
-    await clearTasksDataInternal(assignment.org_id);
+    await clearTasksDataInternal(assignment.orgId);
     return { success: true };
   } catch (err) {
     console.error("[TASKS CLEAR] Failed:", err);

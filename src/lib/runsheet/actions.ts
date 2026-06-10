@@ -10,6 +10,7 @@ import {
 } from "@/lib/db/schema";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { getSmsProvider } from "@/lib/sms";
+import { getBaseUrl } from "@/lib/utils/url";
 import { maybeCompleteWorkflowRuns } from "@/lib/workflows/run-completion";
 import {
   broadcastSessionChange,
@@ -41,8 +42,7 @@ export async function nudgePatient(sessionId: string) {
 
   // Send nudge SMS via provider
   if (phone && session.entry_token) {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-    const entryLink = `${appUrl}/entry/${session.entry_token}`;
+    const entryLink = `${getBaseUrl()}/entry/${session.entry_token}`;
     const sms = getSmsProvider();
     await sms.sendNotification(
       phone,
