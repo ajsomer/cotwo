@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useMemo } from 'react';
 import { Model } from 'survey-core';
 import { Survey } from 'survey-react-ui';
 import 'survey-core/survey-core.min.css';
+import { postJson } from '@/lib/api-client';
 import { coviuTheme } from '@/lib/survey/theme';
 
 interface FormFillClientProps {
@@ -47,23 +48,18 @@ export function FormFillClient({
       setSubmitting(true);
       setError(null);
 
-      try {
-        const res = await fetch(`/api/forms/fill/${token}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ responses: sender.data }),
-        });
-
-        if (!res.ok) {
-          const data = await res.json();
-          throw new Error(data.error || 'Failed to submit');
-        }
-
-        setSubmitted(true);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Something went wrong');
+      const result = await postJson(
+        `/api/forms/fill/${token}`,
+        { responses: sender.data },
+        'Failed to submit'
+      );
+      if (!result.ok) {
+        setError(result.error);
         setSubmitting(false);
+        return;
       }
+
+      setSubmitted(true);
     },
     [token, isPreview]
   );

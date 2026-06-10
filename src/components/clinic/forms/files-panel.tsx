@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { getJson } from "@/lib/api-client";
 import { useOrg } from "@/hooks/useOrg";
 import { Button } from "@/components/ui/button";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
@@ -266,17 +267,14 @@ export function FilesPanel() {
   }, [org]);
 
   const handleView = async (file: FileRow) => {
-    try {
-      const res = await fetch(`/api/files/preview?storage_path=${encodeURIComponent(file.storage_path)}`);
-      if (!res.ok) {
-        alert("Failed to generate preview link");
-        return;
-      }
-      const data = await res.json();
-      window.open(data.signed_url, "_blank");
-    } catch {
+    const result = await getJson<{ signed_url: string }>(
+      `/api/files/preview?storage_path=${encodeURIComponent(file.storage_path)}`
+    );
+    if (!result.ok) {
       alert("Failed to generate preview link");
+      return;
     }
+    window.open(result.data.signed_url, "_blank");
   };
 
   const handleArchive = async (file: FileRow) => {

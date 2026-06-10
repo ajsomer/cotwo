@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { postJson } from '@/lib/api-client';
 import { PersistentHeader } from './persistent-header';
 import { PatientContact } from '@/lib/types/domain';
 
@@ -45,29 +46,23 @@ export function IdentityConfirmation({
     setLoading(true);
     setError(null);
 
-    try {
-      const res = await fetch('/api/patient/identity', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token,
-          existing_patient_id: patientId,
-          phone_number: phoneNumber,
-        }),
-      });
+    const result = await postJson<{ patient: PatientContact }>(
+      '/api/patient/identity',
+      {
+        token,
+        existing_patient_id: patientId,
+        phone_number: phoneNumber,
+      },
+      'Failed to confirm identity'
+    );
+    setLoading(false);
 
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || 'Failed to confirm identity');
-        return;
-      }
-
-      onConfirmed(data.patient);
-    } catch {
-      setError('Something went wrong. Please try again.');
-    } finally {
-      setLoading(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
     }
+
+    onConfirmed(result.data.patient);
   };
 
   const createNew = async () => {
@@ -79,31 +74,25 @@ export function IdentityConfirmation({
     setLoading(true);
     setError(null);
 
-    try {
-      const res = await fetch('/api/patient/identity', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token,
-          first_name: firstName.trim(),
-          last_name: lastName.trim(),
-          date_of_birth: dob || null,
-          phone_number: phoneNumber,
-        }),
-      });
+    const result = await postJson<{ patient: PatientContact }>(
+      '/api/patient/identity',
+      {
+        token,
+        first_name: firstName.trim(),
+        last_name: lastName.trim(),
+        date_of_birth: dob || null,
+        phone_number: phoneNumber,
+      },
+      'Failed to create patient'
+    );
+    setLoading(false);
 
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || 'Failed to create patient');
-        return;
-      }
-
-      onConfirmed(data.patient);
-    } catch {
-      setError('Something went wrong. Please try again.');
-    } finally {
-      setLoading(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
     }
+
+    onConfirmed(result.data.patient);
   };
 
   return (

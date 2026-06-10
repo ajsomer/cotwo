@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { getJson } from "@/lib/api-client";
 import { SlideOver } from "@/components/ui/slide-over";
 import { Button } from "@/components/ui/button";
 import type { RoomType } from "@/lib/types/domain";
@@ -61,12 +62,11 @@ export function RoomFormPanel({
 
   // Fetch clinicians for the location
   const fetchClinicians = useCallback(async () => {
-    const res = await fetch(
+    const result = await getJson<{ clinicians: Clinician[] }>(
       `/api/settings/rooms?location_id=${locationId}&type=clinicians`
     );
-    if (res.ok) {
-      const data = await res.json();
-      setClinicians(data.clinicians);
+    if (result.ok) {
+      setClinicians(result.data.clinicians);
     }
   }, [locationId]);
 

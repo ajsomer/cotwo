@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { getJson, postJson } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useLocation } from "@/hooks/useLocation";
@@ -28,9 +29,10 @@ export function IntegrationsSettingsShell() {
   // outside effects from event handlers.
   const loadStatus = useCallback(async () => {
     if (!locationId) return;
-    const res = await fetch(`/api/pms/connection?locationId=${locationId}`);
-    const data = res.ok ? ((await res.json()) as IntegrationStatusDTO) : null;
-    setStatus(data);
+    const result = await getJson<IntegrationStatusDTO>(
+      `/api/pms/connection?locationId=${locationId}`
+    );
+    setStatus(result.ok ? result.data : null);
     setLoading(false);
     // Keep the shared context in sync after connect/disconnect/subdomain edits.
     refreshPmsContext();
@@ -38,13 +40,15 @@ export function IntegrationsSettingsShell() {
 
   const loadMappings = useCallback(async () => {
     if (!locationId) return;
-    const res = await fetch(`/api/pms/mappings?locationId=${locationId}`);
-    if (res.ok) {
-      setMappings((await res.json()) as MappingDataDTO);
+    const result = await getJson<MappingDataDTO>(
+      `/api/pms/mappings?locationId=${locationId}`,
+      "Couldn't load mappings from the PMS."
+    );
+    if (result.ok) {
+      setMappings(result.data);
       setMappingError(null);
     } else {
-      const err = (await res.json().catch(() => ({}))) as { error?: string };
-      setMappingError(err.error ?? "Couldn't load mappings from the PMS.");
+      setMappingError(result.error);
       setMappings(null);
     }
   }, [locationId]);
@@ -56,10 +60,11 @@ export function IntegrationsSettingsShell() {
     let cancelled = false;
     if (!locationId) return;
     (async () => {
-      const res = await fetch(`/api/pms/connection?locationId=${locationId}`);
-      const data = res.ok ? ((await res.json()) as IntegrationStatusDTO) : null;
+      const result = await getJson<IntegrationStatusDTO>(
+        `/api/pms/connection?locationId=${locationId}`
+      );
       if (cancelled) return;
-      setStatus(data);
+      setStatus(result.ok ? result.data : null);
       setLoading(false);
     })();
     return () => {
@@ -71,15 +76,16 @@ export function IntegrationsSettingsShell() {
     let cancelled = false;
     if (!status?.syncActive) return;
     (async () => {
-      const res = await fetch(`/api/pms/mappings?locationId=${locationId}`);
+      const result = await getJson<MappingDataDTO>(
+        `/api/pms/mappings?locationId=${locationId}`,
+        "Couldn't load mappings from the PMS."
+      );
       if (cancelled) return;
-      if (res.ok) {
-        setMappings((await res.json()) as MappingDataDTO);
+      if (result.ok) {
+        setMappings(result.data);
         setMappingError(null);
       } else {
-        const err = (await res.json().catch(() => ({}))) as { error?: string };
-        if (cancelled) return;
-        setMappingError(err.error ?? "Couldn't load mappings from the PMS.");
+        setMappingError(result.error);
         setMappings(null);
       }
     })();
@@ -92,24 +98,21 @@ export function IntegrationsSettingsShell() {
     if (!locationId) return;
     setSyncing(true);
     setSyncMessage(null);
-    const res = await fetch("/api/pms/sync", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ locationId }),
-    });
-    const data = (await res.json().catch(() => ({}))) as {
+    const result = await postJson<{
       ok?: boolean;
       appointmentsUpserted?: number;
       sessionsScheduled?: number;
       skippedNonTelehealth?: number;
       error?: string;
-    };
-    if (res.ok && data.ok) {
+    }>("/api/pms/sync", { locationId }, "Sync failed.");
+    if (result.ok && result.data?.ok) {
+      const data = result.data;
       setSyncMessage(
         `Synced. ${data.appointmentsUpserted ?? 0} appointment(s) updated, ${data.sessionsScheduled ?? 0} scheduled to the run sheet, ${data.skippedNonTelehealth ?? 0} skipped.`
       );
     } else {
-      setSyncMessage(data.error ?? "Sync failed.");
+      // A 200 body can still carry ok:false + error.
+      setSyncMessage(result.ok ? (result.data?.error ?? "Sync failed.") : result.error);
     }
     setSyncing(false);
     void loadStatus();

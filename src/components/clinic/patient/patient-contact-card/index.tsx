@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getJson } from "@/lib/api-client";
 import { SlideOver } from "@/components/ui/slide-over";
 import { useLocation } from "@/hooks/useLocation";
 import { usePmsConnection } from "@/hooks/usePmsConnection";
@@ -156,23 +157,16 @@ export function PatientContactCard({
       return;
     }
     (async () => {
-      try {
-        const res = await fetch(
-          `/api/pms/patient-link?locationId=${locationId}&patientId=${resolvedPatientId}`
-        );
-        if (cancelled) return;
-        const data = res.ok
-          ? ((await res.json()) as { url: string | null; providerLabel: string | null })
-          : { url: null, providerLabel: null };
-        if (cancelled) return;
-        setPmsLink(
-          data.url && data.providerLabel
-            ? { url: data.url, providerLabel: data.providerLabel }
-            : null
-        );
-      } catch {
-        if (!cancelled) setPmsLink(null);
-      }
+      const result = await getJson<{ url: string | null; providerLabel: string | null }>(
+        `/api/pms/patient-link?locationId=${locationId}&patientId=${resolvedPatientId}`
+      );
+      if (cancelled) return;
+      const data = result.ok ? result.data : { url: null, providerLabel: null };
+      setPmsLink(
+        data.url && data.providerLabel
+          ? { url: data.url, providerLabel: data.providerLabel }
+          : null
+      );
     })();
     return () => {
       cancelled = true;
@@ -282,25 +276,17 @@ export function PatientContactCard({
       setHistoryLoading(false);
     } else {
       (async () => {
-        try {
-          const res = await fetch(historyUrl);
-          if (cancelled) return;
-          if (!res.ok) {
-            setHistoryLoading(false);
-            setHistoryError(true);
-            return;
-          }
-          const data = (await res.json()) as PatientHistoryResponse;
-          if (cancelled) return;
-          cacheHistory(historyUrl, data);
-          applyHistory(data);
-          setHistoryLoading(false);
-        } catch (err) {
-          if (cancelled) return;
-          console.error("[ContactCard] history fetch failed:", err);
+        const result = await getJson<PatientHistoryResponse>(historyUrl);
+        if (cancelled) return;
+        if (!result.ok) {
+          console.error("[ContactCard] history fetch failed:", result.error);
           setHistoryLoading(false);
           setHistoryError(true);
+          return;
         }
+        cacheHistory(historyUrl, result.data);
+        applyHistory(result.data);
+        setHistoryLoading(false);
       })();
     }
 

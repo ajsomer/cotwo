@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { postJson } from '@/lib/api-client';
 import { PersistentHeader } from './persistent-header';
 
 interface PhoneVerificationProps {
@@ -106,51 +107,47 @@ export function PhoneVerification({
     setError(null);
     setLoading(true);
 
-    try {
-      const res = await fetch('/api/patient/otp/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone_number: phoneNumber, session_id: sessionId }),
-      });
+    const result = await postJson<{ verification_id: string; dev_code?: unknown }>(
+      '/api/patient/otp/send',
+      { phone_number: phoneNumber, session_id: sessionId },
+      'Failed to send code'
+    );
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.error || 'Failed to send code');
-        return;
-      }
-
-      // PROTOTYPE auto-fill. The send route hard-codes dev_code in the response
-      // for this demo build (see api/patient/otp/send/route.ts). In a production
-      // build dev_code is absent and the patient enters the SMS code manually.
-      const devCode: string | null =
-        typeof data.dev_code === 'string' ? data.dev_code : null;
-      setAutoFilledCode(devCode);
-
-      setVerificationId(data.verification_id);
-      setPhase('enter_code');
-      setResendTimer(30);
-      setCode(['', '', '', '', '', '']);
-      setAttempts(0);
-
-      if (devCode) {
-        // Wait for the code inputs to mount (phase just switched), then fill
-        // and submit. Pass verification_id straight from the response — the
-        // `verificationId` state hasn't committed yet, so verifyCode's closure
-        // would otherwise send null.
-        setTimeout(() => {
-          setCode(devCode.split(''));
-          verifyCode(devCode, data.verification_id);
-        }, 150);
-      } else {
-        // Auto-focus first code input
-        setTimeout(() => codeInputsRef.current[0]?.focus(), 100);
-      }
-    } catch {
-      setError('Something went wrong. Please try again.');
-    } finally {
+    if (!result.ok) {
+      setError(result.error);
       setLoading(false);
+      return;
     }
+
+    const data = result.data;
+
+    // PROTOTYPE auto-fill. The send route hard-codes dev_code in the response
+    // for this demo build (see api/patient/otp/send/route.ts). In a production
+    // build dev_code is absent and the patient enters the SMS code manually.
+    const devCode: string | null =
+      typeof data.dev_code === 'string' ? data.dev_code : null;
+    setAutoFilledCode(devCode);
+
+    setVerificationId(data.verification_id);
+    setPhase('enter_code');
+    setResendTimer(30);
+    setCode(['', '', '', '', '', '']);
+    setAttempts(0);
+
+    if (devCode) {
+      // Wait for the code inputs to mount (phase just switched), then fill
+      // and submit. Pass verification_id straight from the response — the
+      // `verificationId` state hasn't committed yet, so verifyCode's closure
+      // would otherwise send null.
+      setTimeout(() => {
+        setCode(devCode.split(''));
+        verifyCode(devCode, data.verification_id);
+      }, 150);
+    } else {
+      // Auto-focus first code input
+      setTimeout(() => codeInputsRef.current[0]?.focus(), 100);
+    }
+    setLoading(false);
   }, [phoneNumber, sessionId, verifyCode]);
 
   const handleCodeChange = (index: number, value: string) => {

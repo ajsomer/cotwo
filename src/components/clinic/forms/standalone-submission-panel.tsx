@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { postJson } from "@/lib/api-client";
 import { SlideOver } from "@/components/ui/slide-over";
 import {
   fetchReviewData,
@@ -126,22 +127,17 @@ export function StandaloneSubmissionPanel({
   const act = async (kind: "review") => {
     setActing(kind);
     setError(null);
-    try {
-      const res = await fetch(
-        `/api/forms/standalone/submissions/${submissionId}/${kind}`,
-        { method: "POST" },
-      );
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(data.error ?? `Couldn't ${kind} the submission.`);
-        return;
-      }
-      onActioned();
-    } catch {
-      setError("Network error.");
-    } finally {
-      setActing(null);
+    const result = await postJson(
+      `/api/forms/standalone/submissions/${submissionId}/${kind}`,
+      undefined,
+      `Couldn't ${kind} the submission.`
+    );
+    setActing(null);
+    if (!result.ok) {
+      setError(result.error);
+      return;
     }
+    onActioned();
   };
 
   const status = detail?.review_status;

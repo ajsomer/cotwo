@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { postJson } from "@/lib/api-client";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,16 +44,14 @@ export default function SetupClinicPage() {
       }
     }
 
-    const res = await fetch("/api/setup/clinic", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: clinicName.trim(), logo_url }),
+    const result = await postJson("/api/setup/clinic", {
+      name: clinicName.trim(),
+      logo_url,
     });
 
-    if (!res.ok) {
+    if (!result.ok) {
       setLoading(false);
-      const data = await res.json().catch(() => null);
-      setErrors({ form: data?.error ?? "Something went wrong. Please try again." });
+      setErrors({ form: result.error });
       return;
     }
 

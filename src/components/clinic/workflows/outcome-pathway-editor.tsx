@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { getJson, postJson } from "@/lib/api-client";
 import { SlideOver } from "@/components/ui/slide-over";
 import { Button } from "@/components/ui/button";
 import { useClinicStore } from "@/stores/clinic-store";
@@ -82,9 +83,19 @@ export function OutcomePathwayEditor({
   useEffect(() => {
     if (!pathwayId) return;
     async function load() {
-      const res = await fetch(`/api/outcome-pathways/${pathwayId!}`);
-      if (res.ok) {
-        const { pathway, blocks: blockData } = await res.json();
+      const result = await getJson<{
+        pathway: { name: string; description: string | null } | null;
+        blocks: Array<{
+          id: string;
+          action_type: string;
+          offset_minutes: number;
+          form_id: string | null;
+          config: unknown;
+          sort_order: number;
+        }> | null;
+      }>(`/api/outcome-pathways/${pathwayId!}`);
+      if (result.ok) {
+        const { pathway, blocks: blockData } = result.data;
         if (pathway) {
           setName(pathway.name);
           setDescription(pathway.description ?? "");
@@ -176,32 +187,23 @@ export function OutcomePathwayEditor({
     if (!name.trim() || blocks.length === 0) return;
     setSaving(true);
 
-    try {
-      const res = await fetch("/api/outcome-pathways/configure", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          org_id: orgId,
-          pathway_id: pathwayId,
-          name: name.trim(),
-          description: description.trim() || null,
-          blocks: blocks.map((b, i) => ({
-            ...(b.isNew ? {} : { id: b.id }),
-            action_type: b.action_type,
-            offset_minutes: b.offset_minutes,
-            form_id: b.form_id,
-            config: b.config,
-            sort_order: i,
-          })),
-        }),
-      });
+    const result = await postJson("/api/outcome-pathways/configure", {
+      org_id: orgId,
+      pathway_id: pathwayId,
+      name: name.trim(),
+      description: description.trim() || null,
+      blocks: blocks.map((b, i) => ({
+        ...(b.isNew ? {} : { id: b.id }),
+        action_type: b.action_type,
+        offset_minutes: b.offset_minutes,
+        form_id: b.form_id,
+        config: b.config,
+        sort_order: i,
+      })),
+    });
 
-      if (!res.ok) {
-        const data = await res.json();
-        console.error("Failed to save pathway:", data.error);
-      }
-    } catch (e) {
-      console.error("Failed to save pathway:", e);
+    if (!result.ok) {
+      console.error("Failed to save pathway:", result.error);
     }
 
     setSaving(false);

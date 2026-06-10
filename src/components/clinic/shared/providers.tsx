@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useCallback, useEffect, type ReactNode } from "react";
+import { getJson } from "@/lib/api-client";
 import { LocationContext } from "@/hooks/useLocation";
 import { OrgContext } from "@/hooks/useOrg";
 import { RoleContext } from "@/hooks/useRole";
@@ -106,29 +107,19 @@ export function ClinicProviders({
         }
         return;
       }
-      try {
-        const res = await fetch(
-          `/api/pms/connection?locationId=${selectedLocationId}`
-        );
-        const data = res.ok
-          ? ((await res.json()) as {
-              syncActive?: boolean;
-              providerLabel?: string | null;
-              accountSubdomain?: string | null;
-            })
-          : null;
-        if (cancelled) return;
-        setPms({
-          syncActive: Boolean(data?.syncActive),
-          providerLabel: data?.providerLabel ?? null,
-          accountSubdomain: data?.accountSubdomain ?? null,
-          loaded: true,
-        });
-      } catch {
-        if (!cancelled) {
-          setPms({ syncActive: false, providerLabel: null, accountSubdomain: null, loaded: true });
-        }
-      }
+      const result = await getJson<{
+        syncActive?: boolean;
+        providerLabel?: string | null;
+        accountSubdomain?: string | null;
+      }>(`/api/pms/connection?locationId=${selectedLocationId}`);
+      if (cancelled) return;
+      const data = result.ok ? result.data : null;
+      setPms({
+        syncActive: Boolean(data?.syncActive),
+        providerLabel: data?.providerLabel ?? null,
+        accountSubdomain: data?.accountSubdomain ?? null,
+        loaded: true,
+      });
     })();
     return () => {
       cancelled = true;

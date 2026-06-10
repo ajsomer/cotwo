@@ -1,5 +1,6 @@
 "use client";
 
+import { postJson } from "@/lib/api-client";
 import { useClinicStore } from "@/stores/clinic-store";
 
 export function OnboardingCoachMark() {
@@ -15,7 +16,7 @@ export function OnboardingCoachMark() {
       coachMarkDismissed: { ...coachMarkDismissed, call_completed: true },
       hasSeenPatientJourney: true,
     });
-    void fetch("/api/onboarding/dismiss-welcome", { method: "POST" });
+    void postJson("/api/onboarding/dismiss-welcome");
   }
 
   if (!onboardingLoaded) return null;

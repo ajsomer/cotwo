@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { getJson, postJson } from "@/lib/api-client";
 import { SlideOver } from "@/components/ui/slide-over";
 import { usePmsConnection } from "@/hooks/usePmsConnection";
 import { fetchReviewData, intakeHandoffUrl } from "./review-prefetch-cache";
@@ -144,33 +145,24 @@ export function IntakePackageHandoffPanel({
       return;
     }
     (async () => {
-      try {
-        const res = await fetch(
-          `/api/pms/push-appointment?appointmentId=${appointmentId}`
-        );
-        if (cancelled) return;
-        const data = res.ok
-          ? ((await res.json()) as {
-              active?: boolean;
-              providerLabel?: string | null;
-              writeAttachments?: boolean;
-              hasPushableFields?: boolean;
-            })
-          : null;
-        if (cancelled) return;
-        setPmsGate(
-          data?.active
-            ? {
-                active: true,
-                label: data.providerLabel ?? "PMS",
-                writeAttachments: data.writeAttachments === true,
-                hasPushableFields: data.hasPushableFields === true,
-              }
-            : inactive
-        );
-      } catch {
-        if (!cancelled) setPmsGate(inactive);
-      }
+      const result = await getJson<{
+        active?: boolean;
+        providerLabel?: string | null;
+        writeAttachments?: boolean;
+        hasPushableFields?: boolean;
+      }>(`/api/pms/push-appointment?appointmentId=${appointmentId}`);
+      if (cancelled) return;
+      const data = result.ok ? result.data : null;
+      setPmsGate(
+        data?.active
+          ? {
+              active: true,
+              label: data.providerLabel ?? "PMS",
+              writeAttachments: data.writeAttachments === true,
+              hasPushableFields: data.hasPushableFields === true,
+            }
+          : inactive
+      );
     })();
     return () => {
       cancelled = true;
@@ -178,14 +170,13 @@ export function IntakePackageHandoffPanel({
   }, [appointmentId, pmsSyncActive]);
 
   const markTranscribed = async (): Promise<boolean> => {
-    const res = await fetch("/api/tasks/mark-intake-transcribed", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action_id: actionId }),
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setError(data.error ?? "Failed to mark as transcribed");
+    const result = await postJson(
+      "/api/tasks/mark-intake-transcribed",
+      { action_id: actionId },
+      "Failed to mark as transcribed"
+    );
+    if (!result.ok) {
+      setError(result.error);
       return false;
     }
     return true;
@@ -194,13 +185,8 @@ export function IntakePackageHandoffPanel({
   const handleMarkTranscribed = async () => {
     setMarking(true);
     setError(null);
-    try {
-      if (await markTranscribed()) onTranscribed();
-    } catch {
-      setError("Network error");
-    } finally {
-      setMarking(false);
-    }
+    if (await markTranscribed()) onTranscribed();
+    setMarking(false);
   };
 
   // Sync to the PMS: push the field write-back AND — when the provider supports

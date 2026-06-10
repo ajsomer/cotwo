@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { postJson } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, Loader2 } from "lucide-react";
 
@@ -14,20 +15,18 @@ export function StripeConnectStub() {
     setStatus("connecting");
     setError(null);
 
-    const res = await fetch("/api/setup/payments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ skipped: false }),
-    });
+    const result = await postJson<{ stripe_account_id: string }>(
+      "/api/setup/payments",
+      { skipped: false }
+    );
 
-    if (!res.ok) {
+    if (!result.ok) {
       setStatus("idle");
       setError("Connection failed. Try again or skip.");
       return;
     }
 
-    const data = await res.json();
-    setAccountRef(data.stripe_account_id);
+    setAccountRef(result.data.stripe_account_id);
     setStatus("connected");
   }
 
@@ -37,11 +36,7 @@ export function StripeConnectStub() {
 
   async function handleSkip() {
     setSkipping(true);
-    await fetch("/api/setup/payments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ skipped: true }),
-    });
+    await postJson("/api/setup/payments", { skipped: true });
     window.location.href = "/runsheet";
   }
 

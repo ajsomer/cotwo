@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { getJson, postJson } from '@/lib/api-client';
 import { PersistentHeader } from './persistent-header';
 
 interface IntakeCardCaptureProps {
@@ -48,30 +49,24 @@ export function IntakeCardCapture({
 
   useEffect(() => {
     async function checkCard() {
-      try {
-        const res = await fetch(
-          `/api/patient/card?token=${encodeURIComponent(token)}&patient_id=${patientId}`,
-        );
-        const data = await res.json();
-        if (data.card) setExistingCard(data.card);
-      } catch {
-        // No card on file
-      } finally {
-        setLoading(false);
-      }
+      const result = await getJson<{ card?: ExistingCard }>(
+        `/api/patient/card?token=${encodeURIComponent(token)}&patient_id=${patientId}`,
+      );
+      // No card on file (or fetch failed) — just move on.
+      if (result.ok && result.data?.card) setExistingCard(result.data.card);
+      setLoading(false);
     }
     checkCard();
   }, [patientId, token]);
 
   const markComplete = async () => {
-    const res = await fetch(`/api/intake/${token}/complete-item`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ item_type: 'card' }),
-    });
-    if (!res.ok) {
-      const data = await res.json();
-      setError(data.error || 'Failed to record card completion');
+    const result = await postJson(
+      `/api/intake/${token}/complete-item`,
+      { item_type: 'card' },
+      'Failed to record card completion'
+    );
+    if (!result.ok) {
+      setError(result.error);
       return false;
     }
     return true;
@@ -89,41 +84,36 @@ export function IntakeCardCapture({
     setError(null);
     setSaving(true);
 
-    try {
-      const cleanNumber = cardNumber.replace(/\s/g, '');
-      const lastFour = cleanNumber.slice(-4);
-      const brand = cleanNumber.startsWith('4')
-        ? 'Visa'
-        : cleanNumber.startsWith('5')
-          ? 'Mastercard'
-          : 'Card';
-      const mockPaymentMethodId = `pm_test_${Date.now()}`;
+    const cleanNumber = cardNumber.replace(/\s/g, '');
+    const lastFour = cleanNumber.slice(-4);
+    const brand = cleanNumber.startsWith('4')
+      ? 'Visa'
+      : cleanNumber.startsWith('5')
+        ? 'Mastercard'
+        : 'Card';
+    const mockPaymentMethodId = `pm_test_${Date.now()}`;
 
-      const res = await fetch('/api/patient/card', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token,
-          patient_id: patientId,
-          stripe_payment_method_id: mockPaymentMethodId,
-          card_last_four: lastFour,
-          card_brand: brand,
-          card_expiry: expiry,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || 'Failed to save card');
-        return;
-      }
-
-      const ok = await markComplete();
-      if (ok) onComplete();
-    } catch {
-      setError('Something went wrong. Please try again.');
-    } finally {
+    const result = await postJson(
+      '/api/patient/card',
+      {
+        token,
+        patient_id: patientId,
+        stripe_payment_method_id: mockPaymentMethodId,
+        card_last_four: lastFour,
+        card_brand: brand,
+        card_expiry: expiry,
+      },
+      'Failed to save card'
+    );
+    if (!result.ok) {
+      setError(result.error);
       setSaving(false);
+      return;
     }
+
+    const ok = await markComplete();
+    setSaving(false);
+    if (ok) onComplete();
   };
 
   if (loading) {

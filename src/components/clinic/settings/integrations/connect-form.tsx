@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getJson } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import type { IntegrationStatusDTO } from "./types";
 
@@ -50,24 +51,23 @@ export function ConnectForm({
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const res = await fetch("/api/pms/providers");
-        const data = res.ok
-          ? ((await res.json()) as { providers?: ProviderConnectMeta[] })
-          : null;
-        if (cancelled) return;
-        const list = data?.providers ?? [];
-        setProviderMeta(list);
-        // Default to the stored provider when it's connectable; otherwise (a
-        // marker provider with no adapter) fall back to the first real one.
-        setSelectedProvider((current) =>
-          list.some((p) => p.provider === current)
-            ? current
-            : list[0]?.provider ?? current
-        );
-      } catch {
-        if (!cancelled) setProviderMeta([]);
+      const result = await getJson<{ providers?: ProviderConnectMeta[] }>(
+        "/api/pms/providers"
+      );
+      if (cancelled) return;
+      if (!result.ok) {
+        setProviderMeta([]);
+        return;
       }
+      const list = result.data?.providers ?? [];
+      setProviderMeta(list);
+      // Default to the stored provider when it's connectable; otherwise (a
+      // marker provider with no adapter) fall back to the first real one.
+      setSelectedProvider((current) =>
+        list.some((p) => p.provider === current)
+          ? current
+          : list[0]?.provider ?? current
+      );
     })();
     return () => {
       cancelled = true;

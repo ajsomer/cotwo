@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { postJson } from "@/lib/api-client";
 import { useClinicStore } from "@/stores/clinic-store";
 import { Button } from "@/components/ui/button";
 import { X, Loader2, ExternalLink } from "lucide-react";
@@ -29,22 +30,20 @@ export function OnboardingOverlay() {
     setCreating(true);
     setError(null);
 
-    const res = await fetch("/api/onboarding/test-session", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-    });
+    const result = await postJson<{ session_id: string; journey_url: string }>(
+      "/api/onboarding/test-session"
+    );
 
-    if (!res.ok) {
+    if (!result.ok) {
       setCreating(false);
       setError("Something went wrong. Please try again.");
       return;
     }
 
-    const data = await res.json();
-    setOnboarding({ stage: "test_session_sent", testSessionId: data.session_id });
+    setOnboarding({ stage: "test_session_sent", testSessionId: result.data.session_id });
 
     // Open the patient journey in a new tab so the user can experience it side-by-side
-    window.open(data.journey_url, "_blank", "noopener,noreferrer");
+    window.open(result.data.journey_url, "_blank", "noopener,noreferrer");
 
     setCreating(false);
     setBanner(

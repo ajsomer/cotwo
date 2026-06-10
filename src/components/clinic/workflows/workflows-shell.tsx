@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { getJson, postJson } from "@/lib/api-client";
 import { useOrg } from "@/hooks/useOrg";
 import type {
   DbWorkflowTemplate,
@@ -187,55 +188,59 @@ export function WorkflowsShell() {
   }
 
   const handleCreateType = async () => {
-    try {
-      const res = await fetch("/api/appointment-types", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ org_id: orgId, name: "New appointment type" }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      await refreshAll(data.appointment_type.id);
-    } catch (err) {
-      setError((err as Error).message);
+    const result = await postJson<{
+      error?: string;
+      appointment_type: { id: string };
+    }>("/api/appointment-types", { org_id: orgId, name: "New appointment type" });
+    // The route can also report an error in a 200 body.
+    const error = result.ok ? result.data?.error : result.error;
+    if (error) {
+      setError(error);
+      return;
     }
+    if (result.ok) await refreshAll(result.data.appointment_type.id);
   };
 
   const handleCreatePathway = async () => {
-    try {
-      const res = await fetch("/api/outcome-pathways", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ org_id: orgId, name: "New post-workflow", create_workflow: true }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      await refreshAll(data.outcome_pathway.id);
-    } catch (err) {
-      setError((err as Error).message);
+    const result = await postJson<{
+      error?: string;
+      outcome_pathway: { id: string };
+    }>("/api/outcome-pathways", {
+      org_id: orgId,
+      name: "New post-workflow",
+      create_workflow: true,
+    });
+    // The route can also report an error in a 200 body.
+    const error = result.ok ? result.data?.error : result.error;
+    if (error) {
+      setError(error);
+      return;
     }
+    if (result.ok) await refreshAll(result.data.outcome_pathway.id);
   };
 
   const handleCreateWorkflow = async () => {
     if (!selectedId) return;
-    try {
-      const res = await fetch(`/api/appointment-types/${selectedId}/workflow`, { method: "POST" });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-
-      // Update store maps locally with the new template
-      const store = getClinicStore();
-      store.setPreWorkflowTemplates({ ...store.preWorkflowTemplates, [data.template.id]: data.template });
-      store.setPreWorkflowBlocks({ ...store.preWorkflowBlocks, [data.template.id]: [] });
-      setTemplate(data.template);
-      setOriginalBlocks([]);
-      setWorkingBlocks([]);
-
-      // Refresh workflows to update sidebar counts
-      await store.refreshWorkflows(orgId);
-    } catch (err) {
-      setError((err as Error).message);
+    const result = await postJson<{ error?: string; template: DbWorkflowTemplate }>(
+      `/api/appointment-types/${selectedId}/workflow`
+    );
+    // The route can also report an error in a 200 body.
+    const error = result.ok ? result.data?.error : result.error;
+    if (error || !result.ok) {
+      setError(error ?? "Failed to create workflow");
+      return;
     }
+
+    // Update store maps locally with the new template
+    const store = getClinicStore();
+    store.setPreWorkflowTemplates({ ...store.preWorkflowTemplates, [result.data.template.id]: result.data.template });
+    store.setPreWorkflowBlocks({ ...store.preWorkflowBlocks, [result.data.template.id]: [] });
+    setTemplate(result.data.template);
+    setOriginalBlocks([]);
+    setWorkingBlocks([]);
+
+    // Refresh workflows to update sidebar counts
+    await store.refreshWorkflows(orgId);
   };
 
   // ---------------------------------------------------------------------------
@@ -258,16 +263,14 @@ export function WorkflowsShell() {
 
   const handleSave = async () => {
     if (!template) return;
-    try {
-      const res = await fetch(`/api/workflows/in-flight?template_id=${template.id}`);
-      const data = await res.json();
-      if ((data.in_flight_count ?? 0) > 0) {
-        setInFlightCount(data.in_flight_count);
-        setShowWarning(true);
-        return;
-      }
-    } catch {
-      // Continue with save
+    const result = await getJson<{ in_flight_count?: number }>(
+      `/api/workflows/in-flight?template_id=${template.id}`
+    );
+    // On a failed check, continue with save.
+    if (result.ok && (result.data?.in_flight_count ?? 0) > 0) {
+      setInFlightCount(result.data.in_flight_count ?? 0);
+      setShowWarning(true);
+      return;
     }
     await executeSave();
   };

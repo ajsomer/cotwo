@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { getJson, postJson } from '@/lib/api-client';
 import { PersistentHeader } from './persistent-header';
 
 interface CardCaptureProps {
@@ -46,19 +47,14 @@ export function CardCapture({
   // Check for existing card on file
   useEffect(() => {
     async function checkCard() {
-      try {
-        const res = await fetch(
-          `/api/patient/card?token=${encodeURIComponent(token)}&patient_id=${patientId}`,
-        );
-        const data = await res.json();
-        if (data.card) {
-          setExistingCard(data.card);
-        }
-      } catch {
-        // No card on file
-      } finally {
-        setLoading(false);
+      const result = await getJson<{ card?: ExistingCard }>(
+        `/api/patient/card?token=${encodeURIComponent(token)}&patient_id=${patientId}`,
+      );
+      // No card on file (or fetch failed) — just move on.
+      if (result.ok && result.data?.card) {
+        setExistingCard(result.data.card);
       }
+      setLoading(false);
     }
     checkCard();
   }, [patientId, token]);
@@ -67,41 +63,35 @@ export function CardCapture({
     setError(null);
     setSaving(true);
 
-    try {
-      // In production, this would use Stripe.js to tokenise the card.
-      // For the prototype, we simulate with test card data.
-      const cleanNumber = cardNumber.replace(/\s/g, '');
-      const lastFour = cleanNumber.slice(-4);
-      const brand = cleanNumber.startsWith('4') ? 'Visa' : cleanNumber.startsWith('5') ? 'Mastercard' : 'Card';
+    // In production, this would use Stripe.js to tokenise the card.
+    // For the prototype, we simulate with test card data.
+    const cleanNumber = cardNumber.replace(/\s/g, '');
+    const lastFour = cleanNumber.slice(-4);
+    const brand = cleanNumber.startsWith('4') ? 'Visa' : cleanNumber.startsWith('5') ? 'Mastercard' : 'Card';
 
-      // Simulate Stripe PaymentMethod creation
-      const mockPaymentMethodId = `pm_test_${Date.now()}`;
+    // Simulate Stripe PaymentMethod creation
+    const mockPaymentMethodId = `pm_test_${Date.now()}`;
 
-      const res = await fetch('/api/patient/card', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token,
-          patient_id: patientId,
-          stripe_payment_method_id: mockPaymentMethodId,
-          card_last_four: lastFour,
-          card_brand: brand,
-          card_expiry: expiry,
-        }),
-      });
+    const result = await postJson(
+      '/api/patient/card',
+      {
+        token,
+        patient_id: patientId,
+        stripe_payment_method_id: mockPaymentMethodId,
+        card_last_four: lastFour,
+        card_brand: brand,
+        card_expiry: expiry,
+      },
+      'Failed to save card'
+    );
+    setSaving(false);
 
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || 'Failed to save card');
-        return;
-      }
-
-      onComplete({ card_last_four: lastFour, card_brand: brand });
-    } catch {
-      setError('Something went wrong. Please try again.');
-    } finally {
-      setSaving(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
     }
+
+    onComplete({ card_last_four: lastFour, card_brand: brand });
   };
 
   if (loading) {

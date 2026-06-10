@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
+import { getJson } from "@/lib/api-client";
 import type { RunsheetSession, Room } from "@/lib/types/domain";
 import type { DbWorkflowTemplate, DbWorkflowActionBlock } from "@/lib/workflows/types";
 import type {
@@ -151,16 +152,6 @@ export interface ClinicStore {
 }
 
 // ---------------------------------------------------------------------------
-// Fetch helpers
-// ---------------------------------------------------------------------------
-
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
-  return res.json();
-}
-
-// ---------------------------------------------------------------------------
 // Store creation
 // ---------------------------------------------------------------------------
 
@@ -213,193 +204,200 @@ export const useClinicStore = create<ClinicStore>()(
 
       // Individual refresh actions
       refreshSessions: async (locationId) => {
-        try {
-          const data = await fetchJson<{ sessions: RunsheetSession[] }>(
-            `/api/runsheet?locationId=${locationId}`
-          );
-          // Stale-response guard: if the user switched locations mid-fetch,
-          // drop this response so we don't paint location A's data over B's.
-          if (get().locationId !== locationId) return;
-          set(
-            { sessions: data.sessions, sessionsLoaded: true, sessionsFetchedAt: Date.now() },
-            false,
-            "refreshSessions"
-          );
-        } catch (e) {
-          console.error("Failed to refresh sessions:", e);
+        const result = await getJson<{ sessions: RunsheetSession[] }>(
+          `/api/runsheet?locationId=${locationId}`
+        );
+        if (!result.ok) {
+          console.error("Failed to refresh sessions:", result.error);
+          return;
         }
+        // Stale-response guard: if the user switched locations mid-fetch,
+        // drop this response so we don't paint location A's data over B's.
+        if (get().locationId !== locationId) return;
+        set(
+          { sessions: result.data.sessions, sessionsLoaded: true, sessionsFetchedAt: Date.now() },
+          false,
+          "refreshSessions"
+        );
       },
 
       refreshRooms: async (locationId) => {
-        try {
-          const data = await fetchJson<{ rooms: RoomWithClinicians[] }>(
-            `/api/settings/rooms?location_id=${locationId}`
-          );
-          if (get().locationId !== locationId) return;
-          const roomsWithClinicians = data.rooms ?? [];
-          // Derive basic Room[] from the settings response
-          const rooms: Room[] = roomsWithClinicians.map((r) => ({
-            id: r.id,
-            location_id: r.location_id,
-            name: r.name,
-            room_type: r.room_type,
-            link_token: r.link_token,
-            sort_order: r.sort_order,
-            payments_enabled: r.payments_enabled ?? false,
-          }));
-          // paymentRooms is a projection of the same rooms — derive it here so
-          // refreshPaymentConfig doesn't re-fetch /api/settings/rooms.
-          const paymentRooms: RoomPayment[] = roomsWithClinicians.map((r) => ({
-            id: r.id,
-            name: r.name,
-            room_type: r.room_type,
-            payments_enabled: r.payments_enabled ?? false,
-          }));
-          set(
-            { rooms, roomsWithClinicians, paymentRooms, roomsLoaded: true, roomsFetchedAt: Date.now() },
-            false,
-            "refreshRooms"
-          );
-        } catch (e) {
-          console.error("Failed to refresh rooms:", e);
+        const result = await getJson<{ rooms: RoomWithClinicians[] }>(
+          `/api/settings/rooms?location_id=${locationId}`
+        );
+        if (!result.ok) {
+          console.error("Failed to refresh rooms:", result.error);
+          return;
         }
+        if (get().locationId !== locationId) return;
+        const roomsWithClinicians = result.data.rooms ?? [];
+        // Derive basic Room[] from the settings response
+        const rooms: Room[] = roomsWithClinicians.map((r) => ({
+          id: r.id,
+          location_id: r.location_id,
+          name: r.name,
+          room_type: r.room_type,
+          link_token: r.link_token,
+          sort_order: r.sort_order,
+          payments_enabled: r.payments_enabled ?? false,
+        }));
+        // paymentRooms is a projection of the same rooms — derive it here so
+        // refreshPaymentConfig doesn't re-fetch /api/settings/rooms.
+        const paymentRooms: RoomPayment[] = roomsWithClinicians.map((r) => ({
+          id: r.id,
+          name: r.name,
+          room_type: r.room_type,
+          payments_enabled: r.payments_enabled ?? false,
+        }));
+        set(
+          { rooms, roomsWithClinicians, paymentRooms, roomsLoaded: true, roomsFetchedAt: Date.now() },
+          false,
+          "refreshRooms"
+        );
       },
 
       refreshReadiness: async (locationId) => {
-        try {
-          const [preData, postData] = await Promise.all([
-            fetchJson<{
-              appointments: ReadinessAppointment[];
-              counts?: ReadinessCounts;
-            }>(`/api/tasks?location_id=${locationId}&direction=pre_appointment`),
-            fetchJson<{
-              appointments: ReadinessAppointment[];
-              counts?: ReadinessCounts;
-            }>(`/api/tasks?location_id=${locationId}&direction=post_appointment`),
-          ]);
-          if (get().locationId !== locationId) return;
-          set(
-            {
-              readinessAppointmentsPre: preData.appointments ?? [],
-              readinessAppointmentsPost: postData.appointments ?? [],
-              readinessCounts: {
-                pre: preData.counts?.pre ?? preData.appointments?.length ?? 0,
-                post: postData.counts?.post ?? postData.appointments?.length ?? 0,
-              },
-              readinessLoadedPre: true,
-              readinessLoadedPost: true,
-              readinessFetchedAt: Date.now(),
-            },
-            false,
-            "refreshReadiness"
-          );
-        } catch (e) {
-          console.error("Failed to refresh readiness:", e);
+        const [preResult, postResult] = await Promise.all([
+          getJson<{
+            appointments: ReadinessAppointment[];
+            counts?: ReadinessCounts;
+          }>(`/api/tasks?location_id=${locationId}&direction=pre_appointment`),
+          getJson<{
+            appointments: ReadinessAppointment[];
+            counts?: ReadinessCounts;
+          }>(`/api/tasks?location_id=${locationId}&direction=post_appointment`),
+        ]);
+        if (!preResult.ok) {
+          console.error("Failed to refresh readiness:", preResult.error);
+          return;
         }
+        if (!postResult.ok) {
+          console.error("Failed to refresh readiness:", postResult.error);
+          return;
+        }
+        const preData = preResult.data;
+        const postData = postResult.data;
+        if (get().locationId !== locationId) return;
+        set(
+          {
+            readinessAppointmentsPre: preData.appointments ?? [],
+            readinessAppointmentsPost: postData.appointments ?? [],
+            readinessCounts: {
+              pre: preData.counts?.pre ?? preData.appointments?.length ?? 0,
+              post: postData.counts?.post ?? postData.appointments?.length ?? 0,
+            },
+            readinessLoadedPre: true,
+            readinessLoadedPost: true,
+            readinessFetchedAt: Date.now(),
+          },
+          false,
+          "refreshReadiness"
+        );
       },
 
       refreshForms: async (orgId) => {
-        try {
-          const data = await fetchJson<{ forms: FormRow[] }>(
-            `/api/forms?org_id=${orgId}`
-          );
-          set({ forms: data.forms ?? [], formsLoaded: true }, false, "refreshForms");
-        } catch (e) {
-          console.error("Failed to refresh forms:", e);
+        const result = await getJson<{ forms: FormRow[] }>(
+          `/api/forms?org_id=${orgId}`
+        );
+        if (!result.ok) {
+          console.error("Failed to refresh forms:", result.error);
+          return;
         }
+        set({ forms: result.data.forms ?? [], formsLoaded: true }, false, "refreshForms");
       },
 
       refreshFiles: async (orgId) => {
-        try {
-          const data = await fetchJson<{ files: FileRow[] }>(
-            `/api/files?org_id=${orgId}`
-          );
-          set({ files: data.files ?? [], filesLoaded: true }, false, "refreshFiles");
-        } catch (e) {
-          console.error("Failed to refresh files:", e);
+        const result = await getJson<{ files: FileRow[] }>(
+          `/api/files?org_id=${orgId}`
+        );
+        if (!result.ok) {
+          console.error("Failed to refresh files:", result.error);
+          return;
         }
+        set({ files: result.data.files ?? [], filesLoaded: true }, false, "refreshFiles");
       },
 
       refreshStandaloneSubmissions: async (orgId) => {
-        try {
-          const data = await fetchJson<{
-            submissions: StandaloneSubmissionRow[];
-          }>(`/api/forms/standalone/submissions?org_id=${orgId}&status=pending`);
-          set(
-            {
-              standaloneSubmissions: data.submissions ?? [],
-              standaloneSubmissionsLoaded: true,
-            },
-            false,
-            "refreshStandaloneSubmissions"
-          );
-        } catch (e) {
-          console.error("Failed to refresh standalone submissions:", e);
+        const result = await getJson<{
+          submissions: StandaloneSubmissionRow[];
+        }>(`/api/forms/standalone/submissions?org_id=${orgId}&status=pending`);
+        if (!result.ok) {
+          console.error("Failed to refresh standalone submissions:", result.error);
+          return;
         }
+        set(
+          {
+            standaloneSubmissions: result.data.submissions ?? [],
+            standaloneSubmissionsLoaded: true,
+          },
+          false,
+          "refreshStandaloneSubmissions"
+        );
       },
 
       refreshWorkflows: async (orgId) => {
-        try {
-          // One request: the init route returns both directions + forms.
-          const data = await fetchJson<{
-            appointment_types: AppointmentTypeRow[];
-            outcome_pathways: OutcomePathwayRow[];
-            forms: { id: string; name: string }[];
-            pre_templates: Record<string, DbWorkflowTemplate>;
-            pre_blocks: Record<string, DbWorkflowActionBlock[]>;
-            post_templates: Record<string, DbWorkflowTemplate>;
-            post_blocks: Record<string, DbWorkflowActionBlock[]>;
-          }>(`/api/workflows/init?org_id=${orgId}`);
-          set(
-            {
-              appointmentTypes: data.appointment_types,
-              outcomePathways: data.outcome_pathways ?? [],
-              preWorkflowTemplates: data.pre_templates,
-              preWorkflowBlocks: data.pre_blocks,
-              postWorkflowTemplates: data.post_templates,
-              postWorkflowBlocks: data.post_blocks,
-              workflowsLoaded: true,
-            },
-            false,
-            "refreshWorkflows"
-          );
-        } catch (e) {
-          console.error("Failed to refresh workflows:", e);
+        // One request: the init route returns both directions + forms.
+        const result = await getJson<{
+          appointment_types: AppointmentTypeRow[];
+          outcome_pathways: OutcomePathwayRow[];
+          forms: { id: string; name: string }[];
+          pre_templates: Record<string, DbWorkflowTemplate>;
+          pre_blocks: Record<string, DbWorkflowActionBlock[]>;
+          post_templates: Record<string, DbWorkflowTemplate>;
+          post_blocks: Record<string, DbWorkflowActionBlock[]>;
+        }>(`/api/workflows/init?org_id=${orgId}`);
+        if (!result.ok) {
+          console.error("Failed to refresh workflows:", result.error);
+          return;
         }
+        const data = result.data;
+        set(
+          {
+            appointmentTypes: data.appointment_types,
+            outcomePathways: data.outcome_pathways ?? [],
+            preWorkflowTemplates: data.pre_templates,
+            preWorkflowBlocks: data.pre_blocks,
+            postWorkflowTemplates: data.post_templates,
+            postWorkflowBlocks: data.post_blocks,
+            workflowsLoaded: true,
+          },
+          false,
+          "refreshWorkflows"
+        );
       },
 
       refreshPaymentConfig: async (locationId) => {
-        try {
-          // paymentRooms is derived in refreshRooms (same /api/settings/rooms
-          // payload); here we only need the payment config itself.
-          const config = await fetchJson<PaymentsData>(
-            `/api/settings/payments?location_id=${locationId}`
-          );
-          if (get().locationId !== locationId) return;
-          set(
-            { paymentConfig: config, paymentConfigLoaded: true },
-            false,
-            "refreshPaymentConfig"
-          );
-        } catch (e) {
-          console.error("Failed to refresh payment config:", e);
+        // paymentRooms is derived in refreshRooms (same /api/settings/rooms
+        // payload); here we only need the payment config itself.
+        const result = await getJson<PaymentsData>(
+          `/api/settings/payments?location_id=${locationId}`
+        );
+        if (!result.ok) {
+          console.error("Failed to refresh payment config:", result.error);
+          return;
         }
+        if (get().locationId !== locationId) return;
+        set(
+          { paymentConfig: result.data, paymentConfigLoaded: true },
+          false,
+          "refreshPaymentConfig"
+        );
       },
 
       refreshClinicianRoomIds: async (locationId) => {
-        try {
-          const data = await fetchJson<{ roomIds: string[] }>(
-            `/api/runsheet/clinician-rooms?location_id=${locationId}`
-          );
-          if (get().locationId !== locationId) return;
-          set(
-            { clinicianRoomIds: data.roomIds ?? [], clinicianRoomIdsLoaded: true },
-            false,
-            "refreshClinicianRoomIds"
-          );
-        } catch (e) {
-          console.error("Failed to refresh clinician room IDs:", e);
+        const result = await getJson<{ roomIds: string[] }>(
+          `/api/runsheet/clinician-rooms?location_id=${locationId}`
+        );
+        if (!result.ok) {
+          console.error("Failed to refresh clinician room IDs:", result.error);
+          return;
         }
+        if (get().locationId !== locationId) return;
+        set(
+          { clinicianRoomIds: result.data.roomIds ?? [], clinicianRoomIdsLoaded: true },
+          false,
+          "refreshClinicianRoomIds"
+        );
       },
 
       // Direct setters

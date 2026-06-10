@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { postJson } from "@/lib/api-client";
 import type { MappingDataDTO } from "./types";
 
 interface Props {
@@ -20,14 +21,10 @@ export function BusinessMappings({ locationId, providerLabel, data, onSaved }: P
   const save = async (externalId: string) => {
     setSaving(true);
     setValue(externalId);
-    await fetch("/api/pms/mappings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        locationId,
-        kind: "business",
-        externalId: externalId || null,
-      }),
+    await postJson("/api/pms/mappings", {
+      locationId,
+      kind: "business",
+      externalId: externalId || null,
     });
     setSaving(false);
     onSaved();

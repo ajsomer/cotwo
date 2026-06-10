@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { getJson } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { markSessionDone } from "@/lib/runsheet/actions";
 import { formatPatientName } from "@/lib/runsheet/format";
@@ -54,22 +55,15 @@ export function ProcessFlowDone({
   useEffect(() => {
     let cancelled = false;
     async function resolveGate() {
-      try {
-        const params = new URLSearchParams({ sessionId: session.session_id });
-        if (session.patient_id) params.set("patientId", session.patient_id);
-        const res = await fetch(`/api/pms/push?${params.toString()}`);
-        const data = res.ok
-          ? ((await res.json()) as PushGate)
-          : { active: false, providerLabel: null, patientWebLink: null };
-        if (!cancelled) {
-          setGate(data);
-          setGateResolved(true);
-        }
-      } catch {
-        if (!cancelled) {
-          setGate({ active: false, providerLabel: null, patientWebLink: null });
-          setGateResolved(true);
-        }
+      const params = new URLSearchParams({ sessionId: session.session_id });
+      if (session.patient_id) params.set("patientId", session.patient_id);
+      const result = await getJson<PushGate>(`/api/pms/push?${params.toString()}`);
+      const data = result.ok
+        ? result.data
+        : { active: false, providerLabel: null, patientWebLink: null };
+      if (!cancelled) {
+        setGate(data);
+        setGateResolved(true);
       }
     }
     resolveGate();

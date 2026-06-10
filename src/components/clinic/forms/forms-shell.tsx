@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { postJson } from "@/lib/api-client";
 import { useOrg } from "@/hooks/useOrg";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -71,15 +72,13 @@ export function FormsShell() {
   const handleNew = async () => {
     if (!org) return;
 
-    const res = await fetch("/api/forms", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ org_id: org.id, name: "Untitled Form" }),
+    const result = await postJson<{ form: { id: string } }>("/api/forms", {
+      org_id: org.id,
+      name: "Untitled Form",
     });
 
-    if (res.ok) {
-      const data = await res.json();
-      router.push(`/forms/${data.form.id}`);
+    if (result.ok) {
+      router.push(`/forms/${result.data.form.id}`);
     }
   };
 

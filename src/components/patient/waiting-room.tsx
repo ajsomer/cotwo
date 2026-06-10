@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { postJson } from '@/lib/api-client';
 import { getSocket } from '@/lib/socket-client';
 import { PersistentHeader } from './persistent-header';
 import { PatientVideoCall } from './patient-video-call';
@@ -87,19 +88,15 @@ export function WaitingRoom({
       // admitted or completed while this socket was down, the status_changed
       // event was missed and we'd strand on "waiting" forever.
       void (async () => {
-        try {
-          const res = await fetch('/api/patient/resolve', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token: entryToken }),
-          });
-          if (!res.ok) return;
-          const data = await res.json();
-          const dbStatus = data?.context?.session?.status;
-          if (dbStatus) setStatus(toWaitingUiStatus(dbStatus));
-        } catch {
-          // Network hiccup — the next reconnect or status event resyncs.
-        }
+        const result = await postJson<{ context?: { session?: { status?: string } } }>(
+          '/api/patient/resolve',
+          { token: entryToken }
+        );
+        // Failed (network hiccup or non-ok) — the next reconnect or status
+        // event resyncs.
+        if (!result.ok) return;
+        const dbStatus = result.data?.context?.session?.status;
+        if (dbStatus) setStatus(toWaitingUiStatus(dbStatus));
       })();
     };
     if (socket.connected) joinRoom();

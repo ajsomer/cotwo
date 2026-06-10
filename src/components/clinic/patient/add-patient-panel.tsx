@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { postJson } from "@/lib/api-client";
 import { SlideOver } from "@/components/ui/slide-over";
 import { useClinicStore } from "@/stores/clinic-store";
 
@@ -72,44 +73,36 @@ export function AddPatientPanel({
     setSaving(true);
     setError(null);
 
-    try {
-      const body: Record<string, unknown> = {
-        first_name: firstName.trim(),
-        last_name: lastName.trim(),
-        dob,
-        mobile: mobile.trim(),
-        appointment_type_id: appointmentTypeId,
-        org_id: orgId,
-        location_id: locationId,
-        confirm_existing: confirmExisting,
-        scheduled_at: new Date(`${date}T${time}`).toISOString(),
-        room_id: roomId,
-      };
+    const body: Record<string, unknown> = {
+      first_name: firstName.trim(),
+      last_name: lastName.trim(),
+      dob,
+      mobile: mobile.trim(),
+      appointment_type_id: appointmentTypeId,
+      org_id: orgId,
+      location_id: locationId,
+      confirm_existing: confirmExisting,
+      scheduled_at: new Date(`${date}T${time}`).toISOString(),
+      room_id: roomId,
+    };
 
-      const res = await fetch("/api/tasks/add-patient", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+    const result = await postJson<{
+      existing_patient?: boolean;
+      patient: { id: string; first_name: string; last_name: string };
+    }>("/api/tasks/add-patient", body, "Failed to add patient");
+    setSaving(false);
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.error ?? "Failed to add patient");
-        return;
-      }
-
-      if (data.existing_patient && !confirmExisting) {
-        setExistingPatient(data.patient);
-        return;
-      }
-
-      onSaved();
-    } catch {
-      setError("Network error");
-    } finally {
-      setSaving(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
     }
+
+    if (result.data.existing_patient && !confirmExisting) {
+      setExistingPatient(result.data.patient);
+      return;
+    }
+
+    onSaved();
   };
 
   return (

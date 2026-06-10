@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { getJson, postJson } from "@/lib/api-client";
 import { useOrg } from "@/hooks/useOrg";
 import { SlideOver } from "@/components/ui/slide-over";
 import { Button } from "@/components/ui/button";
@@ -59,28 +60,30 @@ export function FormAssignmentsPanel({
 
   const fetchAssignments = useCallback(async () => {
     setLoading(true);
-    try {
-      const res = await fetch(`/api/forms/assignments?form_id=${formId}`);
-      const data = await res.json();
-      if (res.ok) {
-        setAssignments(data.assignments);
-      }
-    } finally {
-      setLoading(false);
+    const result = await getJson<{ assignments: AssignmentRow[] }>(
+      `/api/forms/assignments?form_id=${formId}`
+    );
+    if (result.ok) {
+      setAssignments(result.data.assignments);
     }
+    setLoading(false);
   }, [formId]);
 
   const fetchPatients = useCallback(async () => {
     if (!org) return;
-    const res = await fetch(`/api/forms/patients?org_id=${org.id}`);
-    const data = await res.json();
-    if (res.ok) {
-      setPatients(data.patients);
+    const result = await getJson<{ patients: PatientOption[] }>(
+      `/api/forms/patients?org_id=${org.id}`
+    );
+    if (result.ok) {
+      setPatients(result.data.patients);
     }
   }, [org]);
 
   useEffect(() => {
     if (open) {
+      // Imperative refetch on panel open. fetchAssignments flips the loading
+      // flag synchronously before its await — intentional, not a state sync.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       fetchAssignments();
       fetchPatients();
     }
@@ -90,63 +93,50 @@ export function FormAssignmentsPanel({
     if (!selectedPatientId) return;
     setCreating(true);
 
-    try {
-      // Create assignment
-      const createRes = await fetch("/api/forms/assignments", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          form_id: formId,
-          patient_id: selectedPatientId,
-        }),
-      });
+    // Create assignment
+    const createResult = await postJson<{ assignment: { id: string } }>(
+      "/api/forms/assignments",
+      { form_id: formId, patient_id: selectedPatientId },
+      "Failed to create assignment"
+    );
 
-      if (!createRes.ok) {
-        const data = await createRes.json();
-        alert(data.error ?? "Failed to create assignment");
-        return;
-      }
-
-      const { assignment } = await createRes.json();
-
-      // Send SMS
-      const sendRes = await fetch("/api/forms/assignments/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assignment_id: assignment.id }),
-      });
-
-      if (!sendRes.ok) {
-        const data = await sendRes.json();
-        alert(data.error ?? "Assignment created but SMS failed");
-      }
-
-      setSelectedPatientId("");
-      fetchAssignments();
-    } finally {
+    if (!createResult.ok) {
+      alert(createResult.error);
       setCreating(false);
+      return;
     }
+
+    // Send SMS
+    const sendResult = await postJson(
+      "/api/forms/assignments/send",
+      { assignment_id: createResult.data.assignment.id },
+      "Assignment created but SMS failed"
+    );
+
+    if (!sendResult.ok) {
+      alert(sendResult.error);
+    }
+
+    setSelectedPatientId("");
+    fetchAssignments();
+    setCreating(false);
   };
 
   const handleResend = async (assignmentId: string) => {
     setSending(assignmentId);
 
-    try {
-      const res = await fetch("/api/forms/assignments/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assignment_id: assignmentId }),
-      });
+    const result = await postJson(
+      "/api/forms/assignments/send",
+      { assignment_id: assignmentId },
+      "Failed to send SMS"
+    );
 
-      if (!res.ok) {
-        const data = await res.json();
-        alert(data.error ?? "Failed to send SMS");
-      }
-
-      fetchAssignments();
-    } finally {
-      setSending(null);
+    if (!result.ok) {
+      alert(result.error);
     }
+
+    fetchAssignments();
+    setSending(null);
   };
 
   const formatTime = (dateStr: string | null) => {

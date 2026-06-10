@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { postJson } from "@/lib/api-client";
 import { SlideOver } from "@/components/ui/slide-over";
 import {
   fetchReviewData,
@@ -105,25 +106,19 @@ export function FormHandoffPanel({
     setMarking(true);
     setError(null);
 
-    try {
-      const res = await fetch("/api/tasks/mark-transcribed", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action_id: actionId }),
-      });
+    const result = await postJson(
+      "/api/tasks/mark-transcribed",
+      { action_id: actionId },
+      "Failed to mark as transcribed"
+    );
+    setMarking(false);
 
-      if (!res.ok) {
-        const data = await res.json();
-        setError(data.error ?? "Failed to mark as transcribed");
-        return;
-      }
-
-      onTranscribed();
-    } catch {
-      setError("Network error");
-    } finally {
-      setMarking(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
     }
+
+    onTranscribed();
   };
 
   const allFieldsText = fields

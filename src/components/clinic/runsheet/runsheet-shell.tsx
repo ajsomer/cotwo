@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useTransition } from "react";
 import dynamic from "next/dynamic";
+import { getJson, postJson } from "@/lib/api-client";
 import { RunsheetHeader } from "./runsheet-header";
 import { RoomContainer } from "./room-container";
 import { enrichSessions } from "@/lib/runsheet/derived-state";
@@ -12,6 +13,7 @@ import { seedDemoData, nukeSessions } from "@/lib/runsheet/seed";
 import { PatientContactCard } from "@/components/clinic/patient/patient-contact-card";
 import { PatientSlideOverProvider } from "@/components/clinic/patient/patient-slide-over-context";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
+import type { OnboardingState } from "@/stores/clinic-store";
 import { useLocation } from "@/hooks/useLocation";
 import { useRole } from "@/hooks/useRole";
 import { usePmsConnection } from "@/hooks/usePmsConnection";
@@ -134,14 +136,10 @@ export function RunsheetShell() {
     if (onboardingLoaded) return;
     let cancelled = false;
     void (async () => {
-      try {
-        const res = await fetch("/api/onboarding/state");
-        if (!res.ok || cancelled) return;
-        const state = await res.json();
-        getClinicStore().setOnboarding(state);
-      } catch {
-        // Swallow — onboarding is non-critical for the run sheet itself.
-      }
+      // Failures swallowed — onboarding is non-critical for the run sheet itself.
+      const result = await getJson<Partial<OnboardingState>>("/api/onboarding/state");
+      if (!result.ok || cancelled) return;
+      getClinicStore().setOnboarding(result.data);
     })();
     return () => {
       cancelled = true;
@@ -284,11 +282,7 @@ export function RunsheetShell() {
   const onboarding = useClinicStore((s) => s.onboarding);
 
   async function advanceOnboardingStage(to: "call_active" | "call_completed") {
-    await fetch("/api/onboarding/advance-stage", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ to }),
-    });
+    await postJson("/api/onboarding/advance-stage", { to });
     getClinicStore().setOnboarding({ stage: to });
   }
 

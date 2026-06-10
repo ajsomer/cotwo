@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState } from "react";
+import { postJson } from "@/lib/api-client";
 import { SlideOver } from "@/components/ui/slide-over";
 import { CollapsibleSection } from "@/components/ui/collapsible-section";
 import { useClinicStore } from "@/stores/clinic-store";
@@ -114,9 +115,11 @@ export function AppointmentTypeEditor({
   const [error, setError] = useState<string | null>(null);
   const [showDiscardBanner, setShowDiscardBanner] = useState(false);
 
-  const toggleSection = useCallback((key: string) => {
+  // Plain function (not useCallback): every call site wraps it in an inline
+  // arrow anyway, and the React Compiler memoizes the component.
+  const toggleSection = (key: string) => {
     setExpandedSections((prev) => ({ ...prev, [key]: !prev[key] }));
-  }, []);
+  };
 
   // Summary lines for collapsed sections
   const detailsSummary = (() => {
@@ -179,59 +182,51 @@ export function AppointmentTypeEditor({
     setSaving(true);
     setError(null);
 
-    try {
-      const res = await fetch("/api/appointment-types/configure", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          appointment_type_id: appointmentType?.id ?? null,
-          org_id: org?.id,
-          name: name.trim(),
-          duration_minutes: durationMinutes === "" ? null : durationMinutes,
-          modality,
-          default_fee_cents: defaultFeeDollars ? Math.round(parseFloat(defaultFeeDollars) * 100) : 0,
-          terminal_type: "run_sheet",
-          includes_card_capture: includesCardCapture,
-          includes_consent: includesConsent,
-          form_ids: selectedFormIds,
-          initial_message: initialMessage,
-          reminders: reminders.map((r) => ({
-            id: r.id,
-            offset_days: r.offset_days,
-            message_body: r.message_body,
-          })),
-          at_risk_after_days: atRiskAfterDays || null,
-          overdue_after_days: overdueAfterDays || null,
-        }),
-      });
+    const result = await postJson<{ error?: string }>(
+      "/api/appointment-types/configure",
+      {
+        appointment_type_id: appointmentType?.id ?? null,
+        org_id: org?.id,
+        name: name.trim(),
+        duration_minutes: durationMinutes === "" ? null : durationMinutes,
+        modality,
+        default_fee_cents: defaultFeeDollars ? Math.round(parseFloat(defaultFeeDollars) * 100) : 0,
+        terminal_type: "run_sheet",
+        includes_card_capture: includesCardCapture,
+        includes_consent: includesConsent,
+        form_ids: selectedFormIds,
+        initial_message: initialMessage,
+        reminders: reminders.map((r) => ({
+          id: r.id,
+          offset_days: r.offset_days,
+          message_body: r.message_body,
+        })),
+        at_risk_after_days: atRiskAfterDays || null,
+        overdue_after_days: overdueAfterDays || null,
+      },
+      "Failed to save"
+    );
 
-      const result = await res.json();
-
-      if (!res.ok || result.error) {
-        setError(result.error ?? "Failed to save");
-        return;
-      }
-
-      // For PMS-imported types, persist the confirmed modality + sync toggle to
-      // the PMS link (this is what gates run-sheet sync). §025
-      if (isPmsSynced && appointmentType?.id) {
-        await fetch("/api/pms/confirm-type", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            appointmentTypeId: appointmentType.id,
-            confirmedModality: modality,
-            syncEnabled: pmsSyncEnabled,
-          }),
-        });
-      }
-
-      onSaved();
-    } catch {
-      setError("Network error");
-    } finally {
+    // The configure route can also report an error in a 200 body.
+    const saveError = result.ok ? result.data?.error : result.error;
+    if (saveError) {
+      setError(saveError);
       setSaving(false);
+      return;
     }
+
+    // For PMS-imported types, persist the confirmed modality + sync toggle to
+    // the PMS link (this is what gates run-sheet sync). §025
+    if (isPmsSynced && appointmentType?.id) {
+      await postJson("/api/pms/confirm-type", {
+        appointmentTypeId: appointmentType.id,
+        confirmedModality: modality,
+        syncEnabled: pmsSyncEnabled,
+      });
+    }
+
+    setSaving(false);
+    onSaved();
   };
 
   const handleClose = () => {

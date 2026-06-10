@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getJson, postJson } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, Loader2, X } from "lucide-react";
 
@@ -52,14 +53,11 @@ export function PmsSelectionGrid() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const res = await fetch("/api/pms/providers");
-        const data = res.ok
-          ? ((await res.json()) as { providers?: ProviderConnectMeta[] })
-          : null;
-        if (!cancelled) setProviderMeta(data?.providers ?? []);
-      } catch {
-        if (!cancelled) setProviderMeta([]);
+      const result = await getJson<{ providers?: ProviderConnectMeta[] }>(
+        "/api/pms/providers"
+      );
+      if (!cancelled) {
+        setProviderMeta(result.ok ? (result.data?.providers ?? []) : []);
       }
     })();
     return () => {
@@ -95,15 +93,14 @@ export function PmsSelectionGrid() {
     setConnecting(provider.id);
     setError(null);
 
-    const res = await fetch("/api/setup/pms", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ provider: provider.id, skipped: false }),
+    const result = await postJson("/api/setup/pms", {
+      provider: provider.id,
+      skipped: false,
     });
 
     setConnecting(null);
 
-    if (!res.ok) {
+    if (!result.ok) {
       setError("Connection failed. Try again or choose a different PMS.");
       return;
     }
@@ -155,22 +152,14 @@ export function PmsSelectionGrid() {
 
   async function handleSkip() {
     setSubmitting(true);
-    await fetch("/api/setup/pms", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ provider: null, skipped: true }),
-    });
+    await postJson("/api/setup/pms", { provider: null, skipped: true });
     window.location.href = "/setup/rooms";
   }
 
   async function handleContinueWithoutPms() {
     setComingSoonModal(null);
     setSubmitting(true);
-    await fetch("/api/setup/pms", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ provider: null, skipped: true }),
-    });
+    await postJson("/api/setup/pms", { provider: null, skipped: true });
     window.location.href = "/setup/rooms";
   }
 

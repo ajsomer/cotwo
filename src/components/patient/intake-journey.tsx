@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { Model } from 'survey-core';
 import { Survey } from 'survey-react-ui';
 import 'survey-core/survey-core.min.css';
+import { postJson } from '@/lib/api-client';
 import { coviuTheme } from '@/lib/survey/theme';
 import { PersistentHeader } from './persistent-header';
 import { PhoneVerification } from './phone-verification';
@@ -294,17 +295,16 @@ export function IntakeJourney({
     }
     if (patient || !state.patient_id) return;
     (async () => {
-      const res = await fetch(`/api/intake/${token}/verify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          phone_number: phoneNumber ?? 'resume',
-          selected_patient_id: state.patient_id,
-        }),
+      const result = await postJson<{
+        status?: string;
+        contact?: { id: string; first_name: string; last_name: string };
+      }>(`/api/intake/${token}/verify`, {
+        phone_number: phoneNumber ?? 'resume',
+        selected_patient_id: state.patient_id,
       });
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data.status === 'matched') {
+      if (!result.ok) return;
+      const data = result.data;
+      if (data?.status === 'matched' && data.contact) {
         setPatient({
           id: data.contact.id,
           first_name: data.contact.first_name,
@@ -695,23 +695,17 @@ function ConsentStep({
   const submit = async () => {
     setError(null);
     setSaving(true);
-    try {
-      const res = await fetch(`/api/intake/${token}/complete-item`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ item_type: 'consent' }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        setError(data.error || 'Failed to record consent');
-        return;
-      }
-      onComplete();
-    } catch {
-      setError('Something went wrong. Please try again.');
-    } finally {
-      setSaving(false);
+    const result = await postJson(
+      `/api/intake/${token}/complete-item`,
+      { item_type: 'consent' },
+      'Failed to record consent'
+    );
+    setSaving(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
     }
+    onComplete();
   };
 
   return (
@@ -832,27 +826,21 @@ function FormStep({
     const handler = async (sender: Model) => {
       setSubmitting(true);
       setError(null);
-      try {
-        const res = await fetch(`/api/intake/${token}/complete-item`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            item_type: 'form',
-            form_id: formId,
-            data: sender.data,
-          }),
-        });
-        if (!res.ok) {
-          const data = await res.json();
-          setError(data.error || 'Failed to submit form');
-          return;
-        }
-        onComplete();
-      } catch {
-        setError('Something went wrong. Please try again.');
-      } finally {
-        setSubmitting(false);
+      const result = await postJson(
+        `/api/intake/${token}/complete-item`,
+        {
+          item_type: 'form',
+          form_id: formId,
+          data: sender.data,
+        },
+        'Failed to submit form'
+      );
+      setSubmitting(false);
+      if (!result.ok) {
+        setError(result.error);
+        return;
       }
+      onComplete();
     };
     survey.onComplete.add(handler);
     return () => {

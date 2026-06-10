@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { postJson } from "@/lib/api-client";
 import type { MappingDataDTO } from "./types";
 
 interface Props {
@@ -59,15 +60,11 @@ function PractitionerRow({
   const save = async (roomId: string) => {
     setSaving(true);
     setValue(roomId);
-    await fetch("/api/pms/mappings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        locationId,
-        kind: "practitioner",
-        externalId: practitioner.externalId,
-        roomId: roomId || null,
-      }),
+    await postJson("/api/pms/mappings", {
+      locationId,
+      kind: "practitioner",
+      externalId: practitioner.externalId,
+      roomId: roomId || null,
     });
     setSaving(false);
     onSaved();
