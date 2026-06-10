@@ -5,6 +5,7 @@ import {
   requireStaffOrgAccess,
   assertFormsInOrg,
 } from "@/lib/auth/staff-access";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 /** Collect every form id a pathway block references (form_id + config). */
 function collectPathwayBlockFormIds(block: Record<string, unknown>): string[] {
@@ -37,10 +38,7 @@ export async function POST(request: NextRequest) {
 
     const access = await requireStaffOrgAccess(org_id);
     if (!access.ok) {
-      return NextResponse.json(
-        { error: access.status === 401 ? "Unauthorized" : "Not found" },
-        { status: access.status }
-      );
+      return denyResponse(access);
     }
 
     if (!name?.trim()) {

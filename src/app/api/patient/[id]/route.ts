@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { assertStaffCanAccessPatient } from "@/lib/auth/staff-access";
 import { fetchPatientSummary, fetchPatientHistory } from "./_shared";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 /**
  * GET /api/patient/:id?session_id=xxx&appointment_id=yyy
@@ -20,10 +21,7 @@ export async function GET(
 
   const access = await assertStaffCanAccessPatient(patientId);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthenticated" : "Patient not found" },
-      { status: access.status },
-    );
+    return denyResponse(access, { notFound: "Patient not found" });
   }
 
   const [summary, history] = await Promise.all([

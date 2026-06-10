@@ -6,6 +6,7 @@ import {
   requireStaffCanAccessWorkflowTemplate,
   assertFormsInOrg,
 } from "@/lib/auth/staff-access";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 // Column projection aliasing Drizzle's camelCase fields back to the snake_case
 // shape the UI consumes (byte-identical to the old supabase `*`).
@@ -86,10 +87,7 @@ export async function PATCH(
       templateId
     );
     if (!access.ok) {
-      return NextResponse.json(
-        { error: access.status === 401 ? "Unauthorized" : "Not found" },
-        { status: access.status }
-      );
+      return denyResponse(access);
     }
 
     // Parse and validate input

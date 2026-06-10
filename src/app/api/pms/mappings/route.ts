@@ -9,6 +9,7 @@ import {
   saveBusinessMapping,
   savePractitionerMapping,
 } from "@/lib/pms/integrations-service";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 const PM_ROLES = new Set(["clinic_owner", "practice_manager"]);
 
@@ -20,7 +21,7 @@ export async function GET(request: NextRequest) {
   }
   const access = await requireStaffLocationAccess(locationId);
   if (!access.ok) {
-    return NextResponse.json({ error: "Forbidden" }, { status: access.status });
+    return denyResponse(access);
   }
   const connection = await getConnectionForLocation(locationId);
   if (!connection || !isSyncActive(connection)) {
@@ -50,7 +51,7 @@ export async function POST(request: NextRequest) {
   }
   const access = await requireStaffLocationAccess(locationId);
   if (!access.ok) {
-    return NextResponse.json({ error: "Forbidden" }, { status: access.status });
+    return denyResponse(access);
   }
   if (!PM_ROLES.has(access.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });

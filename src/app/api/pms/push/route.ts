@@ -6,6 +6,7 @@ import { requireStaffLocationAccess } from "@/lib/auth/staff-access";
 import { getSessionPmsGate } from "@/lib/pms/session-gate";
 import { pushSessionFormSubmissions } from "@/lib/pms/sync/push";
 import { webLinkForPatientBySession } from "@/lib/pms/web-link";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 /**
  * GET ?sessionId= → the §6.1 gate (should the Done step show "send to {PMS}").
@@ -60,7 +61,7 @@ async function authorizeSession(
   }
   const access = await requireStaffLocationAccess(session.locationId);
   if (!access.ok) {
-    return NextResponse.json({ error: "Forbidden" }, { status: access.status });
+    return denyResponse(access);
   }
   return null;
 }

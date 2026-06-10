@@ -18,10 +18,11 @@ import {
 } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import { NextResponse, type NextRequest } from "next/server";
+import { unauthenticatedResponse } from "@/lib/api/route-helpers";
 
 export async function POST(request: NextRequest) {
   const userId = await getAuthenticatedUserId();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!userId) return unauthenticatedResponse();
 
   // The test session uses a placeholder phone number — the OTP code is
   // surfaced via the console SMS provider (dev) and the user copies it from

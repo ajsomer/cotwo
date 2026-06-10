@@ -11,6 +11,7 @@ import {
 import { eq } from 'drizzle-orm';
 import { EntryContext } from '@/lib/types/domain';
 import type { OrgTier, RoomType } from '@/lib/types/domain';
+import { parseJsonBody } from '@/lib/api/route-helpers';
 
 /**
  * POST /api/patient/resolve
@@ -18,12 +19,9 @@ import type { OrgTier, RoomType } from '@/lib/types/domain';
  * Checks sessions.entry_token → rooms.link_token → locations.qr_token in order.
  */
 export async function POST(request: NextRequest) {
-  let token: unknown;
-  try {
-    ({ token } = await request.json());
-  } catch {
-    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
-  }
+  const parsed = await parseJsonBody<{ token?: unknown }>(request);
+  if (!parsed.ok) return parsed.response;
+  const { token } = parsed.body;
 
   if (!token || typeof token !== 'string') {
     return NextResponse.json({ error: 'Token is required' }, { status: 400 });

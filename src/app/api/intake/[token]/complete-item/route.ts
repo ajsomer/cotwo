@@ -11,6 +11,7 @@ import { eq, inArray } from 'drizzle-orm';
 import { broadcastReadinessChange, broadcastSessionChange } from '@/lib/realtime/broadcast';
 import { fireActionNow } from '@/lib/workflows/engine';
 import { getBaseUrl } from '@/lib/utils/url';
+import { parseJsonBody } from '@/lib/api/route-helpers';
 
 type ItemType = 'card' | 'consent' | 'form';
 
@@ -28,12 +29,13 @@ export async function POST(
   { params }: { params: Promise<{ token: string }> }
 ) {
   const { token } = await params;
-  const body = await request.json();
-  const { item_type, form_id, data } = body as {
+  const parsed = await parseJsonBody<{
     item_type: ItemType;
     form_id?: string;
     data?: unknown;
-  };
+  }>(request);
+  if (!parsed.ok) return parsed.response;
+  const { item_type, form_id, data } = parsed.body;
 
   if (!item_type) {
     return NextResponse.json({ error: 'item_type is required' }, { status: 400 });

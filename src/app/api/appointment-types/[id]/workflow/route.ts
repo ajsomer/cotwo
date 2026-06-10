@@ -7,6 +7,7 @@ import {
 } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import { requireStaffCanAccessAppointmentType } from "@/lib/auth/staff-access";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 // POST /api/appointment-types/[id]/workflow
 // Creates a new pre-appointment workflow template for this appointment type
@@ -21,10 +22,7 @@ export async function POST(
     appointmentTypeId
   );
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Not found" },
-      { status: access.status }
-    );
+    return denyResponse(access);
   }
 
   try {
@@ -146,10 +144,7 @@ export async function DELETE(
     appointmentTypeId
   );
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Not found" },
-      { status: access.status }
-    );
+    return denyResponse(access);
   }
 
   try {

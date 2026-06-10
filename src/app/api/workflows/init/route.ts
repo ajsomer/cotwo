@@ -4,6 +4,7 @@ import { forms as formsT } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import { fetchWorkflowsInit } from "@/lib/clinic/fetchers/workflows";
 import { requireStaffOrgAccess } from "@/lib/auth/staff-access";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 // GET /api/workflows/init?org_id=xxx
 // Returns everything the workflows page needs — both pre- and
@@ -19,10 +20,7 @@ export async function GET(request: NextRequest) {
 
   const access = await requireStaffOrgAccess(orgId);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Not found" },
-      { status: access.status },
-    );
+    return denyResponse(access);
   }
 
   try {

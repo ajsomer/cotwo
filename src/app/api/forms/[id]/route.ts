@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { forms as formsT } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { requireStaffCanAccessForm } from "@/lib/auth/staff-access";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 // GET /api/forms/[id]
 export async function GET(
@@ -13,10 +14,7 @@ export async function GET(
 
   const access = await requireStaffCanAccessForm(id);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Not found" },
-      { status: access.status }
-    );
+    return denyResponse(access);
   }
 
   try {

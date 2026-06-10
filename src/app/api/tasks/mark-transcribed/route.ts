@@ -8,6 +8,7 @@ import {
 import { eq } from "drizzle-orm";
 import { broadcastReadinessChange } from "@/lib/realtime/broadcast";
 import { requireStaffCanAccessAppointment } from "@/lib/auth/staff-access";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 /**
  * POST /api/tasks/mark-transcribed
@@ -48,10 +49,7 @@ export async function POST(request: NextRequest) {
       action.appointment_id,
     );
     if (!access.ok) {
-      return NextResponse.json(
-        { error: access.status === 401 ? "Unauthorized" : "Not found" },
-        { status: access.status },
-      );
+      return denyResponse(access);
     }
 
     if (action.status !== "completed") {

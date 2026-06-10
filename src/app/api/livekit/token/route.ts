@@ -9,6 +9,7 @@ import {
 } from "@/lib/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { generateAccessToken } from "@/lib/livekit/tokens";
+import { parseJsonBody, unauthenticatedResponse } from "@/lib/api/route-helpers";
 
 /**
  * POST /api/livekit/token
@@ -24,7 +25,9 @@ import { generateAccessToken } from "@/lib/livekit/tokens";
  *   - Session status must be `in_session`.
  */
 export async function POST(request: NextRequest) {
-  const { sessionId } = await request.json();
+  const parsed = await parseJsonBody<{ sessionId?: unknown }>(request);
+  if (!parsed.ok) return parsed.response;
+  const { sessionId } = parsed.body;
 
   if (!sessionId || typeof sessionId !== "string") {
     return NextResponse.json({ error: "sessionId required" }, { status: 400 });
@@ -34,7 +37,7 @@ export async function POST(request: NextRequest) {
   const userId = await getAuthenticatedUserId();
 
   if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return unauthenticatedResponse();
   }
 
   // 2. Load the session with its room + location.

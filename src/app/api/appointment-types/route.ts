@@ -11,6 +11,7 @@ import {
   requireStaffOrgAccess,
   requireStaffCanAccessAppointmentType,
 } from "@/lib/auth/staff-access";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 // GET /api/appointment-types?org_id=xxx
 // Returns appointment types with pre-workflow template IDs, action counts,
@@ -23,10 +24,7 @@ export async function GET(request: NextRequest) {
 
   const access = await requireStaffOrgAccess(orgId);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Not found" },
-      { status: access.status }
-    );
+    return denyResponse(access);
   }
 
   try {
@@ -133,10 +131,7 @@ export async function POST(request: NextRequest) {
 
     const access = await requireStaffOrgAccess(org_id);
     if (!access.ok) {
-      return NextResponse.json(
-        { error: access.status === 401 ? "Unauthorized" : "Not found" },
-        { status: access.status }
-      );
+      return denyResponse(access);
     }
 
     const [data] = await db
@@ -185,10 +180,7 @@ export async function PATCH(request: NextRequest) {
 
     const access = await requireStaffCanAccessAppointmentType(id);
     if (!access.ok) {
-      return NextResponse.json(
-        { error: access.status === 401 ? "Unauthorized" : "Not found" },
-        { status: access.status }
-      );
+      return denyResponse(access);
     }
 
     const [existing] = await db
@@ -250,10 +242,7 @@ export async function DELETE(request: NextRequest) {
 
   const access = await requireStaffCanAccessAppointmentType(id);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Not found" },
-      { status: access.status }
-    );
+    return denyResponse(access);
   }
 
   try {

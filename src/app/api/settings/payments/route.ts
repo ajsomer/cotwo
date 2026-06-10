@@ -8,6 +8,7 @@ import {
 import { eq } from "drizzle-orm";
 import { fetchPaymentConfig } from "@/lib/clinic/fetchers/payments";
 import { requireStaffLocationAccess } from "@/lib/auth/staff-access";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 // GET /api/settings/payments?location_id=xxx
 // Returns routing mode, location Stripe account, and clinician Stripe statuses
@@ -23,10 +24,7 @@ export async function GET(request: NextRequest) {
 
   const access = await requireStaffLocationAccess(locationId);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Forbidden" },
-      { status: access.status },
-    );
+    return denyResponse(access);
   }
 
   try {
@@ -69,10 +67,7 @@ export async function PATCH(request: NextRequest) {
 
         const routingAccess = await requireStaffLocationAccess(location_id);
         if (!routingAccess.ok) {
-          return NextResponse.json(
-            { error: routingAccess.status === 401 ? "Unauthorized" : "Forbidden" },
-            { status: routingAccess.status },
-          );
+          return denyResponse(routingAccess);
         }
 
         // Get org_id from location
@@ -113,10 +108,7 @@ export async function PATCH(request: NextRequest) {
 
           const connectAccess = await requireStaffLocationAccess(location_id);
           if (!connectAccess.ok) {
-            return NextResponse.json(
-              { error: connectAccess.status === 401 ? "Unauthorized" : "Forbidden" },
-              { status: connectAccess.status },
-            );
+            return denyResponse(connectAccess);
           }
 
           await db
@@ -173,10 +165,7 @@ export async function PATCH(request: NextRequest) {
 
           const disconnectAccess = await requireStaffLocationAccess(location_id);
           if (!disconnectAccess.ok) {
-            return NextResponse.json(
-              { error: disconnectAccess.status === 401 ? "Unauthorized" : "Forbidden" },
-              { status: disconnectAccess.status },
-            );
+            return denyResponse(disconnectAccess);
           }
 
           await db
@@ -258,10 +247,7 @@ async function requireStaffAssignmentLocationAccess(
   if (!access.ok) {
     return {
       ok: false,
-      response: NextResponse.json(
-        { error: access.status === 401 ? "Unauthorized" : "Forbidden" },
-        { status: access.status },
-      ),
+      response: denyResponse(access),
     };
   }
 

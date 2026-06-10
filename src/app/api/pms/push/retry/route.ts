@@ -4,6 +4,7 @@ import { formSubmissions, sessions as sessionsT } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { requireStaffLocationAccess } from "@/lib/auth/staff-access";
 import { retryField } from "@/lib/pms/sync/push";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 /**
  * POST { submissionId, questionName, value } → re-send one corrected field
@@ -41,7 +42,7 @@ export async function POST(request: NextRequest) {
   }
   const access = await requireStaffLocationAccess(session.locationId);
   if (!access.ok) {
-    return NextResponse.json({ error: "Forbidden" }, { status: access.status });
+    return denyResponse(access);
   }
 
   const result = await retryField({

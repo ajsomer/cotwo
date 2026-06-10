@@ -8,6 +8,7 @@ import {
 } from '@/lib/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { normalisePhone } from '@/lib/phone/normalise';
+import { parseJsonBody } from '@/lib/api/route-helpers';
 
 /**
  * POST /api/intake/[token]/verify
@@ -33,11 +34,12 @@ export async function POST(
   { params }: { params: Promise<{ token: string }> }
 ) {
   const { token } = await params;
-  const body = await request.json();
-  const { phone_number, selected_patient_id } = body as {
+  const parsed = await parseJsonBody<{
     phone_number?: string;
     selected_patient_id?: string;
-  };
+  }>(request);
+  if (!parsed.ok) return parsed.response;
+  const { phone_number, selected_patient_id } = parsed.body;
 
   if (!phone_number) {
     return NextResponse.json(

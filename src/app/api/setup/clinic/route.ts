@@ -12,12 +12,13 @@ import { generateSlug } from "@/lib/utils/slug";
 import { seedDefaultWorkflows } from "@/lib/workflows/seed-defaults";
 import { newPatientIntakeSchema, defaultFormSchema } from "@/lib/survey/identity-page";
 import { NextResponse, type NextRequest } from "next/server";
+import { unauthenticatedResponse } from "@/lib/api/route-helpers";
 
 export async function POST(request: NextRequest) {
   const userId = await getAuthenticatedUserId();
 
   if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return unauthenticatedResponse();
   }
 
   const body = await request.json();

@@ -11,6 +11,7 @@ import { eq } from 'drizzle-orm';
 import { resolveEntryTokenScope } from '@/lib/patient/entry-token';
 import { assertPatientInOrg } from '@/lib/auth/staff-access';
 import { normalisePhone } from '@/lib/phone/normalise';
+import { parseJsonBody } from '@/lib/api/route-helpers';
 
 /**
  * POST /api/patient/identity
@@ -26,7 +27,16 @@ import { normalisePhone } from '@/lib/phone/normalise';
  * to the token's org.
  */
 export async function POST(request: NextRequest) {
-  const body = await request.json();
+  const parsed = await parseJsonBody<{
+    token?: string;
+    phone_number?: string;
+    existing_patient_id?: string;
+    first_name?: string;
+    last_name?: string;
+    date_of_birth?: string;
+  }>(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
   const { token, phone_number: rawPhone } = body;
 
   if (!token || !rawPhone) {

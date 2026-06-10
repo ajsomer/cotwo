@@ -10,6 +10,7 @@ import {
 import { eq } from "drizzle-orm";
 import { requireAuthenticatedUser } from "@/lib/auth/staff-access";
 import { extractFieldsFromSchema } from "@/lib/forms/extract-fields";
+import { unauthenticatedResponse } from "@/lib/api/route-helpers";
 
 /**
  * GET /api/forms/standalone/submissions/[id]
@@ -37,7 +38,7 @@ export async function GET(
 
   const auth = await requireAuthenticatedUser();
   if (!auth.ok) {
-    return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
+    return unauthenticatedResponse();
   }
 
   const [submission] = await db

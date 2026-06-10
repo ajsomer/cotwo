@@ -13,6 +13,7 @@ import {
   requireAuthenticatedUser,
   requireStaffLocationAccess,
 } from "@/lib/auth/staff-access";
+import { denyResponse, unauthenticatedResponse } from "@/lib/api/route-helpers";
 
 // Mutation routes take a room id, not a location id. Order matters: auth
 // FIRST, then service-role lookup, then location access. Reversing those
@@ -30,7 +31,7 @@ async function gateRoomMutation(
   if (!auth.ok) {
     return {
       ok: false,
-      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+      response: unauthenticatedResponse(),
     };
   }
 
@@ -51,10 +52,7 @@ async function gateRoomMutation(
   if (!access.ok) {
     return {
       ok: false,
-      response: NextResponse.json(
-        { error: access.status === 401 ? "Unauthorized" : "Forbidden" },
-        { status: access.status },
-      ),
+      response: denyResponse(access),
     };
   }
 
@@ -76,10 +74,7 @@ export async function GET(request: NextRequest) {
 
   const access = await requireStaffLocationAccess(locationId);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Forbidden" },
-      { status: access.status },
-    );
+    return denyResponse(access);
   }
 
   try {
@@ -134,10 +129,7 @@ export async function POST(request: NextRequest) {
 
   const access = await requireStaffLocationAccess(location_id);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Forbidden" },
-      { status: access.status },
-    );
+    return denyResponse(access);
   }
 
   const [room] = await db

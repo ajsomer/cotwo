@@ -4,6 +4,7 @@ import { formSubmissions, forms as formsT } from "@/lib/db/schema";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { extractFieldsFromSchema } from "@/lib/forms/extract-fields";
 import { requireStaffCanAccessAppointment } from "@/lib/auth/staff-access";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 /**
  * GET /api/tasks/form-submission?appointment_id=xxx&form_name=yyy
@@ -22,10 +23,7 @@ export async function GET(request: NextRequest) {
 
   const access = await requireStaffCanAccessAppointment(appointmentId);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Not found" },
-      { status: access.status },
-    );
+    return denyResponse(access);
   }
 
   try {

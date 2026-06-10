@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { requireStaffLocationAccess } from "@/lib/auth/staff-access";
 import { getAppointmentPmsGate } from "@/lib/pms/session-gate";
 import { pushAppointmentFormSubmissions } from "@/lib/pms/sync/push";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 /**
  * Appointment-scoped PMS write-back, used by the intake handoff panel.
@@ -58,7 +59,7 @@ async function authorize(appointmentId: string): Promise<NextResponse | null> {
   }
   const access = await requireStaffLocationAccess(appt.locationId);
   if (!access.ok) {
-    return NextResponse.json({ error: "Forbidden" }, { status: access.status });
+    return denyResponse(access);
   }
   return null;
 }

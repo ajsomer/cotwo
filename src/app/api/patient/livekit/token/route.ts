@@ -7,6 +7,7 @@ import {
 } from "@/lib/db/schema";
 import { eq, asc } from "drizzle-orm";
 import { generateAccessToken } from "@/lib/livekit/tokens";
+import { parseJsonBody } from "@/lib/api/route-helpers";
 
 /**
  * POST /api/patient/livekit/token
@@ -21,7 +22,9 @@ import { generateAccessToken } from "@/lib/livekit/tokens";
  *     been admitted yet and shouldn't have a video token (409).
  */
 export async function POST(request: NextRequest) {
-  const { entryToken } = await request.json();
+  const parsed = await parseJsonBody<{ entryToken?: unknown }>(request);
+  if (!parsed.ok) return parsed.response;
+  const { entryToken } = parsed.body;
 
   if (!entryToken || typeof entryToken !== "string") {
     return NextResponse.json({ error: "entryToken required" }, { status: 400 });

@@ -5,6 +5,7 @@ import {
   isSyncActive,
 } from "@/lib/pms/connection";
 import { pullConnection } from "@/lib/pms/sync/pull";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 /**
  * Staff-triggered "Sync now" for a location (plan §5). Pulls the location's
@@ -20,7 +21,7 @@ export async function POST(request: NextRequest) {
 
   const access = await requireStaffLocationAccess(locationId);
   if (!access.ok) {
-    return NextResponse.json({ error: "Forbidden" }, { status: access.status });
+    return denyResponse(access);
   }
 
   const connection = await getConnectionForLocation(locationId);

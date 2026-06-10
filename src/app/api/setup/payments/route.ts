@@ -3,13 +3,15 @@ import { stripeConnections, locations as locationsT } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { resolveDefaultStaffOrg, getAuthenticatedUserId } from "@/lib/auth/staff-access";
 import { NextResponse, type NextRequest } from "next/server";
+import { parseJsonBody, unauthenticatedResponse } from "@/lib/api/route-helpers";
 
 export async function POST(request: NextRequest) {
   const userId = await getAuthenticatedUserId();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!userId) return unauthenticatedResponse();
 
-  const body = await request.json();
-  const { skipped } = body as { skipped: boolean };
+  const parsed = await parseJsonBody<{ skipped?: boolean }>(request);
+  if (!parsed.ok) return parsed.response;
+  const { skipped } = parsed.body;
 
   // Setup flow: no scope is supplied, so resolve the user's default org.
   const resolved = await resolveDefaultStaffOrg(userId);

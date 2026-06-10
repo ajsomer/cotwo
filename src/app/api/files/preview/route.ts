@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireStaffOrgAccess } from "@/lib/auth/staff-access";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 // GET /api/files/preview?storage_path=xxx — generate a short-lived signed URL for staff preview
 export async function GET(request: NextRequest) {
@@ -21,10 +22,7 @@ export async function GET(request: NextRequest) {
 
   const access = await requireStaffOrgAccess(orgId);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Not found" },
-      { status: access.status },
-    );
+    return denyResponse(access);
   }
 
   try {

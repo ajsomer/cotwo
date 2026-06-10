@@ -4,6 +4,7 @@ import { formSubmissions, forms as formsT } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { assertStaffCanAccessSubmission } from "@/lib/auth/staff-access";
 import { broadcastOrgSubmissionChange } from "@/lib/realtime/broadcast";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 /**
  * POST /api/forms/standalone/submissions/[id]/archive
@@ -27,7 +28,7 @@ export async function POST(
 
   const access = await assertStaffCanAccessSubmission(id);
   if (!access.ok) {
-    return NextResponse.json({ error: "Not found" }, { status: access.status });
+    return denyResponse(access);
   }
 
   const [submission] = await db

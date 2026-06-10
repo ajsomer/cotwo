@@ -8,6 +8,7 @@ import {
   formSubmissions,
 } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { parseJsonBody } from "@/lib/api/route-helpers";
 
 // GET /api/forms/fill/[token] — resolve assignment for patient form fill
 export async function GET(
@@ -93,8 +94,9 @@ export async function POST(
   { params }: { params: Promise<{ token: string }> }
 ) {
   const { token } = await params;
-  const body = await request.json();
-  const { responses } = body;
+  const parsed = await parseJsonBody<{ responses?: unknown }>(request);
+  if (!parsed.ok) return parsed.response;
+  const { responses } = parsed.body;
 
   if (!responses) {
     return NextResponse.json({ error: "responses required" }, { status: 400 });

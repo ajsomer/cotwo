@@ -11,6 +11,7 @@ import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { scheduleWorkflowForAppointment } from "@/lib/workflows/scanner";
 import { requireStaffLocationAccess } from "@/lib/auth/staff-access";
 import { normalisePhone } from "@/lib/phone/normalise";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 /**
  * POST /api/tasks/add-patient
@@ -62,10 +63,7 @@ export async function POST(request: NextRequest) {
 
     const access = await requireStaffLocationAccess(location_id);
     if (!access.ok) {
-      return NextResponse.json(
-        { error: access.status === 401 ? "Unauthorized" : "Forbidden" },
-        { status: access.status },
-      );
+      return denyResponse(access);
     }
 
     // Check for existing patient by phone + DOB + org

@@ -9,6 +9,7 @@ import {
   requireStaffOrgAccess,
   requireStaffCanAccessForm,
 } from "@/lib/auth/staff-access";
+import { denyResponse, parseJsonBody } from "@/lib/api/route-helpers";
 
 // GET /api/forms?org_id=xxx
 export async function GET(request: NextRequest) {
@@ -20,10 +21,7 @@ export async function GET(request: NextRequest) {
 
   const access = await requireStaffOrgAccess(orgId);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Not found" },
-      { status: access.status }
-    );
+    return denyResponse(access);
   }
 
   try {
@@ -37,8 +35,14 @@ export async function GET(request: NextRequest) {
 
 // POST /api/forms
 export async function POST(request: NextRequest) {
-  const body = await request.json();
-  const { org_id, name, description, schema } = body;
+  const parsed = await parseJsonBody<{
+    org_id?: string;
+    name?: string;
+    description?: string | null;
+    schema?: Record<string, unknown>;
+  }>(request);
+  if (!parsed.ok) return parsed.response;
+  const { org_id, name, description, schema } = parsed.body;
 
   if (!org_id || !name) {
     return NextResponse.json(
@@ -49,10 +53,7 @@ export async function POST(request: NextRequest) {
 
   const access = await requireStaffOrgAccess(org_id);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Not found" },
-      { status: access.status }
-    );
+    return denyResponse(access);
   }
 
   // Every form gets a locked identity page at the top. If the caller
@@ -100,8 +101,15 @@ export async function POST(request: NextRequest) {
 
 // PATCH /api/forms
 export async function PATCH(request: NextRequest) {
-  const body = await request.json();
-  const { id, name, description, schema, status } = body;
+  const parsed = await parseJsonBody<{
+    id?: string;
+    name?: string;
+    description?: string | null;
+    schema?: Record<string, unknown>;
+    status?: typeof formsT.$inferInsert.status;
+  }>(request);
+  if (!parsed.ok) return parsed.response;
+  const { id, name, description, schema, status } = parsed.body;
 
   if (!id) {
     return NextResponse.json({ error: "id is required" }, { status: 400 });
@@ -109,10 +117,7 @@ export async function PATCH(request: NextRequest) {
 
   const access = await requireStaffCanAccessForm(id);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Not found" },
-      { status: access.status }
-    );
+    return denyResponse(access);
   }
 
   const updates: Partial<typeof formsT.$inferInsert> = {};
@@ -158,10 +163,7 @@ export async function DELETE(request: NextRequest) {
 
   const access = await requireStaffCanAccessForm(id);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Not found" },
-      { status: access.status }
-    );
+    return denyResponse(access);
   }
 
   // Check for active (non-completed) assignments

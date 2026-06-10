@@ -9,6 +9,7 @@ import {
 } from "@/lib/db/schema";
 import { and, desc, eq, ne } from "drizzle-orm";
 import { requireAuthenticatedUser } from "@/lib/auth/staff-access";
+import { unauthenticatedResponse } from "@/lib/api/route-helpers";
 
 /**
  * GET /api/forms/standalone/submissions?org_id=xxx&status=pending
@@ -33,7 +34,7 @@ export async function GET(request: NextRequest) {
 
   const auth = await requireAuthenticatedUser();
   if (!auth.ok) {
-    return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
+    return unauthenticatedResponse();
   }
 
   // Org membership check: the user must have at least one staff_assignment

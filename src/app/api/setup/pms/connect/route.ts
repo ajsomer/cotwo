@@ -5,6 +5,7 @@ import {
   resolveDefaultStaffOrg,
 } from "@/lib/auth/staff-access";
 import { connectPms } from "@/lib/pms/integrations-service";
+import { unauthenticatedResponse } from "@/lib/api/route-helpers";
 
 const PM_ROLES = new Set(["clinic_owner", "practice_manager"]);
 
@@ -16,7 +17,7 @@ const PM_ROLES = new Set(["clinic_owner", "practice_manager"]);
 export async function POST(request: NextRequest) {
   const userId = await getAuthenticatedUserId();
   if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return unauthenticatedResponse();
   }
 
   const body = (await request.json().catch(() => ({}))) as {

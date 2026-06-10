@@ -3,16 +3,18 @@ import { db } from "@/lib/db";
 import { users as usersT } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { NextResponse, type NextRequest } from "next/server";
+import { parseJsonBody, unauthenticatedResponse } from "@/lib/api/route-helpers";
 
 const STAGE_ORDER = ["not_started", "test_session_sent", "call_active", "call_completed"] as const;
 type OnboardingStage = (typeof STAGE_ORDER)[number];
 
 export async function POST(request: NextRequest) {
   const userId = await getAuthenticatedUserId();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!userId) return unauthenticatedResponse();
 
-  const body = await request.json();
-  const { to } = body as { to?: OnboardingStage };
+  const parsed = await parseJsonBody<{ to?: OnboardingStage }>(request);
+  if (!parsed.ok) return parsed.response;
+  const { to } = parsed.body;
 
   if (to !== "call_active" && to !== "call_completed") {
     return NextResponse.json({ error: "Invalid stage." }, { status: 400 });
