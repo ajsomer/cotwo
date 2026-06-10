@@ -12,6 +12,78 @@ import { and, eq } from "drizzle-orm";
  * All link lookups go through here so the rest of the engine stays clean.
  */
 
+/** db or a transaction handle — lets link writes join a caller's transaction. */
+type Executor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+export interface TypeLink {
+  appointmentTypeId: string;
+  confirmedModality: "telehealth" | "in_person" | null;
+  roomId: string | null;
+  syncEnabled: boolean;
+}
+
+/**
+ * All three link tables for a connection, preloaded into Maps keyed by PMS
+ * external id. A pull batch resolves every record against these instead of
+ * issuing 3-7 lookup queries per record. The pull updates patientIdByExternal
+ * as it creates+links new patients, so the cache stays current within a run.
+ */
+export interface MappingCache {
+  patientIdByExternal: Map<string, string>;
+  roomByPractitionerExternal: Map<string, string>;
+  typeLinkByExternal: Map<string, TypeLink>;
+}
+
+export async function loadMappingCache(connectionId: string): Promise<MappingCache> {
+  const [patientLinks, practitionerLinks, typeLinks] = await Promise.all([
+    db
+      .select({
+        ext: pmsPatientLinks.pmsExternalId,
+        patientId: pmsPatientLinks.patientId,
+      })
+      .from(pmsPatientLinks)
+      .where(eq(pmsPatientLinks.connectionId, connectionId)),
+    db
+      .select({
+        ext: pmsPractitionerLinks.pmsExternalId,
+        roomId: pmsPractitionerLinks.roomId,
+      })
+      .from(pmsPractitionerLinks)
+      .where(eq(pmsPractitionerLinks.connectionId, connectionId)),
+    db
+      .select({
+        ext: pmsAppointmentTypeLinks.pmsExternalId,
+        appointmentTypeId: pmsAppointmentTypeLinks.appointmentTypeId,
+        confirmedModality: pmsAppointmentTypeLinks.confirmedModality,
+        roomId: pmsAppointmentTypeLinks.roomId,
+        syncEnabled: pmsAppointmentTypeLinks.syncEnabled,
+      })
+      .from(pmsAppointmentTypeLinks)
+      .where(eq(pmsAppointmentTypeLinks.connectionId, connectionId)),
+  ]);
+
+  const cache: MappingCache = {
+    patientIdByExternal: new Map(),
+    roomByPractitionerExternal: new Map(),
+    typeLinkByExternal: new Map(),
+  };
+  for (const row of patientLinks) {
+    cache.patientIdByExternal.set(row.ext, row.patientId);
+  }
+  for (const row of practitionerLinks) {
+    if (row.roomId) cache.roomByPractitionerExternal.set(row.ext, row.roomId);
+  }
+  for (const row of typeLinks) {
+    cache.typeLinkByExternal.set(row.ext, {
+      appointmentTypeId: row.appointmentTypeId,
+      confirmedModality: row.confirmedModality,
+      roomId: row.roomId,
+      syncEnabled: row.syncEnabled,
+    });
+  }
+  return cache;
+}
+
 /** Cliniko patient id for a Coviu patient under a connection, or null. */
 export async function getPatientExternalId(
   connectionId: string,
@@ -48,13 +120,16 @@ export async function getPatientIdByExternal(
   return row?.id ?? null;
 }
 
-/** Upsert a connection-scoped patient link. */
+/** Upsert a connection-scoped patient link. Pass `executor` to join a
+ *  caller's transaction (patient create + link must commit atomically — an
+ *  unlinked patient gets duplicated on the next sync). */
 export async function linkPatient(
   connectionId: string,
   patientId: string,
-  externalId: string
+  externalId: string,
+  executor: Executor = db
 ): Promise<void> {
-  await db
+  await executor
     .insert(pmsPatientLinks)
     .values({ connectionId, patientId, pmsExternalId: externalId })
     .onConflictDoUpdate({

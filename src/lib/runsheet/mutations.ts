@@ -8,7 +8,7 @@ import {
   patients as patientsT,
   sessionParticipants,
 } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { getSmsProvider } from "@/lib/sms";
 import { normalisePhone } from "@/lib/phone/normalise";
 
@@ -45,78 +45,85 @@ export async function createSessions(
 ) {
   const sms = getSmsProvider();
 
-  const results = [];
-  for (const input of sessions) {
-    // Canonical E.164 so this number matches the same patient however it was
-    // entered elsewhere (patient OTP entry, readiness, PMS). Fall back to the
-    // raw input if it can't be normalised rather than dropping the session.
-    const phoneNumber = normalisePhone(input.phone_number) ?? input.phone_number;
+  // Canonical E.164 so each number matches the same patient however it was
+  // entered elsewhere (patient OTP entry, readiness, PMS). Fall back to the
+  // raw input if it can't be normalised rather than dropping the session.
+  const inputs = sessions.map((input) => ({
+    ...input,
+    phoneNumber: normalisePhone(input.phone_number) ?? input.phone_number,
+  }));
 
-    // Create appointment
-    let appointment: { id: string } | undefined;
-    try {
-      [appointment] = await db
-        .insert(appointmentsT)
-        .values({
-          orgId,
-          roomId: input.room_id,
-          locationId,
-          scheduledAt: input.scheduled_at,
-          phoneNumber,
-          appointmentTypeId: null,
+  // Resolve existing patients by phone in one batched query (was one per row).
+  const phoneNumbers = [...new Set(inputs.map((i) => i.phoneNumber))];
+  const phoneMatches = phoneNumbers.length
+    ? await db
+        .select({
+          phone_number: patientPhoneNumbers.phoneNumber,
+          patient_id: patientPhoneNumbers.patientId,
+          org_id: patientsT.orgId,
         })
-        .returning({ id: appointmentsT.id });
-    } catch (apptError) {
-      console.error("[CREATE] Failed to create appointment:", apptError);
-      continue;
+        .from(patientPhoneNumbers)
+        .innerJoin(patientsT, eq(patientsT.id, patientPhoneNumbers.patientId))
+        .where(inArray(patientPhoneNumbers.phoneNumber, phoneNumbers))
+    : [];
+  const patientByPhone = new Map<string, string>();
+  for (const row of phoneMatches) {
+    if (row.org_id === orgId && !patientByPhone.has(row.phone_number)) {
+      patientByPhone.set(row.phone_number, row.patient_id);
     }
-    if (!appointment) continue;
+  }
 
-    // Create session
+  const results = [];
+  for (const input of inputs) {
+    const { phoneNumber } = input;
     const smsAction = getSmsAction(input.scheduled_at);
+    const matchedPatientId = patientByPhone.get(phoneNumber) ?? null;
+
+    // All writes for one row commit or roll back together — a session-insert
+    // failure must not orphan the appointment. SMS sends after commit only.
     let session: { id: string; entry_token: string | null } | undefined;
     try {
-      [session] = await db
-        .insert(sessionsT)
-        .values({
-          appointmentId: appointment.id,
-          roomId: input.room_id,
-          locationId,
-          status: "queued",
-          notificationSent: smsAction === "prep",
-          notificationSentAt: smsAction === "prep" ? new Date().toISOString() : null,
-          inviteSent: smsAction === "invite_immediate",
-          inviteSentAt: smsAction === "invite_immediate" ? new Date().toISOString() : null,
-        })
-        .returning({ id: sessionsT.id, entry_token: sessionsT.entryToken });
-    } catch (sessionError) {
-      console.error("[CREATE] Failed to create session:", sessionError);
-      continue;
-    }
-    if (!session) continue;
+      session = await db.transaction(async (tx) => {
+        const [appointment] = await tx
+          .insert(appointmentsT)
+          .values({
+            orgId,
+            roomId: input.room_id,
+            locationId,
+            scheduledAt: input.scheduled_at,
+            phoneNumber,
+            patientId: matchedPatientId,
+            appointmentTypeId: null,
+          })
+          .returning({ id: appointmentsT.id });
 
-    // Resolve existing patient by phone number (within this org) and link.
-    const phoneMatch = await db
-      .select({ patient_id: patientPhoneNumbers.patientId, org_id: patientsT.orgId })
-      .from(patientPhoneNumbers)
-      .innerJoin(patientsT, eq(patientsT.id, patientPhoneNumbers.patientId))
-      .where(eq(patientPhoneNumbers.phoneNumber, phoneNumber))
-      .limit(10);
+        const [created] = await tx
+          .insert(sessionsT)
+          .values({
+            appointmentId: appointment.id,
+            roomId: input.room_id,
+            locationId,
+            status: "queued",
+            notificationSent: smsAction === "prep",
+            notificationSentAt: smsAction === "prep" ? new Date().toISOString() : null,
+            inviteSent: smsAction === "invite_immediate",
+            inviteSentAt: smsAction === "invite_immediate" ? new Date().toISOString() : null,
+          })
+          .returning({ id: sessionsT.id, entry_token: sessionsT.entryToken });
 
-    const matchedPatient = phoneMatch.find((row) => row.org_id === orgId);
+        if (matchedPatientId) {
+          await tx.insert(sessionParticipants).values({
+            sessionId: created.id,
+            patientId: matchedPatientId,
+            role: "patient",
+          });
+        }
 
-    if (matchedPatient) {
-      await db.insert(sessionParticipants).values({
-        sessionId: session.id,
-        patientId: matchedPatient.patient_id,
-        role: "patient",
+        return created;
       });
-
-      // Also set patient_id on the appointment
-      await db
-        .update(appointmentsT)
-        .set({ patientId: matchedPatient.patient_id })
-        .where(eq(appointmentsT.id, appointment.id));
+    } catch (error) {
+      console.error("[CREATE] Failed to create appointment/session:", error);
+      continue;
     }
 
     // Send SMS based on timing
