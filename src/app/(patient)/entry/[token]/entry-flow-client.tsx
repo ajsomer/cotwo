@@ -1,6 +1,6 @@
 'use client';
 
-import { EntryContext } from '@/lib/supabase/types';
+import { EntryContext } from '@/lib/types/domain';
 import { EntryFlow } from '@/components/patient/entry-flow';
 
 interface EntryFlowClientProps {

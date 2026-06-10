@@ -1,21 +1,26 @@
 /**
- * Custom type aliases and interfaces for the Coviu platform.
+ * Hand-written domain type aliases and interfaces for the Coviu platform.
  *
- * Maintained manually. The generated Database type lives in
- * database.generated.ts (overwritten wholesale by `npm run supabase:gen`).
- * Consumers import from '@/lib/supabase/types', which re-exports both.
+ * Enum aliases with a matching pgEnum are derived from the Drizzle schema
+ * (src/lib/db/schema.ts) so there is a single source of truth. Aliases with
+ * no pgEnum (e.g. OrgTier, a plain text column) stay hand-written.
  */
 
-import type { Database } from './database.generated';
+import {
+  userRole,
+  roomType,
+  appointmentModality,
+  sessionStatus,
+} from "@/lib/db/schema";
 
 // ============================================================================
 // Enum Aliases
 // ============================================================================
 
-export type UserRole = 'clinic_owner' | 'practice_manager' | 'receptionist' | 'clinician';
-export type RoomType = 'clinical' | 'reception' | 'shared' | 'triage';
-export type AppointmentModality = 'telehealth' | 'in_person';
-export type SessionStatus = 'queued' | 'waiting' | 'checked_in' | 'in_session' | 'complete' | 'done';
+export type UserRole = (typeof userRole.enumValues)[number];
+export type RoomType = (typeof roomType.enumValues)[number];
+export type AppointmentModality = (typeof appointmentModality.enumValues)[number];
+export type SessionStatus = (typeof sessionStatus.enumValues)[number];
 export type OrgTier = 'core' | 'complete';
 
 export type DerivedDisplayState =

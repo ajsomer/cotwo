@@ -5,7 +5,7 @@ import { useOrg } from "@/hooks/useOrg";
 import { SlideOver } from "@/components/ui/slide-over";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import type { FormAssignmentStatus } from "@/lib/supabase/types";
+import type { FormAssignmentStatus } from "@/lib/types/domain";
 
 interface AssignmentRow {
   id: string;

@@ -7,7 +7,7 @@ import 'survey-core/survey-core.min.css';
 import { coviuTheme } from '@/lib/survey/theme';
 import { PersistentHeader } from './persistent-header';
 import { PhoneVerification } from './phone-verification';
-import type { PatientContact } from '@/lib/supabase/types';
+import type { PatientContact } from '@/lib/types/domain';
 
 export interface IntakeJourneyContext {
   org: {

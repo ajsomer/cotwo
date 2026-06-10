@@ -2,7 +2,7 @@
 
 import { Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { RunsheetSummary } from "@/lib/supabase/types";
+import type { RunsheetSummary } from "@/lib/types/domain";
 
 interface RunsheetHeaderProps {
   summary: RunsheetSummary;

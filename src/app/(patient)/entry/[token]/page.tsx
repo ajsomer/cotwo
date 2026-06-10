@@ -9,8 +9,8 @@ import {
   staffAssignments,
 } from '@/lib/db/schema';
 import { and, eq } from 'drizzle-orm';
-import { EntryContext } from '@/lib/supabase/types';
-import type { OrgTier, RoomType } from '@/lib/supabase/custom-types';
+import { EntryContext } from '@/lib/types/domain';
+import type { OrgTier, RoomType } from '@/lib/types/domain';
 import { EntryFlowClient } from './entry-flow-client';
 
 export default async function EntryPage({

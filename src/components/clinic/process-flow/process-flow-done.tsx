@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { markSessionDone } from "@/lib/runsheet/actions";
 import { formatPatientName } from "@/lib/runsheet/format";
-import type { EnrichedSession } from "@/lib/supabase/types";
+import type { EnrichedSession } from "@/lib/types/domain";
 import { PmsPushFeedback } from "./pms-push-feedback";
 import type { PushFieldResultDTO } from "./pms-push-feedback";
 

@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/clinic/shared/status-badge";
-import type { EnrichedSession } from "@/lib/supabase/types";
+import type { EnrichedSession } from "@/lib/types/domain";
 import type { AppointmentRow, PatientDetails } from "./types";
 
 interface AppointmentsSectionProps {

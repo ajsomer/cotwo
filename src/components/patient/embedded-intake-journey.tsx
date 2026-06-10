@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { IntakeJourney, IntakeJourneyContext } from './intake-journey';
-import type { PatientContact } from '@/lib/supabase/types';
+import type { PatientContact } from '@/lib/types/domain';
 
 interface EmbeddedIntakeJourneyProps {
   token: string;

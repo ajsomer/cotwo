@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { RoomFormPanel } from "./room-form-panel";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import type { RoomWithClinicians } from "@/stores/clinic-store";
-import type { RoomType } from "@/lib/supabase/types";
+import type { RoomType } from "@/lib/types/domain";
 
 const ROOM_TYPE_BADGE: Record<
   RoomType,

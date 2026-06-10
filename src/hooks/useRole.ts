@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext } from "react";
-import type { UserRole } from "@/lib/supabase/types";
+import type { UserRole } from "@/lib/types/domain";
 
 export interface RoleContextValue {
   role: UserRole | null;

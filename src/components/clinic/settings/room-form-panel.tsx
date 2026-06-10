@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { SlideOver } from "@/components/ui/slide-over";
 import { Button } from "@/components/ui/button";
-import type { RoomType } from "@/lib/supabase/types";
+import type { RoomType } from "@/lib/types/domain";
 import type { RoomWithClinicians } from "@/stores/clinic-store";
 
 interface Clinician {

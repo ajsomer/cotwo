@@ -453,27 +453,3 @@ export function isAttentionPriority(priority: ReadinessPriority): boolean {
     priority === 'at_risk'
   );
 }
-
-/**
- * Get the actions that are causing the attention state (for auto-expanded rows).
- * Returns only the triggering actions, not all actions.
- */
-export function getTriggeringActions(
-  appointment: AppointmentWithPriority,
-  now: Date
-): WorkflowAction[] {
-  const priority = appointment.priority ?? getReadinessPriority(appointment, now);
-
-  switch (priority) {
-    case 'overdue':
-      return appointment.actions.filter((a) => isOverdue(a, appointment, now));
-    case 'form_completed_needs_transcription':
-      return appointment.actions.filter(
-        (a) => isFormNeedsTranscription(a) || isIntakePackageActionNeedsTranscription(a)
-      );
-    case 'at_risk':
-      return appointment.actions.filter((a) => isAtRisk(a, appointment, now));
-    default:
-      return [];
-  }
-}

@@ -4,7 +4,7 @@ import type {
   EnrichedSession,
   StatusBadgeConfig,
   ActionConfig,
-} from '@/lib/supabase/types';
+} from '@/lib/types/domain';
 
 /**
  * Calculate the derived display state for a session.

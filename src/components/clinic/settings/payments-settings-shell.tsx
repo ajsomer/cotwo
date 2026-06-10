@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import type { PaymentsData, RoomPayment } from "@/stores/clinic-store";
-import type { RoomType } from "@/lib/supabase/types";
+import type { RoomType } from "@/lib/types/domain";
 
 type RoutingMode = "location" | "clinician";
 type Tab = "configuration" | "rooms";

@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { ActionTypeIcon } from "@/components/clinic/shared/action-type-icon";
 import type { ActionType } from "@/lib/workflows/types";
-import type { EnrichedSession } from "@/lib/supabase/types";
+import type { EnrichedSession } from "@/lib/types/domain";
 import type {
   ReadinessAppointment,
   WorkflowAction,

@@ -6,7 +6,7 @@ import { ActionButton } from "./action-button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { getRowBorderColor } from "@/lib/runsheet/derived-state";
 import { resolveSessionTime, formatPatientName } from "@/lib/runsheet/format";
-import type { EnrichedSession } from "@/lib/supabase/types";
+import type { EnrichedSession } from "@/lib/types/domain";
 
 interface SessionRowProps {
   session: EnrichedSession;

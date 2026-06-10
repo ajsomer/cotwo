@@ -9,7 +9,7 @@ import {
   formatFireTime,
   type ActionType,
 } from "@/lib/workflows/types";
-import type { EnrichedSession } from "@/lib/supabase/types";
+import type { EnrichedSession } from "@/lib/types/domain";
 import { ActionTypeIcon } from "@/components/clinic/shared/action-type-icon";
 import { ChevronDown, ChevronUp, ArrowLeft } from "lucide-react";
 

@@ -9,7 +9,7 @@ import {
   getAttentionSessions,
   type RoomExpansionState,
 } from "@/lib/runsheet/grouping";
-import type { RoomGroup } from "@/lib/supabase/types";
+import type { RoomGroup } from "@/lib/types/domain";
 import { SessionRowSkeleton } from "./session-row-skeleton";
 
 // Distinct background colours for room avatars from the Coviu palette

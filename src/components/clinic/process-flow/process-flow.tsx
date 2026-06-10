@@ -6,7 +6,7 @@ import { ProcessFlowPayment } from "./process-flow-payment";
 import { ProcessFlowOutcome } from "./process-flow-outcome";
 import { ProcessFlowDone } from "./process-flow-done";
 import { useOrg } from "@/hooks/useOrg";
-import type { EnrichedSession } from "@/lib/supabase/types";
+import type { EnrichedSession } from "@/lib/types/domain";
 
 interface ProcessFlowProps {
   session: EnrichedSession;

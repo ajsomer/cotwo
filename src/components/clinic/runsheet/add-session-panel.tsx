@@ -5,7 +5,7 @@ import { SlideOver } from "@/components/ui/slide-over";
 import { Button } from "@/components/ui/button";
 import { useOrg } from "@/hooks/useOrg";
 import { createSessions, updateSession, deleteSession } from "@/lib/runsheet/mutations";
-import type { Room, EnrichedSession } from "@/lib/supabase/types";
+import type { Room, EnrichedSession } from "@/lib/types/domain";
 
 interface AddSessionPanelProps {
   locationId: string;

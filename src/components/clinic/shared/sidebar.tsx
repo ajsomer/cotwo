@@ -5,7 +5,7 @@ import { useRole } from "@/hooks/useRole";
 import { SidebarNavItem } from "./sidebar-nav-item";
 import { SidebarUserSection } from "./sidebar-user-section";
 import { DevRoleSwitcher } from "./dev-role-switcher";
-import type { UserRole, OrgTier } from "@/lib/supabase/types";
+import type { UserRole, OrgTier } from "@/lib/types/domain";
 
 interface NavItemDef {
   href: string;

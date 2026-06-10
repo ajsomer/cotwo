@@ -17,27 +17,6 @@ import {
   broadcastReadinessChange,
 } from "@/lib/realtime/broadcast";
 
-/** Call a late patient — logs to console for prototype. */
-export async function callPatient(sessionId: string) {
-  const [session] = await db
-    .select({ id: sessionsT.id, appointment_id: sessionsT.appointmentId })
-    .from(sessionsT)
-    .where(eq(sessionsT.id, sessionId));
-
-  if (!session) return { success: false, error: "Session not found" };
-
-  let phone: string | null = null;
-  if (session.appointment_id) {
-    const [appt] = await db
-      .select({ phone_number: appointmentsT.phoneNumber })
-      .from(appointmentsT)
-      .where(eq(appointmentsT.id, session.appointment_id));
-    phone = appt?.phone_number ?? null;
-  }
-
-  return { success: true, phone };
-}
-
 /** Send a nudge SMS to an upcoming patient who hasn't responded. */
 export async function nudgePatient(sessionId: string) {
   const [session] = await db

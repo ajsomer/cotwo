@@ -1,6 +1,6 @@
 import { Video, User } from "lucide-react";
 import { Tooltip } from "@/components/ui/tooltip";
-import type { AppointmentModality } from "@/lib/supabase/types";
+import type { AppointmentModality } from "@/lib/types/domain";
 
 interface ModalityBadgeProps {
   modality: AppointmentModality | null;

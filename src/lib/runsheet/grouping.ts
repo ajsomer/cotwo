@@ -5,7 +5,7 @@ import type {
   RunsheetSummary,
   DerivedDisplayState,
   Room,
-} from '@/lib/supabase/types';
+} from '@/lib/types/domain';
 import { isAttentionState } from './derived-state';
 
 /** Priority order for sorting sessions within a room and rooms against each other. */

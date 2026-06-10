@@ -9,7 +9,7 @@ import { FormAssignmentsPanel } from "./form-assignments-panel";
 import { FilesPanel } from "./files-panel";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import type { FormRow } from "@/stores/clinic-store";
-import type { FormStatus } from "@/lib/supabase/types";
+import type { FormStatus } from "@/lib/types/domain";
 
 type TabKey = "forms" | "files";
 

@@ -11,7 +11,7 @@ import {
 import { Sidebar } from "./sidebar";
 import { TopBar } from "./top-bar";
 import { ClinicDataProvider } from "./clinic-data-provider";
-import type { Location, Organisation, UserRole } from "@/lib/supabase/types";
+import type { Location, Organisation, UserRole } from "@/lib/types/domain";
 
 interface StaffAssignmentData {
   location: Location;

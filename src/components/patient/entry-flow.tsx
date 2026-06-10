@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect } from 'react';
-import { EntryContext, PatientContact } from '@/lib/supabase/types';
+import { EntryContext, PatientContact } from '@/lib/types/domain';
 import { PrimerScreen } from './primer-screen';
 import { PhoneVerification } from './phone-verification';
 import { IdentityConfirmation } from './identity-confirmation';

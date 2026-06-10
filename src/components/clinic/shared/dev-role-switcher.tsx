@@ -1,7 +1,7 @@
 "use client";
 
 import { useRole } from "@/hooks/useRole";
-import type { UserRole } from "@/lib/supabase/types";
+import type { UserRole } from "@/lib/types/domain";
 
 interface DevRoleSwitcherProps {
   onSwitch: (role: UserRole, userId: string) => void;

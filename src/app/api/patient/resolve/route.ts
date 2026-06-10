@@ -9,8 +9,8 @@ import {
   users as usersT,
 } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
-import { EntryContext } from '@/lib/supabase/types';
-import type { OrgTier, RoomType } from '@/lib/supabase/custom-types';
+import { EntryContext } from '@/lib/types/domain';
+import type { OrgTier, RoomType } from '@/lib/types/domain';
 
 /**
  * POST /api/patient/resolve

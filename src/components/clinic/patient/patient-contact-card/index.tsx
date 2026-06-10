@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { SlideOver } from "@/components/ui/slide-over";
 import { useLocation } from "@/hooks/useLocation";
 import { usePmsConnection } from "@/hooks/usePmsConnection";
-import type { EnrichedSession } from "@/lib/supabase/types";
+import type { EnrichedSession } from "@/lib/types/domain";
 import type { ReadinessAppointment, WorkflowAction } from "@/stores/clinic-store";
 import { DemographicsSection, PaymentSection } from "./demographics-section";
 import { AppointmentsSection } from "./appointments-section";

@@ -1,27 +1,29 @@
-import type { Database } from "@/lib/supabase/types";
+import {
+  actionType,
+  actionStatus,
+  workflowDirection,
+  workflowTemplateStatus,
+} from "@/lib/db/schema";
+import type { DbWorkflowActionBlock } from "@/lib/types/db-rows";
 
 // ---------------------------------------------------------------------------
-// DB row type aliases
+// DB row type aliases (snake_case wire shapes derived from the Drizzle schema)
 // ---------------------------------------------------------------------------
 
-export type DbWorkflowTemplate =
-  Database["public"]["Tables"]["workflow_templates"]["Row"];
-export type DbWorkflowActionBlock =
-  Database["public"]["Tables"]["workflow_action_blocks"]["Row"];
-export type DbAppointmentAction =
-  Database["public"]["Tables"]["appointment_actions"]["Row"];
-export type DbAppointmentWorkflowRun =
-  Database["public"]["Tables"]["appointment_workflow_runs"]["Row"];
-export type DbTypeWorkflowLink =
-  Database["public"]["Tables"]["type_workflow_links"]["Row"];
-export type DbOutcomePathway =
-  Database["public"]["Tables"]["outcome_pathways"]["Row"];
+export type {
+  DbWorkflowTemplate,
+  DbWorkflowActionBlock,
+  DbAppointmentAction,
+  DbAppointmentWorkflowRun,
+  DbTypeWorkflowLink,
+  DbOutcomePathway,
+} from "@/lib/types/db-rows";
 
-export type ActionType = Database["public"]["Enums"]["action_type"];
-export type ActionStatus = Database["public"]["Enums"]["action_status"];
-export type WorkflowDirection = Database["public"]["Enums"]["workflow_direction"];
+export type ActionType = (typeof actionType.enumValues)[number];
+export type ActionStatus = (typeof actionStatus.enumValues)[number];
+export type WorkflowDirection = (typeof workflowDirection.enumValues)[number];
 export type WorkflowTemplateStatus =
-  Database["public"]["Enums"]["workflow_template_status"];
+  (typeof workflowTemplateStatus.enumValues)[number];
 
 // ---------------------------------------------------------------------------
 // Precondition config (JSONB shape — validated in application code, not DB)

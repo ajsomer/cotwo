@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { FormFillClient } from "@/components/patient/form-fill-client";
 import { useOrg } from "@/hooks/useOrg";
 import { useLocation } from "@/hooks/useLocation";
-import type { FormStatus } from "@/lib/supabase/types";
+import type { FormStatus } from "@/lib/types/domain";
 import { coviuTheme } from "@/lib/survey/theme";
 import {
   IDENTITY_PAGE_NAME,

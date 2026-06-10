@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
-import type { RunsheetSession, Room } from "@/lib/supabase/types";
+import type { RunsheetSession, Room } from "@/lib/types/domain";
 import type { DbWorkflowTemplate, DbWorkflowActionBlock } from "@/lib/workflows/types";
 import type {
   AppointmentTypeRow,

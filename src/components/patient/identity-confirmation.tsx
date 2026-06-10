@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { PersistentHeader } from './persistent-header';
-import { PatientContact } from '@/lib/supabase/types';
+import { PatientContact } from '@/lib/types/domain';
 
 interface IdentityConfirmationProps {
   clinicName: string;

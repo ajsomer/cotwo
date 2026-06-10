@@ -1,7 +1,6 @@
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "./schema";
-import * as relations from "./relations";
 
 // Pooled direct Postgres connection to Neon (Sydney).
 //
@@ -39,5 +38,5 @@ if (process.env.NODE_ENV !== "production") {
   global.__coviuPgPool = pool;
 }
 
-export const db = drizzle(pool, { schema: { ...schema, ...relations } });
+export const db = drizzle(pool, { schema });
 export { schema };

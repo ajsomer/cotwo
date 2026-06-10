@@ -1,4 +1,3 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { db } from "@/lib/db";
 import {
   appointments as appointmentsT,
@@ -69,8 +68,8 @@ const actionSelect = {
 
 /**
  * Map a pre-appointment action type (+ optional form name) to a human label.
- * Single source of truth shared by the readiness fetcher and the patient
- * contact card's active-context fetch.
+ * Single source of truth shared by the readiness fetcher and the patient-wide
+ * workflow-actions fetch below.
  */
 export function getActionLabel(actionType: string, formName?: string): string {
   switch (actionType) {
@@ -99,52 +98,6 @@ export function getActionLabel(actionType: string, formName?: string): string {
     default:
       return actionType;
   }
-}
-
-/**
- * Assemble the workflow-action timeline for a single appointment, scoped to a
- * specific patient. This is "active-appointment context" — light enough to
- * ride the fast path alongside the patient summary, not the heavy history.
- *
- * Access control: `appointmentId` is caller-supplied (a query param on the
- * patient route), so we filter by BOTH appointment_id AND the already-
- * authorised patient_id. A caller authorised for patient A cannot pass
- * patient B's appointment_id and read B's workflow — the patient_id mismatch
- * yields no appointment row and an empty array. Same discipline as
- * fetchAppointmentById in the patient route's _shared module.
- */
-export async function fetchAppointmentWorkflowActions(
-  _supabase: SupabaseClient,
-  appointmentId: string,
-  patientId: string,
-): Promise<WorkflowAction[]> {
-  // Prove the appointment belongs to the authorised patient before reading
-  // any actions off it.
-  const [appt] = await db
-    .select({ id: appointmentsT.id })
-    .from(appointmentsT)
-    .where(
-      and(
-        eq(appointmentsT.id, appointmentId),
-        eq(appointmentsT.patientId, patientId),
-      ),
-    );
-  if (!appt) return [];
-
-  const actions: ActionRow[] = await db
-    .select(actionSelect)
-    .from(appointmentActions)
-    .leftJoin(
-      appointmentWorkflowRuns,
-      eq(appointmentWorkflowRuns.id, appointmentActions.workflowRunId),
-    )
-    .leftJoin(
-      workflowTemplates,
-      eq(workflowTemplates.id, appointmentWorkflowRuns.workflowTemplateId),
-    )
-    .where(eq(appointmentActions.appointmentId, appointmentId));
-
-  return enrichActions(actions);
 }
 
 /**

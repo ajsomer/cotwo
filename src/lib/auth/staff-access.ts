@@ -1,5 +1,5 @@
 import { auth } from "@/lib/auth/neon-auth";
-import type { Location, Organisation, UserRole } from "@/lib/supabase/types";
+import type { Location, Organisation, UserRole } from "@/lib/types/domain";
 import { db } from "@/lib/db";
 import {
   staffAssignments,
