@@ -36,29 +36,6 @@ function getSmsAction(scheduledAt: string): "prep" | "invite_immediate" | "none"
   return "prep";
 }
 
-/**
- * For prep SMS: apply timing rules to avoid antisocial hours.
- * Returns true if the SMS should be sent now, false if it should be queued.
- * (Queuing for 6pm is a future enhancement — for now, always send.)
- */
-function shouldSendPrepNow(scheduledAt: string): boolean {
-  const scheduled = new Date(scheduledAt);
-  const now = new Date();
-  const isToday = scheduled.toDateString() === now.toDateString();
-
-  if (isToday) return true; // Today, 1+ hours away: send immediately
-
-  // Tomorrow: check if before/after 6pm
-  const hour = now.getHours();
-  if (hour < 18) {
-    // Before 6pm — ideally queue for 6pm. For prototype, send now.
-    return true;
-  }
-
-  // After 6pm — send immediately
-  return true;
-}
-
 /** Create sessions from the add session panel. */
 export async function createSessions(
   locationId: string,
@@ -153,7 +130,10 @@ export async function createSessions(
       new Date(input.scheduled_at).toDateString() === new Date().toDateString();
     const timeLabel = isToday ? `today at ${scheduledTime}` : `tomorrow at ${scheduledTime}`;
 
-    if (smsAction === "prep" && shouldSendPrepNow(input.scheduled_at)) {
+    // Prep SMS always sends immediately. The documented 6pm queue rule
+    // (tomorrow-before-6pm ⇒ hold until 6pm) needs a delayed-send mechanism
+    // the prototype doesn't have.
+    if (smsAction === "prep") {
       await sms.sendNotification(
         phoneNumber,
         `Hi — you have an upcoming appointment with ${clinicName} ${timeLabel}. Get ready ahead of time so your clinician can focus on you: ${entryLink}`

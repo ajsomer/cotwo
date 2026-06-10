@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo, useCallback, useTransition } from "react"
 import { Zap } from "lucide-react";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import { usePmsConnection } from "@/hooks/usePmsConnection";
+import { useNow } from "@/hooks/useNow";
 import type {
   ReadinessAppointment,
   StandaloneSubmissionRow as StandaloneSubmissionRowType,
@@ -101,20 +102,20 @@ export function ReadinessShell() {
     statuses: new Set(),
   });
 
-  const now = useMemo(() => new Date(), []);
+  const now = useNow();
 
   const filtered = useMemo(() => {
     return appointments.filter((appt) => {
       if (filters.roomIds.size > 0) {
-        const roomId = rooms.find((r) => r.name === appt.room_name)?.id;
-        if (!roomId || !filters.roomIds.has(roomId)) return false;
+        if (!appt.room_id || !filters.roomIds.has(appt.room_id)) return false;
       }
 
       if (filters.typeIds.size > 0) {
-        const typeId = appointmentTypes.find(
-          (t) => t.name === appt.appointment_type_name
-        )?.id;
-        if (!typeId || !filters.typeIds.has(typeId)) return false;
+        if (
+          !appt.appointment_type_id ||
+          !filters.typeIds.has(appt.appointment_type_id)
+        )
+          return false;
       }
 
       if (filters.statuses.size > 0) {
@@ -124,7 +125,7 @@ export function ReadinessShell() {
 
       return true;
     });
-  }, [appointments, filters, rooms, appointmentTypes]);
+  }, [appointments, filters]);
 
   const hasPreOverdue = useMemo(
     () =>

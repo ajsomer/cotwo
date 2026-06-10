@@ -164,7 +164,9 @@ export interface ReadinessAppointment {
   patient_last_name: string;
   clinician_name: string | null;
   primary_phone: string | null;
+  room_id: string | null;
   room_name: string | null;
+  appointment_type_id: string | null;
   appointment_type_name: string | null;
   priority: string;
   total_actions: number;

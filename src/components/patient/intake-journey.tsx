@@ -132,6 +132,27 @@ export function IntakeJourney({
     }
   }, [phase, onAllItemsComplete]);
 
+  // Onboarding demo: when the journey completes, transition the session into
+  // 'waiting' and redirect to the waiting room. Guarded so the POST fires once,
+  // not on every re-render while the redirect is in flight.
+  const isDemoRedirect = Boolean(
+    journey.is_onboarding_demo && journey.session_entry_token && journey.session_id
+  );
+  const demoRedirectFiredRef = useRef(false);
+  useEffect(() => {
+    if (phase !== 'done' || !isDemoRedirect || demoRedirectFiredRef.current) return;
+    demoRedirectFiredRef.current = true;
+    const entryToken = journey.session_entry_token!;
+    void (async () => {
+      await fetch('/api/patient/arrive', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: entryToken, modality: 'telehealth' }),
+      });
+      window.location.replace(`/waiting/${entryToken}`);
+    })();
+  }, [phase, isDemoRedirect, journey.session_entry_token]);
+
   // Items list in fixed order. Used for the checklist screen and for
   // advancing between items.
   const items = buildItems(state);
@@ -295,20 +316,9 @@ export function IntakeJourney({
   }, [phase, patient, state.patient_id, token, phoneNumber]);
 
   if (phase === 'done' || state.status === 'completed') {
-    // Onboarding demo: transition the session into 'waiting' and send the user
-    // to the waiting room so they can be admitted by the clinician.
-    if (journey.is_onboarding_demo && journey.session_entry_token && journey.session_id) {
-      const entryToken = journey.session_entry_token;
-      if (typeof window !== 'undefined') {
-        void (async () => {
-          await fetch('/api/patient/arrive', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token: entryToken, modality: 'telehealth' }),
-          });
-          window.location.replace(`/waiting/${entryToken}`);
-        })();
-      }
+    // Onboarding demo: the effect above arrives the session and redirects to
+    // the waiting room; render only a spinner while that's in flight.
+    if (isDemoRedirect) {
       return (
         <div className="flex flex-col items-center py-8">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-teal-500 border-t-transparent" />

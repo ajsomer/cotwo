@@ -15,6 +15,7 @@ import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import { useLocation } from "@/hooks/useLocation";
 import { useRole } from "@/hooks/useRole";
 import { usePmsConnection } from "@/hooks/usePmsConnection";
+import { useNow } from "@/hooks/useNow";
 // ONBOARDING DISABLED — the first-login walkthrough is currently turned off.
 // To re-enable: uncomment the two mounts in the JSX below (search "ONBOARDING DISABLED")
 // and remove the eslint-disable comments on these two imports.
@@ -148,11 +149,7 @@ export function RunsheetShell() {
   }, [onboardingLoaded]);
 
   // Tick `now` every 30s for derived state recalculation
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const interval = setInterval(() => setNow(new Date()), 30_000);
-    return () => clearInterval(interval);
-  }, []);
+  const now = useNow();
 
   // Filter rooms for clinician view. The skeleton gate above guarantees
   // clinicianRoomIdsLoaded === true by the time this runs, so an empty array

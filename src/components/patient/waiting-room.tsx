@@ -83,6 +83,24 @@ export function WaitingRoom({
     const socket = getSocket();
     const joinRoom = () => {
       socket.emit('join:session', { entryToken });
+      // Resync the session status on every (re)connect: if the clinician
+      // admitted or completed while this socket was down, the status_changed
+      // event was missed and we'd strand on "waiting" forever.
+      void (async () => {
+        try {
+          const res = await fetch('/api/patient/resolve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: entryToken }),
+          });
+          if (!res.ok) return;
+          const data = await res.json();
+          const dbStatus = data?.context?.session?.status;
+          if (dbStatus) setStatus(toWaitingUiStatus(dbStatus));
+        } catch {
+          // Network hiccup — the next reconnect or status event resyncs.
+        }
+      })();
     };
     if (socket.connected) joinRoom();
     socket.on('connect', joinRoom);

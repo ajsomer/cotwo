@@ -362,7 +362,9 @@ export const fetchReadinessSlice = cache(async (
     patient_last_name: string;
     clinician_name: string | null;
     primary_phone: string | null;
+    room_id: string | null;
     room_name: string | null;
+    appointment_type_id: string | null;
     appointment_type_name: string | null;
     terminal_type: string | null;
     total_actions: number;
@@ -407,7 +409,9 @@ export const fetchReadinessSlice = cache(async (
         patient_last_name: lastName,
         clinician_name: appt.clinician_id ? clinicianMap.get(appt.clinician_id) ?? null : null,
         primary_phone: phone,
+        room_id: appt.room_id ?? null,
         room_name: appt.room_id ? roomMap.get(appt.room_id) ?? null : null,
+        appointment_type_id: appt.appointment_type_id ?? null,
         appointment_type_name: appt.appointment_type_id ? typeMap.get(appt.appointment_type_id) ?? null : null,
         terminal_type: template?.terminal_type ?? null,
         total_actions: 0,

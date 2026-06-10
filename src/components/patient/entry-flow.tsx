@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { EntryContext, PatientContact } from '@/lib/supabase/types';
 import { PrimerScreen } from './primer-screen';
 import { PhoneVerification } from './phone-verification';
@@ -81,6 +81,19 @@ export function EntryFlow({ context, token }: EntryFlowProps) {
       setStep('device_test');
     }
   }, [context.payments_enabled]);
+
+  // Defensive: if we land on the intake step without a journey to show (or
+  // without a confirmed patient), advance instead of rendering nothing. In an
+  // effect — not the render body — so we never set state during render.
+  const intakeStepInvalid =
+    step === 'outstanding_intake' &&
+    (!outstandingJourneys[outstandingIndex] || !confirmedPatient);
+  useEffect(() => {
+    // One-shot defensive correction, not a state-sync cascade: it fires only
+    // when the flow lands in an impossible state and moves it forward once.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (intakeStepInvalid) advancePastIntake();
+  }, [intakeStepInvalid, advancePastIntake]);
 
   const checkOutstandingIntake = useCallback(
     async (patient: PatientContact) => {
@@ -301,8 +314,7 @@ export function EntryFlow({ context, token }: EntryFlowProps) {
     case 'outstanding_intake': {
       const current = outstandingJourneys[outstandingIndex];
       if (!current || !confirmedPatient) {
-        // Defensive: shouldn't happen, but advance rather than render nothing.
-        advancePastIntake();
+        // Defensive: shouldn't happen — the effect above advances the step.
         return null;
       }
       return (
