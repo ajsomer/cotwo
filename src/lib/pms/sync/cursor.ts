@@ -44,3 +44,25 @@ export async function setCursor(
       set: { cursorUpdatedAt: at.toISOString() },
     });
 }
+
+/**
+ * Clear a resource's watermark so the next sync re-pulls from scratch. Needed
+ * when a mapping change makes previously-SKIPPED records eligible (e.g. an
+ * appointment type is confirmed telehealth, or a practitioner gains a room):
+ * the cursor advanced past those records when they streamed by unprocessed, so
+ * incremental sync alone would never see them again. Upserts are idempotent,
+ * so a re-pull is safe — just a full sweep.
+ */
+export async function clearCursor(
+  connectionId: string,
+  resource: SyncResource
+): Promise<void> {
+  await db
+    .delete(pmsSyncCursors)
+    .where(
+      and(
+        eq(pmsSyncCursors.connectionId, connectionId),
+        eq(pmsSyncCursors.resource, resource)
+      )
+    );
+}

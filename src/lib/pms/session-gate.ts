@@ -1,14 +1,16 @@
 import "server-only";
 import { db } from "@/lib/db";
 import {
+  appointmentActions,
   appointments as appointmentsT,
   forms as formsT,
   formSubmissions,
   sessions as sessionsT,
+  workflowActionBlocks,
 } from "@/lib/db/schema";
 import { and, eq, isNotNull } from "drizzle-orm";
 import { collectPmsTargets } from "@/lib/survey/pms-target-schema";
-import { getStaticMetadata } from "./registry";
+import { getFactory, getStaticMetadata } from "./registry";
 import { getConnectionForLocation, isSyncActive } from "./connection";
 
 /**
@@ -25,12 +27,18 @@ export interface SessionPmsGate {
   active: boolean;
   provider: string | null;
   providerLabel: string | null;
+  /** Whether the provider can take the intake PDF (gates the attach half). */
+  writeAttachments: boolean;
+  /** At least one mapped field with a value (gates the field-push half). */
+  hasPushableFields: boolean;
 }
 
 const INACTIVE: SessionPmsGate = {
   active: false,
   provider: null,
   providerLabel: null,
+  writeAttachments: false,
+  hasPushableFields: false,
 };
 
 export async function getSessionPmsGate(
@@ -45,7 +53,11 @@ export async function getSessionPmsGate(
     .where(eq(sessionsT.id, sessionId))
     .limit(1);
   if (!session?.appointmentId) return INACTIVE;
-  return gateFor(session.appointmentId, session.locationId);
+  // The Done step's send only pushes form fields (no PDF attach), so its gate
+  // stays field-driven: attachment-only doesn't light it up.
+  return gateFor(session.appointmentId, session.locationId, {
+    attachmentOnlyCounts: false,
+  });
 }
 
 /** Same gate, keyed on an appointment (used by the intake handoff panel). */
@@ -58,49 +70,88 @@ export async function getAppointmentPmsGate(
     .where(eq(appointmentsT.id, appointmentId))
     .limit(1);
   if (!appt) return INACTIVE;
-  return gateFor(appointmentId, appt.locationId);
+  // The handoff panel attaches the intake PDF as well as pushing fields, so an
+  // attachment-capable provider with an intake package activates the gate even
+  // with no mapped field data — that's the Nookal writeForms:false document
+  // path (clinical free-text rides Documents/attachments).
+  return gateFor(appointmentId, appt.locationId, {
+    attachmentOnlyCounts: true,
+  });
 }
 
 async function gateFor(
   appointmentId: string,
-  locationId: string
+  locationId: string,
+  opts: { attachmentOnlyCounts: boolean }
 ): Promise<SessionPmsGate> {
-  // 1. Sync-active connection that can write.
+  // 1. Sync-active connection that can write something this surface can send.
   const connection = await getConnectionForLocation(locationId);
   if (!connection || !isSyncActive(connection)) return INACTIVE;
   const meta = getStaticMetadata(connection.provider);
   const caps = meta?.capabilities;
-  if (!caps?.writeForms && !caps?.writePatientFields) return INACTIVE;
+  const canWriteFields = Boolean(caps?.writeForms || caps?.writePatientFields);
+  const canAttach = Boolean(
+    opts.attachmentOnlyCounts && caps?.writeAttachments
+  );
+  if (!canWriteFields && !canAttach) return INACTIVE;
 
   // 2. At least one completed PMS-bound submission for this appointment with a
   //    mapped field that has a non-empty value.
-  const subs = await db
-    .select({ responses: formSubmissions.responses, schema: formsT.schema })
-    .from(formSubmissions)
-    .innerJoin(formsT, eq(formsT.id, formSubmissions.formId))
-    .where(
-      and(
-        eq(formSubmissions.appointmentId, appointmentId),
-        isNotNull(formsT.pmsProvider)
-      )
-    );
-
-  const hasPushable = subs.some((sub) => {
-    const responses = (sub.responses ?? {}) as Record<string, unknown>;
-    return collectPmsTargets(sub.schema).some((t) => {
-      const v = responses[t.questionName];
-      return v !== null && v !== undefined && String(v).trim() !== "";
+  let hasPushable = false;
+  if (canWriteFields) {
+    const subs = await db
+      .select({ responses: formSubmissions.responses, schema: formsT.schema })
+      .from(formSubmissions)
+      .innerJoin(formsT, eq(formsT.id, formSubmissions.formId))
+      .where(
+        and(
+          eq(formSubmissions.appointmentId, appointmentId),
+          isNotNull(formsT.pmsProvider)
+        )
+      );
+    hasPushable = subs.some((sub) => {
+      const responses = (sub.responses ?? {}) as Record<string, unknown>;
+      return collectPmsTargets(sub.schema).some((t) => {
+        const v = responses[t.questionName];
+        return v !== null && v !== undefined && String(v).trim() !== "";
+      });
     });
-  });
-  if (!hasPushable) return INACTIVE;
+  }
+
+  // 3. No field data → still active when there's an intake package PDF to
+  //    attach (and the surface sends attachments).
+  const active =
+    hasPushable || (canAttach && (await hasIntakePackage(appointmentId)));
+  if (!active) return INACTIVE;
 
   return {
     active: true,
     provider: connection.provider,
     providerLabel: labelFor(connection.provider),
+    writeAttachments: caps?.writeAttachments === true,
+    hasPushableFields: hasPushable,
   };
 }
 
+/** Does this appointment have an intake_package action (= a PDF to attach)? */
+async function hasIntakePackage(appointmentId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: appointmentActions.id })
+    .from(appointmentActions)
+    .innerJoin(
+      workflowActionBlocks,
+      eq(workflowActionBlocks.id, appointmentActions.actionBlockId)
+    )
+    .where(
+      and(
+        eq(appointmentActions.appointmentId, appointmentId),
+        eq(workflowActionBlocks.actionType, "intake_package")
+      )
+    )
+    .limit(1);
+  return Boolean(row);
+}
+
 function labelFor(provider: string): string {
-  return provider.charAt(0).toUpperCase() + provider.slice(1);
+  return getFactory(provider)?.displayName ?? provider;
 }

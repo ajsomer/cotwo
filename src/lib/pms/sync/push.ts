@@ -106,6 +106,7 @@ export async function pushAppointmentFormSubmissions(args: {
       responses: sub.responses as Record<string, unknown>,
       schema: sub.schema,
       patientId: sub.patientId,
+      existingExternalId: sub.existingExternalId,
     });
     submissions.push(result);
   }
@@ -159,6 +160,7 @@ async function pushOneSubmission(
     responses: Record<string, unknown>;
     schema: unknown;
     patientId: string;
+    existingExternalId: string | null;
   }
 ): Promise<PushSubmissionResult> {
   const adapter = adapterForConnection(connection)!;
@@ -192,6 +194,9 @@ async function pushOneSubmission(
     connectionId: connection.id,
     patientId: sub.patientId,
     formName: sub.formName,
+    // Re-sends PATCH the existing patient_form rather than POSTing a
+    // duplicate (§8.G idempotency).
+    existingFormExternalId: sub.existingExternalId ?? undefined,
     fields,
   });
 
@@ -221,6 +226,14 @@ export async function retryField(args: {
   questionName: string;
   value: string;
 }): Promise<{ ok: boolean; field?: PmsFieldResult; error?: string }> {
+  // The main push path filters blank answers before they reach the adapter;
+  // hold the retry to the same rule, or an empty inline edit would write ""
+  // into a blank PMS field and report it "written".
+  const value = args.value.trim();
+  if (value === "") {
+    return { ok: false, error: "Enter a value to send." };
+  }
+
   const [sub] = await db
     .select({
       formId: formSubmissions.formId,
@@ -268,7 +281,7 @@ export async function retryField(args: {
         questionName: args.questionName,
         targetKey: target.target,
         label: target.title || args.questionName,
-        value: args.value,
+        value,
       },
     ],
   });

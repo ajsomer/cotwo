@@ -24,7 +24,7 @@ const settingsCards = [
   {
     title: "Integrations",
     description:
-      "Connect your practice management system (Cliniko) and map appointment types, practitioners, and fields.",
+      "Connect your practice management system and map appointment types, practitioners, and fields.",
     href: "/settings/integrations",
   },
 ];

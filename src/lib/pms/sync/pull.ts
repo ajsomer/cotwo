@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import {
   appointments,
   appointmentWorkflowRuns,
+  locations as locationsT,
   patients,
   patientPhoneNumbers,
   sessions,
@@ -189,9 +190,20 @@ async function pullAppointments(
   let skipped = 0;
   let maxUpdated: Date | null = null;
 
+  // The business filter is the saved business→location mapping
+  // (locations.pms_external_id — written by provisionFromPms's auto-map and the
+  // Settings Business Mappings card). Unmapped → pull unfiltered, which is
+  // right for single-business accounts; multi-business accounts need the
+  // mapping or every business lands on this location.
+  const [locRow] = await db
+    .select({ pmsExternalId: locationsT.pmsExternalId })
+    .from(locationsT)
+    .where(eq(locationsT.id, connection.locationId))
+    .limit(1);
+
   for await (const a of adapter.listAppointments({
     since,
-    businessId: connection.defaultBusinessExternalId ?? undefined,
+    businessId: locRow?.pmsExternalId ?? undefined,
   })) {
     const updated = a.updatedAt ? new Date(a.updatedAt) : null;
     if (updated && (!maxUpdated || updated > maxUpdated)) maxUpdated = updated;

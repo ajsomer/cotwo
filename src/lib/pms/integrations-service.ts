@@ -5,8 +5,10 @@ import {
   forms as formsT,
   pmsAppointmentTypeLinks,
   pmsConnections,
+  pmsPatientLinks,
   pmsPractitionerLinks,
   pmsProvider as pmsProviderEnum,
+  pmsSyncCursors,
   locations as locationsT,
   rooms as roomsT,
 } from "@/lib/db/schema";
@@ -22,6 +24,7 @@ import type {
   PmsFieldCatalogueEntry,
 } from "./adapter";
 import { encryptCredentials } from "./credentials";
+import { clearCursor } from "./sync/cursor";
 import { getFactory, getStaticMetadata } from "./registry";
 import {
   type PmsConnectionRow,
@@ -113,30 +116,68 @@ export async function connectPms(args: {
 
   const encrypted = encryptCredentials(args.credentials);
 
-  const [conn] = await db
-    .insert(pmsConnections)
-    .values({
-      orgId,
-      locationId: args.locationId,
-      provider: args.provider as typeof pmsConnections.$inferInsert.provider,
-      status: "connected",
-      credentialsEncrypted: encrypted,
-      accountSubdomain: webHint,
-    })
-    .onConflictDoUpdate({
-      target: pmsConnections.locationId,
-      set: {
+  // Provider switch on an existing connection: every stored external id
+  // (patient/practitioner/type links, the business mapping, sync cursors) is
+  // scoped to the OLD provider's account. Carrying them across would resolve
+  // the old ids against the new PMS — wrong-patient writes — so wipe them and
+  // let the new provider start clean. Same-provider re-credentialing keeps
+  // mappings as before. One transaction: a failure mid-way must not leave the
+  // old connection half-wiped.
+  const existing = await getConnectionForLocation(args.locationId);
+  const providerChanged = Boolean(
+    existing && existing.provider !== args.provider
+  );
+  const [conn] = await db.transaction(async (tx) => {
+    if (existing && providerChanged) {
+      await tx
+        .delete(pmsPatientLinks)
+        .where(eq(pmsPatientLinks.connectionId, existing.id));
+      await tx
+        .delete(pmsPractitionerLinks)
+        .where(eq(pmsPractitionerLinks.connectionId, existing.id));
+      await tx
+        .delete(pmsAppointmentTypeLinks)
+        .where(eq(pmsAppointmentTypeLinks.connectionId, existing.id));
+      await tx
+        .delete(pmsSyncCursors)
+        .where(eq(pmsSyncCursors.connectionId, existing.id));
+      await tx
+        .update(locationsT)
+        .set({ pmsExternalId: null, updatedAt: new Date().toISOString() })
+        .where(eq(locationsT.id, args.locationId));
+    }
+
+    return tx
+      .insert(pmsConnections)
+      .values({
+        orgId,
+        locationId: args.locationId,
         provider: args.provider as typeof pmsConnections.$inferInsert.provider,
         status: "connected",
         credentialsEncrypted: encrypted,
-        // Only overwrite the stored hint when we actually fetched one (don't
-        // clobber a manual override with a null from a failed /account call).
-        ...(webHint ? { accountSubdomain: webHint } : {}),
-        lastSyncError: null,
-        updatedAt: new Date().toISOString(),
-      },
-    })
-    .returning({ id: pmsConnections.id });
+        accountSubdomain: webHint,
+      })
+      .onConflictDoUpdate({
+        target: pmsConnections.locationId,
+        set: {
+          provider: args.provider as typeof pmsConnections.$inferInsert.provider,
+          status: "connected",
+          credentialsEncrypted: encrypted,
+          // Only overwrite the stored hint when we actually fetched one (don't
+          // clobber a manual override with a null from a failed /account call) —
+          // but on a provider change the old hint belongs to the old PMS, so
+          // clear it rather than carry it over.
+          ...(webHint
+            ? { accountSubdomain: webHint }
+            : providerChanged
+              ? { accountSubdomain: null }
+              : {}),
+          lastSyncError: null,
+          updatedAt: new Date().toISOString(),
+        },
+      })
+      .returning({ id: pmsConnections.id });
+  });
 
   // Seed a PMS-scoped "Patient Registration" write-back form so the clinic has
   // a working write-back form immediately (plan §7a). Generic over the
@@ -411,10 +452,22 @@ export async function confirmAppointmentTypeSync(args: {
       updatedAt: new Date().toISOString(),
     })
     .where(eq(pmsAppointmentTypeLinks.appointmentTypeId, args.appointmentTypeId))
-    .returning({ id: pmsAppointmentTypeLinks.id });
+    .returning({
+      id: pmsAppointmentTypeLinks.id,
+      connectionId: pmsAppointmentTypeLinks.connectionId,
+    });
 
   if (result.length === 0) {
     return { ok: false, detail: "This appointment type isn't linked to a PMS." };
+  }
+
+  // Turning a type's sync on makes appointments the cursor already advanced
+  // past (skipped while unconfirmed) eligible — clear the watermark so the
+  // next sync re-pulls and picks them up.
+  if (args.syncEnabled && args.confirmedModality === "telehealth") {
+    for (const row of result) {
+      await clearCursor(row.connectionId, "appointments");
+    }
   }
   return { ok: true };
 }
@@ -492,6 +545,25 @@ export async function savePractitionerMapping(args: {
   externalId: string;
   roomId: string | null;
 }): Promise<void> {
+  // The room must belong to the connection's own location — the room id comes
+  // from the client, and an unchecked cross-location (or cross-org) id would
+  // route this connection's synced sessions into someone else's room.
+  if (args.roomId) {
+    const [conn] = await db
+      .select({ locationId: pmsConnections.locationId })
+      .from(pmsConnections)
+      .where(eq(pmsConnections.id, args.connectionId))
+      .limit(1);
+    const [room] = await db
+      .select({ locationId: roomsT.locationId })
+      .from(roomsT)
+      .where(eq(roomsT.id, args.roomId))
+      .limit(1);
+    if (!conn || !room || room.locationId !== conn.locationId) {
+      throw new Error("Room doesn't belong to this connection's location.");
+    }
+  }
+
   if (!args.roomId) {
     // Unmap.
     await db
@@ -518,6 +590,10 @@ export async function savePractitionerMapping(args: {
       ],
       set: { roomId: args.roomId },
     });
+
+  // A newly-roomed practitioner makes appointments the cursor already advanced
+  // past (skipped while unmapped) eligible — re-pull from scratch next sync.
+  await clearCursor(args.connectionId, "appointments");
 }
 
 export async function saveBusinessMapping(args: {

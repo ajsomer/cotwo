@@ -1,7 +1,6 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, Loader2, X } from "lucide-react";
 
@@ -22,34 +21,51 @@ const PMS_OPTIONS: PmsOption[] = [
   { id: "power_diary", name: "Power Diary", description: "Practice management system", comingSoon: true },
 ];
 
-/** Providers that connect with a real API key via /api/setup/pms/connect. */
-const API_KEY_PROVIDERS: Partial<
-  Record<PmsProvider, { label: string; placeholder: string; help: string }>
-> = {
-  cliniko: {
-    label: "Cliniko",
-    placeholder: "…-au1",
-    help: "Cliniko → My Info → Manage API keys. The region is read from the key.",
-  },
-  nookal: {
-    label: "Nookal",
-    placeholder: "Your Nookal API key",
-    help: "Nookal → Practice → Setup → API Keys.",
-  },
-};
+/** Connect metadata for one registry-backed provider (from /api/pms/providers). */
+interface ProviderConnectMeta {
+  provider: string;
+  label: string;
+  credentialFields: Array<{
+    key: string;
+    label: string;
+    inputType: "text" | "password";
+    placeholder?: string;
+    helpText?: string;
+  }>;
+}
 
 export function PmsSelectionGrid() {
-  const router = useRouter();
   const [connecting, setConnecting] = useState<PmsProvider | null>(null);
   const [connected, setConnected] = useState<PmsProvider | null>(null);
   const [comingSoonModal, setComingSoonModal] = useState<PmsProvider | null>(null);
-  /** Which API-key provider's connect modal is open (cliniko / nookal). */
-  const [apiKeyModal, setApiKeyModal] = useState<PmsProvider | null>(null);
-  const [apiKey, setApiKey] = useState("");
+  /** Which registry-backed provider's connect modal is open. */
+  const [connectModal, setConnectModal] = useState<ProviderConnectMeta | null>(null);
+  const [credentialValues, setCredentialValues] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const apiKeyConfig = apiKeyModal ? API_KEY_PROVIDERS[apiKeyModal] : null;
+  // Providers with a real adapter (and their credential fields). The registry
+  // is server-only, so this comes from /api/pms/providers. A tile is
+  // connectable-with-credentials when its id appears here.
+  const [providerMeta, setProviderMeta] = useState<ProviderConnectMeta[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/pms/providers");
+        const data = res.ok
+          ? ((await res.json()) as { providers?: ProviderConnectMeta[] })
+          : null;
+        if (!cancelled) setProviderMeta(data?.providers ?? []);
+      } catch {
+        if (!cancelled) setProviderMeta([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleSelect(provider: PmsOption) {
     if (provider.comingSoon) {
@@ -57,11 +73,21 @@ export function PmsSelectionGrid() {
       return;
     }
 
-    // Real API-key connect (Cliniko, Nookal): open the key modal.
-    if (API_KEY_PROVIDERS[provider.id]) {
-      setError(null);
-      setApiKey("");
-      setApiKeyModal(provider.id);
+    // Real credential connect (any registry-backed provider): open the modal.
+    // If the metadata fetch failed, error out rather than falling through to
+    // the demo path — that would record a credential-less marker while the UI
+    // claims the PMS is connected.
+    if (provider.id !== "gentu") {
+      const meta = providerMeta?.find((p) => p.provider === provider.id);
+      if (meta) {
+        setError(null);
+        setCredentialValues({});
+        setConnectModal(meta);
+      } else {
+        setError(
+          `Couldn't load ${provider.name} connection details — refresh and try again.`
+        );
+      }
       return;
     }
 
@@ -85,18 +111,21 @@ export function PmsSelectionGrid() {
     setConnected(provider.id);
   }
 
-  async function handleConnectApiKey() {
-    if (!apiKeyModal) return;
-    const provider = apiKeyModal;
+  async function handleConnectCredentials() {
+    if (!connectModal) return;
+    const provider = connectModal.provider as PmsProvider;
     setConnecting(provider);
     setError(null);
+    const credentials = Object.fromEntries(
+      connectModal.credentialFields.map((f) => [
+        f.key,
+        (credentialValues[f.key] ?? "").trim(),
+      ])
+    );
     const res = await fetch("/api/setup/pms/connect", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        provider,
-        credentials: { api_key: apiKey.trim() },
-      }),
+      body: JSON.stringify({ provider, credentials }),
     });
     const data = (await res.json().catch(() => ({}))) as {
       ok?: boolean;
@@ -105,13 +134,13 @@ export function PmsSelectionGrid() {
     };
     setConnecting(null);
     if (res.ok && data.ok) {
-      setApiKeyModal(null);
+      setConnectModal(null);
       setConnected(provider);
     } else {
       setError(
         data.detail ??
           data.error ??
-          `Couldn't connect to ${API_KEY_PROVIDERS[provider]?.label ?? "your PMS"}.`
+          `Couldn't connect to ${connectModal.label}.`
       );
     }
   }
@@ -145,6 +174,13 @@ export function PmsSelectionGrid() {
     window.location.href = "/setup/rooms";
   }
 
+  const connectedMeta = providerMeta?.find((p) => p.provider === connected);
+  const missingCredentials =
+    !connectModal ||
+    connectModal.credentialFields.some(
+      (f) => !(credentialValues[f.key] ?? "").trim()
+    );
+
   return (
     <div className="space-y-5">
       <div>
@@ -154,7 +190,7 @@ export function PmsSelectionGrid() {
         </p>
       </div>
 
-      {error && <p className="text-sm text-red-500">{error}</p>}
+      {error && !connectModal && <p className="text-sm text-red-500">{error}</p>}
 
       <div className="grid grid-cols-1 gap-3">
         {PMS_OPTIONS.map((option) => {
@@ -166,7 +202,7 @@ export function PmsSelectionGrid() {
               key={option.id}
               type="button"
               onClick={() => handleSelect(option)}
-              disabled={!!connecting || !!connected || submitting}
+              disabled={!!connecting || !!connected || submitting || providerMeta === null}
               className={`flex items-center justify-between w-full px-4 py-3 rounded-xl border text-left transition-colors ${
                 isConnected
                   ? "border-green-500 bg-green-50"
@@ -198,8 +234,8 @@ export function PmsSelectionGrid() {
       {connected ? (
         <div className="space-y-3">
           <p className="text-sm text-green-700 font-medium">
-            {connected && API_KEY_PROVIDERS[connected]
-              ? `Connected to ${API_KEY_PROVIDERS[connected]?.label}. Next, confirm your appointment types and rooms in Settings → Integrations.`
+            {connectedMeta
+              ? `Connected to ${connectedMeta.label}. Next, confirm your appointment types and rooms in Settings → Integrations.`
               : "Connected to Gentu — appointment types, forms, and rooms imported."}
           </p>
           <Button
@@ -223,40 +259,54 @@ export function PmsSelectionGrid() {
         </button>
       )}
 
-      {/* API-key connect modal (Cliniko, Nookal) */}
-      {apiKeyModal && apiKeyConfig && (
+      {/* Credential connect modal (registry-backed providers) */}
+      {connectModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl">
             <div className="flex items-start justify-between mb-3">
               <h2 className="text-base font-semibold text-gray-800">
-                Connect {apiKeyConfig.label}
+                Connect {connectModal.label}
               </h2>
               <button
                 type="button"
-                onClick={() => setApiKeyModal(null)}
+                onClick={() => setConnectModal(null)}
                 className="text-gray-400 hover:text-gray-600"
               >
                 <X size={18} />
               </button>
             </div>
             <p className="text-sm text-gray-500 mb-3">
-              Paste your {apiKeyConfig.label} API key. We verify it before saving
-              and store it encrypted. {apiKeyConfig.help}
+              Enter your {connectModal.label} credentials. We verify them before
+              saving and store them encrypted.
             </p>
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder={apiKeyConfig.placeholder}
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
-            />
+            <div className="space-y-3">
+              {connectModal.credentialFields.map((f) => (
+                <div key={f.key}>
+                  <label className="block text-xs font-medium text-gray-800 mb-1">
+                    {f.label}
+                  </label>
+                  <input
+                    type={f.inputType}
+                    placeholder={f.placeholder}
+                    value={credentialValues[f.key] ?? ""}
+                    onChange={(e) =>
+                      setCredentialValues((v) => ({ ...v, [f.key]: e.target.value }))
+                    }
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  />
+                  {f.helpText && (
+                    <p className="text-xs text-gray-500 mt-1">{f.helpText}</p>
+                  )}
+                </div>
+              ))}
+            </div>
             {error && <p className="text-sm text-red-500 mt-2">{error}</p>}
             <div className="flex gap-3 mt-5">
               <Button
                 type="button"
                 variant="secondary"
                 className="flex-1"
-                onClick={() => setApiKeyModal(null)}
+                onClick={() => setConnectModal(null)}
               >
                 Cancel
               </Button>
@@ -264,10 +314,10 @@ export function PmsSelectionGrid() {
                 type="button"
                 variant="primary"
                 className="flex-1"
-                onClick={handleConnectApiKey}
-                disabled={connecting === apiKeyModal || !apiKey.trim()}
+                onClick={handleConnectCredentials}
+                disabled={connecting === connectModal.provider || missingCredentials}
               >
-                {connecting === apiKeyModal ? "Verifying…" : "Connect"}
+                {connecting === connectModal.provider ? "Verifying…" : "Connect"}
               </Button>
             </div>
           </div>

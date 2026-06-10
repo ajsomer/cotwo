@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireStaffLocationAccess } from "@/lib/auth/staff-access";
 import { getConnectionForLocation, isSyncActive } from "@/lib/pms/connection";
-import { getStaticMetadata } from "@/lib/pms/registry";
+import { getFactory } from "@/lib/pms/registry";
 import { webLinkForPatientAtLocation } from "@/lib/pms/web-link";
 
 /**
@@ -28,13 +28,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ url: null });
   }
   const url = await webLinkForPatientAtLocation(locationId, patientId);
-  const meta = getStaticMetadata(connection.provider);
+  const factory = getFactory(connection.provider);
   return NextResponse.json({
     url,
-    providerLabel:
-      url && meta
-        ? connection.provider.charAt(0).toUpperCase() +
-          connection.provider.slice(1)
-        : null,
+    providerLabel: url && factory ? factory.displayName : null,
   });
 }

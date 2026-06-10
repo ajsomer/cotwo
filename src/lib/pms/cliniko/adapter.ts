@@ -12,6 +12,7 @@ import type {
   PmsAppointment,
   PmsAppointmentType,
   PmsBusiness,
+  PmsFailureKind,
   PmsFieldResult,
   PmsFormFieldInput,
   PmsFormSubmissionInput,
@@ -19,7 +20,12 @@ import type {
   PmsPractitioner,
   PmsPushResult,
 } from "../types";
-import { getPatientExternalId } from "../sync/mapping";
+import {
+  failResult,
+  fillBlanksWrite,
+  orchestratePush,
+  validateCatalogueValue,
+} from "../push-helpers";
 import { ClinikoApiError, ClinikoClient, baseUrlForKey } from "./client";
 import {
   clinikoTimestamp,
@@ -42,7 +48,6 @@ import type {
   ClinikoPatient,
   ClinikoPatientForm,
   ClinikoPatientFormPayload,
-  ClinikoPatientPatch,
   ClinikoPractitioner,
 } from "./types";
 
@@ -278,160 +283,44 @@ class ClinikoAdapter implements PmsAdapter {
   async pushFormSubmission(
     input: PmsFormSubmissionInput
   ): Promise<PmsPushResult> {
-    // Resolve Cliniko patient id from the connection-scoped link table.
-    const externalId = await getPatientExternalId(
-      input.connectionId,
-      input.patientId
-    );
-    if (!externalId) {
-      return {
-        fields: input.fields.map((f) => ({
-          coviuQuestionName: f.questionName,
-          target: f.targetKey,
-          label: f.label,
-          attemptedValue: f.value,
-          status: "failed" as const,
-          failureKind: "mapping" as const,
-          detail: "This patient isn't linked to Cliniko yet.",
-        })),
-      };
-    }
-
-    const patientFields = input.fields.filter(
-      (f) => catalogueEntry(f.targetKey)?.writeMode === "patient_field"
-    );
-    const formAnswers = input.fields.filter(
-      (f) => catalogueEntry(f.targetKey)?.writeMode === "form_answer"
-    );
-    const unmapped = input.fields.filter((f) => !catalogueEntry(f.targetKey));
-
-    const results: PmsFieldResult[] = [];
-
-    // 1. Patient fields — fill-blanks-only PATCH.
-    if (patientFields.length > 0) {
-      results.push(...(await this.writePatientFields(externalId, patientFields)));
-    }
-
-    // 2. Self-contained patient_form for the form answers.
-    let createdFormId: string | undefined = input.existingFormExternalId;
-    if (formAnswers.length > 0) {
-      const { id, fieldResults } = await this.writePatientForm(
-        externalId,
-        input.formName,
-        formAnswers,
-        input.existingFormExternalId
-      );
-      createdFormId = id ?? input.existingFormExternalId;
-      results.push(...fieldResults);
-    }
-
-    // 3. Unmapped answers — informational.
-    for (const f of unmapped) {
-      results.push({
-        coviuQuestionName: f.questionName,
-        target: f.targetKey,
-        label: f.label,
-        attemptedValue: f.value,
-        status: "unmapped",
-        detail: "No Cliniko target — stays in Coviu only.",
-      });
-    }
-
-    return { externalId: createdFormId, fields: results };
+    return orchestratePush(input, {
+      providerLabel: this.displayName,
+      catalogueEntry,
+      writePatientFields: (externalId, fields) =>
+        this.writePatientFields(externalId, fields),
+      writeFormAnswers: (externalId, formName, fields, existingFormId) =>
+        this.writePatientForm(externalId, formName, fields, existingFormId),
+    });
   }
 
   /** Fill-blanks-only: read current values, PATCH only currently-empty fields. */
-  private async writePatientFields(
+  private writePatientFields(
     externalId: string,
     fields: PmsFormFieldInput[]
   ): Promise<PmsFieldResult[]> {
-    const url = `${baseUrlForKey(this.apiKey)}/patients/${externalId}`;
-    let current: ClinikoPatient;
-    try {
-      current = await this.client.get<ClinikoPatient>(url);
-    } catch (e) {
-      const detail = transportDetail(e as ClinikoApiError);
-      return fields.map((f) => ({
-        coviuQuestionName: f.questionName,
-        target: f.targetKey,
-        label: f.label,
-        attemptedValue: f.value,
-        status: "failed" as const,
-        ...detail,
-      }));
-    }
-
-    const patch: ClinikoPatientPatch = {};
-    const results: PmsFieldResult[] = [];
-    const currentRecord = current as unknown as Record<string, unknown>;
-
-    for (const f of fields) {
-      const prop = PATIENT_PATCH_FIELD[f.targetKey];
-      if (!prop) {
-        results.push(failResult(f, "mapping", "Unknown Cliniko field."));
-        continue;
-      }
-      // Validate before attempting.
-      const v = this.validateField(f.targetKey, f.value);
-      if (!v.ok) {
-        results.push(failResult(f, v.failureKind, v.detail));
-        continue;
-      }
-      const existing = currentRecord[prop];
-      if (existing !== null && existing !== undefined && existing !== "") {
-        results.push({
-          coviuQuestionName: f.questionName,
-          target: f.targetKey,
-          label: f.label,
-          attemptedValue: f.value,
-          status: "skipped_existing",
-          detail: "Kept the value already in Cliniko.",
-        });
-        continue;
-      }
-      patch[prop] = f.value;
-      // Tentatively mark written; flip to failed if the PATCH errors.
-      results.push({
-        coviuQuestionName: f.questionName,
-        target: f.targetKey,
-        label: f.label,
-        attemptedValue: f.value,
-        status: "written",
-      });
-    }
-
-    // The fields we intend to write, paired with their result rows so we can
-    // attribute a per-field outcome.
-    const toWrite = results
-      .filter((r) => r.status === "written")
-      .map((r) => ({ result: r, prop: PATIENT_PATCH_FIELD[r.target] }));
-
-    if (toWrite.length > 0) {
-      try {
-        // Happy path: one PATCH for everything.
-        await this.client.patch(`/patients/${externalId}`, patch);
-      } catch {
-        // A single invalid field (e.g. a malformed DVA number) rejects the
-        // whole batch. Don't poison the good fields — retry each on its own so
-        // valid ones still land and only the offending field is marked failed
-        // with Cliniko's specific message.
-        for (const { result: r, prop } of toWrite) {
-          if (!prop) continue;
-          try {
-            await this.client.patch(`/patients/${externalId}`, {
-              [prop]: r.attemptedValue,
-            });
-            // stays "written"
-          } catch (e2) {
-            const detail = transportDetail(e2 as ClinikoApiError);
-            r.status = "failed";
-            r.failureKind = detail.failureKind;
-            r.detail = detail.detail;
-          }
+    return fillBlanksWrite(fields, {
+      providerLabel: this.displayName,
+      readCurrent: async () => {
+        try {
+          const current = await this.client.get<ClinikoPatient>(
+            `${baseUrlForKey(this.apiKey)}/patients/${externalId}`
+          );
+          return current as unknown as Record<string, unknown>;
+        } catch (e) {
+          if ((e as ClinikoApiError).status === 404) return null;
+          throw e;
         }
-      }
-    }
-    return results;
+      },
+      writeParamFor: (key) => PATIENT_PATCH_FIELD[key],
+      validate: (key, value) => this.validateField(key, value),
+      writeBatch: async (patch) => {
+        await this.client.patch(`/patients/${externalId}`, patch);
+      },
+      writeOne: async (param, value) => {
+        await this.client.patch(`/patients/${externalId}`, { [param]: value });
+      },
+      mapError: (e) => transportDetail(e as ClinikoApiError),
+    });
   }
 
   /** POST a self-contained patient_form, or PATCH an existing one (idempotent). */
@@ -470,8 +359,11 @@ class ClinikoAdapter implements PmsAdapter {
       return { fieldResults };
     }
 
+    // patient_id as a raw string: Cliniko ids exceed JS's safe-integer range,
+    // so Number() silently corrupts the trailing digits (same hazard as the
+    // attachment flow above).
     const payload: ClinikoPatientFormPayload = {
-      patient_id: Number(externalId),
+      patient_id: externalId,
       name: formName || "Coviu intake",
       content: { sections: [{ name: formName || "Coviu intake", questions }] },
     };
@@ -508,46 +400,7 @@ class ClinikoAdapter implements PmsAdapter {
   }
 
   validateField(key: string, value: string): PmsFieldValidation {
-    const entry = catalogueEntry(key);
-    if (!entry) {
-      return { ok: false, failureKind: "mapping", detail: "Unknown Cliniko field." };
-    }
-    const trimmed = value?.trim() ?? "";
-    if (trimmed === "") {
-      // Empty values are skipped upstream (nothing to write), not a hard fail.
-      return { ok: true };
-    }
-    switch (entry.valueType) {
-      case "date":
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-          return {
-            ok: false,
-            failureKind: "validation",
-            detail: "Cliniko expects a date as YYYY-MM-DD.",
-          };
-        }
-        return { ok: true };
-      case "phone":
-        if (!/^\+?[0-9 ()-]{6,20}$/.test(trimmed)) {
-          return {
-            ok: false,
-            failureKind: "validation",
-            detail: "Not a valid phone number.",
-          };
-        }
-        return { ok: true };
-      case "enum":
-        if (entry.enumChoices && !entry.enumChoices.includes(trimmed)) {
-          return {
-            ok: false,
-            failureKind: "validation",
-            detail: `Cliniko doesn't recognise "${trimmed}" for ${entry.label}. Expected one of: ${entry.enumChoices.join(", ")}.`,
-          };
-        }
-        return { ok: true };
-      default:
-        return { ok: true };
-    }
+    return validateCatalogueValue(catalogueEntry(key), value, this.displayName);
   }
 
   webLinkForPatient(externalId: string): string | null {
@@ -579,22 +432,6 @@ class ClinikoAdapter implements PmsAdapter {
   }
 }
 
-function failResult(
-  f: PmsFormFieldInput,
-  failureKind: string,
-  detail: string
-): PmsFieldResult {
-  return {
-    coviuQuestionName: f.questionName,
-    target: f.targetKey,
-    label: f.label,
-    attemptedValue: f.value,
-    status: "failed",
-    failureKind: failureKind as PmsFieldResult["failureKind"],
-    detail,
-  };
-}
-
 /** "dva_card_number" → "DVA card number". */
 function humanise(field: string): string {
   return field
@@ -606,7 +443,7 @@ function humanise(field: string): string {
 
 /** Translate a Cliniko transport error into an actionable failureKind/detail. */
 function transportDetail(err: ClinikoApiError): {
-  failureKind: PmsFieldResult["failureKind"];
+  failureKind: PmsFailureKind;
   detail: string;
 } {
   if (err.status === 401 || err.status === 403) {

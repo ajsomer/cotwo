@@ -7,7 +7,13 @@ import {
   staffAssignments,
 } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { resolveDefaultStaffOrg, getAuthenticatedUserId } from "@/lib/auth/staff-access";
+import {
+  getAuthenticatedUserId,
+  requireStaffLocationAccess,
+  resolveDefaultStaffOrg,
+} from "@/lib/auth/staff-access";
+
+const PM_ROLES = new Set(["clinic_owner", "practice_manager"]);
 import { seedDefaultWorkflows } from "@/lib/workflows/seed-defaults";
 import { newPatientIntakeSchema, defaultFormSchema } from "@/lib/survey/identity-page";
 import { NextResponse, type NextRequest } from "next/server";
@@ -36,12 +42,19 @@ export async function POST(request: NextRequest) {
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await request.json();
-  const { provider, skipped } = body as { provider: string | null; skipped: boolean };
+  const { provider } = body as { provider: string | null };
 
   // Setup flow: no scope is supplied, so resolve the user's default org.
   const resolved = await resolveDefaultStaffOrg(userId);
   if (!resolved) return NextResponse.json({ error: "No org found." }, { status: 400 });
   const { orgId, locationId } = resolved;
+
+  // Writing the connection marker / seeding demo data is admin-level config —
+  // gate on the same PM roles as the Settings connection route.
+  const access = await requireStaffLocationAccess(locationId);
+  if (!access.ok || !PM_ROLES.has(access.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   if (provider === "gentu") {
     await seedGentuData(orgId, locationId);

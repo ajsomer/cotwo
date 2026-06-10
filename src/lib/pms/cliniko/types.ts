@@ -100,7 +100,8 @@ export interface ClinikoPatientPatch {
 
 /** A self-contained patient_form we POST/PATCH (no template needed). */
 export interface ClinikoPatientFormPayload {
-  patient_id: number;
+  /** Raw string — Cliniko ids exceed JS's safe-integer range (never Number()). */
+  patient_id: string;
   name: string;
   content: {
     sections: Array<{

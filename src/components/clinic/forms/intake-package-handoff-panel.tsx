@@ -89,11 +89,16 @@ export function IntakePackageHandoffPanel({
   const [marking, setMarking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // PMS write-back gate: shown only when this appointment has pushable PMS-bound
-  // form data (a form with field mappings + values). Plain "Complete" otherwise.
-  const [pmsGate, setPmsGate] = useState<{ active: boolean; label: string } | null>(
-    null
-  );
+  // PMS write-back gate: shown when this appointment has pushable PMS-bound
+  // form data OR an intake PDF the provider can take (attachment-only path,
+  // e.g. Nookal with writeForms:false). Plain "Complete" otherwise.
+  // writeAttachments / hasPushableFields gate the two halves of the sync.
+  const [pmsGate, setPmsGate] = useState<{
+    active: boolean;
+    label: string;
+    writeAttachments: boolean;
+    hasPushableFields: boolean;
+  } | null>(null);
   const [pushResults, setPushResults] = useState<
     Array<{ label: string; status: string; detail?: string }> | null
   >(null);
@@ -128,8 +133,14 @@ export function IntakePackageHandoffPanel({
   // call, but gating on syncActive avoids firing it when there's no PMS.
   useEffect(() => {
     let cancelled = false;
+    const inactive = {
+      active: false,
+      label: "",
+      writeAttachments: false,
+      hasPushableFields: false,
+    };
     if (!pmsSyncActive) {
-      setPmsGate({ active: false, label: "" });
+      setPmsGate(inactive);
       return;
     }
     (async () => {
@@ -139,16 +150,26 @@ export function IntakePackageHandoffPanel({
         );
         if (cancelled) return;
         const data = res.ok
-          ? ((await res.json()) as { active?: boolean; providerLabel?: string | null })
+          ? ((await res.json()) as {
+              active?: boolean;
+              providerLabel?: string | null;
+              writeAttachments?: boolean;
+              hasPushableFields?: boolean;
+            })
           : null;
         if (cancelled) return;
         setPmsGate(
           data?.active
-            ? { active: true, label: data.providerLabel ?? "PMS" }
-            : { active: false, label: "" }
+            ? {
+                active: true,
+                label: data.providerLabel ?? "PMS",
+                writeAttachments: data.writeAttachments === true,
+                hasPushableFields: data.hasPushableFields === true,
+              }
+            : inactive
         );
       } catch {
-        if (!cancelled) setPmsGate({ active: false, label: "" });
+        if (!cancelled) setPmsGate(inactive);
       }
     })();
     return () => {
@@ -182,9 +203,10 @@ export function IntakePackageHandoffPanel({
     }
   };
 
-  // Sync to the PMS: push the field write-back AND attach the intake PDF in one
-  // action, then render per-field results + the attachment outcome. Does NOT
-  // complete — that's a separate action, so staff review what landed first.
+  // Sync to the PMS: push the field write-back AND — when the provider supports
+  // attachments — attach the intake PDF in one action, then render per-field
+  // results + the attachment outcome. Does NOT complete — that's a separate
+  // action, so staff review what landed first.
   const [attachMsg, setAttachMsg] = useState<string | null>(null);
   const handleSync = async () => {
     setMarking(true);
@@ -193,44 +215,56 @@ export function IntakePackageHandoffPanel({
     setAttachMsg(null);
     try {
       const [fieldRes, attachRes] = await Promise.all([
-        fetch("/api/pms/push-appointment", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ appointmentId }),
-        }),
-        fetch("/api/pms/attach-pdf", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ appointmentId }),
-        }),
+        // Skip the field half when there's no mapped data to push
+        // (attachment-only sync, e.g. Nookal's document path).
+        pmsGate?.hasPushableFields
+          ? fetch("/api/pms/push-appointment", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ appointmentId }),
+            })
+          : Promise.resolve(null),
+        // Skip the attach half entirely for providers without writeAttachments
+        // (it would just error with "doesn't support attachments").
+        pmsGate?.writeAttachments
+          ? fetch("/api/pms/attach-pdf", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ appointmentId }),
+            })
+          : Promise.resolve(null),
       ]);
 
-      const fieldData = (await fieldRes.json().catch(() => ({}))) as {
-        ok?: boolean;
-        submissions?: Array<{
-          fields: Array<{ label: string; status: string; detail?: string }>;
-        }>;
-        error?: string;
-      };
-      if (fieldRes.ok && fieldData.ok) {
-        const fields = (fieldData.submissions ?? []).flatMap((s) => s.fields);
-        setPushResults(
-          fields.map((f) => ({ label: f.label, status: f.status, detail: f.detail }))
-        );
-      } else {
-        setError(fieldData.error ?? "Field sync failed.");
+      if (fieldRes) {
+        const fieldData = (await fieldRes.json().catch(() => ({}))) as {
+          ok?: boolean;
+          submissions?: Array<{
+            fields: Array<{ label: string; status: string; detail?: string }>;
+          }>;
+          error?: string;
+        };
+        if (fieldRes.ok && fieldData.ok) {
+          const fields = (fieldData.submissions ?? []).flatMap((s) => s.fields);
+          setPushResults(
+            fields.map((f) => ({ label: f.label, status: f.status, detail: f.detail }))
+          );
+        } else {
+          setError(fieldData.error ?? "Field sync failed.");
+        }
       }
 
-      const attachData = (await attachRes.json().catch(() => ({}))) as {
-        ok?: boolean;
-        detail?: string;
-        error?: string;
-      };
-      setAttachMsg(
-        attachRes.ok && attachData.ok
-          ? `Intake PDF attached to ${pmsGate?.label ?? "the PMS"}.`
-          : `PDF: ${attachData.detail ?? attachData.error ?? "couldn't attach."}`
-      );
+      if (attachRes) {
+        const attachData = (await attachRes.json().catch(() => ({}))) as {
+          ok?: boolean;
+          detail?: string;
+          error?: string;
+        };
+        setAttachMsg(
+          attachRes.ok && attachData.ok
+            ? `Intake PDF attached to ${pmsGate?.label ?? "the PMS"}.`
+            : `PDF: ${attachData.detail ?? attachData.error ?? "couldn't attach."}`
+        );
+      }
     } catch {
       setError("Network error");
     } finally {
@@ -392,16 +426,16 @@ export function IntakePackageHandoffPanel({
             <p className="text-xs text-red-500">{error}</p>
           )}
 
-          {/* Per-field push results (after a Sync). */}
-          {pushResults && (
+          {/* Per-field push results and/or attach outcome (after a Sync). */}
+          {(pushResults || attachMsg) && (
             <div className="rounded-lg border border-gray-200 p-3 space-y-1">
               <p className="text-xs font-medium text-gray-700">
                 {pmsGate?.label ?? "PMS"} sync results
               </p>
-              {pushResults.length === 0 && (
+              {pushResults?.length === 0 && (
                 <p className="text-xs text-gray-500">No fields to send.</p>
               )}
-              {pushResults.map((r, i) => (
+              {(pushResults ?? []).map((r, i) => (
                 <div key={i} className="flex items-center justify-between gap-2 text-xs">
                   <span className="text-gray-700">{r.label}</span>
                   <span

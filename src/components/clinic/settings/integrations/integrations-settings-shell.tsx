@@ -195,15 +195,18 @@ export function IntegrationsSettingsShell() {
             )}
 
             {/* Account subdomain — used to build "Open in {PMS}" patient links.
-                Auto-detected on connect; editable here if it's wrong/missing. */}
-            <div className="mt-4 border-t border-gray-100 pt-3">
-              <SubdomainEditor
-                locationId={locationId}
-                provider={status.providerLabel ?? "PMS"}
-                initial={status.accountSubdomain}
-                onSaved={loadStatus}
-              />
-            </div>
+                Auto-detected on connect; editable here if it's wrong/missing.
+                Only relevant for providers that expose web deep links. */}
+            {status.capabilities?.webLinks && (
+              <div className="mt-4 border-t border-gray-100 pt-3">
+                <SubdomainEditor
+                  locationId={locationId}
+                  provider={status.providerLabel ?? "PMS"}
+                  initial={status.accountSubdomain}
+                  onSaved={loadStatus}
+                />
+              </div>
+            )}
           </div>
 
           {mappingError && (
@@ -214,11 +217,13 @@ export function IntegrationsSettingsShell() {
             <div className="mt-6 space-y-8">
               <BusinessMappings
                 locationId={locationId}
+                providerLabel={status.providerLabel ?? "your PMS"}
                 data={mappings}
                 onSaved={loadMappings}
               />
               <PractitionerMappings
                 locationId={locationId}
+                providerLabel={status.providerLabel ?? "your PMS"}
                 data={mappings}
                 onSaved={loadMappings}
               />
@@ -280,9 +285,7 @@ function SubdomainEditor({
       </label>
       <p className="text-xs text-gray-500 mb-2">
         Used for &ldquo;Open in {provider}&rdquo; patient links. It&apos;s the
-        first part of your {provider} web address — e.g. for{" "}
-        <code>coviu-test.au5.cliniko.com</code> the subdomain is{" "}
-        <code>coviu-test</code>.
+        first part of your {provider} web address.
       </p>
       <div className="flex items-center gap-2">
         <input
@@ -291,7 +294,7 @@ function SubdomainEditor({
             setValue(e.target.value);
             setSaved(false);
           }}
-          placeholder="coviu-test"
+          placeholder="your-clinic"
           className="w-48 rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
         />
         <Button

@@ -5,6 +5,8 @@ import type { MappingDataDTO } from "./types";
 
 interface Props {
   locationId: string;
+  /** Human label for the connected provider, e.g. "Cliniko" / "Nookal". */
+  providerLabel: string;
   data: MappingDataDTO;
   onSaved: () => void;
 }
@@ -13,12 +15,12 @@ interface Props {
  * Map each PMS practitioner (the appointment-book column) → a Coviu room. A
  * synced appointment lands the patient in its practitioner's room (§025).
  */
-export function PractitionerMappings({ locationId, data, onSaved }: Props) {
+export function PractitionerMappings({ locationId, providerLabel, data, onSaved }: Props) {
   return (
     <section>
       <h3 className="text-sm font-semibold text-gray-800">Practitioners → rooms</h3>
       <p className="text-xs text-gray-500 mt-1">
-        Send each Cliniko practitioner&apos;s appointments to the right room. A
+        Send each {providerLabel} practitioner&apos;s appointments to the right room. A
         synced appointment can only reach the run sheet once its practitioner has
         a room here.
       </p>

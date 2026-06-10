@@ -66,11 +66,18 @@ export async function POST(request: NextRequest) {
   switch (kind) {
     case "practitioner": {
       // Map the PMS practitioner (appointment-book column) → a Coviu room (§025).
-      await savePractitionerMapping({
-        connectionId: connection.id,
-        externalId: body.externalId as string,
-        roomId: (body.roomId as string | null) ?? null,
-      });
+      try {
+        await savePractitionerMapping({
+          connectionId: connection.id,
+          externalId: body.externalId as string,
+          roomId: (body.roomId as string | null) ?? null,
+        });
+      } catch (e) {
+        return NextResponse.json(
+          { error: (e as Error).message },
+          { status: 400 }
+        );
+      }
       return NextResponse.json({ ok: true });
     }
     case "business": {

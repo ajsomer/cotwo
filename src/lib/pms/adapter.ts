@@ -11,6 +11,7 @@ import type {
   PmsAppointment,
   PmsAppointmentType,
   PmsBusiness,
+  PmsFailureKind,
   PmsFormSubmissionInput,
   PmsPatient,
   PmsPractitioner,
@@ -64,7 +65,7 @@ export interface PmsFieldCatalogueEntry {
 /** Result of per-target validation (powers actionable failure messages). */
 export type PmsFieldValidation =
   | { ok: true }
-  | { ok: false; failureKind: string; detail: string };
+  | { ok: false; failureKind: PmsFailureKind; detail: string };
 
 /** A single credential field the connect form should collect. */
 export interface PmsCredentialField {

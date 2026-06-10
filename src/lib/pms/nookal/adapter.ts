@@ -12,6 +12,7 @@ import type {
   PmsAppointment,
   PmsAppointmentType,
   PmsBusiness,
+  PmsFailureKind,
   PmsFieldResult,
   PmsFormFieldInput,
   PmsFormSubmissionInput,
@@ -19,7 +20,11 @@ import type {
   PmsPractitioner,
   PmsPushResult,
 } from "../types";
-import { getPatientExternalId } from "../sync/mapping";
+import {
+  fillBlanksWrite,
+  orchestratePush,
+  validateCatalogueValue,
+} from "../push-helpers";
 import { NookalApiError, NookalClient } from "./client";
 import {
   mapAppointment,
@@ -39,7 +44,6 @@ import type {
   NookalAppointment,
   NookalLocation,
   NookalPatient,
-  NookalPatientPatch,
   NookalPractitioner,
   NookalService,
   NookalUploadInit,
@@ -207,144 +211,58 @@ class NookalAdapter implements PmsAdapter {
   async pushFormSubmission(
     input: PmsFormSubmissionInput
   ): Promise<PmsPushResult> {
-    const externalId = await getPatientExternalId(
-      input.connectionId,
-      input.patientId
-    );
-    if (!externalId) {
-      return {
-        fields: input.fields.map((f) => ({
-          coviuQuestionName: f.questionName,
-          target: f.targetKey,
-          label: f.label,
-          attemptedValue: f.value,
-          status: "failed" as const,
-          failureKind: "mapping" as const,
-          detail: "This patient isn't linked to Nookal yet.",
-        })),
-      };
-    }
-
-    // writeForms is false → there are no form_answer targets. Everything is
-    // either a patient_field write or unmapped.
-    const patientFields = input.fields.filter(
-      (f) => catalogueEntry(f.targetKey)?.writeMode === "patient_field"
-    );
-    const unmapped = input.fields.filter((f) => !catalogueEntry(f.targetKey));
-
-    const results: PmsFieldResult[] = [];
-    if (patientFields.length > 0) {
-      results.push(...(await this.writePatientFields(externalId, patientFields)));
-    }
-    for (const f of unmapped) {
-      results.push({
-        coviuQuestionName: f.questionName,
-        target: f.targetKey,
-        label: f.label,
-        attemptedValue: f.value,
-        status: "unmapped",
-        detail: "No Nookal target — stays in Coviu only.",
-      });
-    }
-    return { fields: results };
+    // writeForms is false → the catalogue has no form_answer targets, so no
+    // writeFormAnswers hook: everything is a patient_field write or unmapped.
+    return orchestratePush(input, {
+      providerLabel: this.displayName,
+      catalogueEntry,
+      writePatientFields: (externalId, fields) =>
+        this.writePatientFields(externalId, fields),
+    });
   }
 
   /**
    * Fill-blanks-only: read the current patient, write only currently-empty
    * fields, so we never clobber clinic-entered data.
    *
-   * VERIFIED: the patient-update endpoint is `editPatient` (takes patient_id +
-   * the same field names as the patient object — FirstName/DOB/Email/…). Any
-   * rejection is surfaced per-field with an actionable message.
+   * VERIFIED: the patient-update endpoint is `editPatient`, and it's ASYMMETRIC
+   * with reads — editPatient expects snake_case params (date_of_birth/email/…)
+   * while getPatients returns PascalCase fields (DOB/Email/…); see the
+   * PATIENT_WRITE_PARAM / PATIENT_READ_FIELD note in field-map.ts. An
+   * unreadable patient record fails every field (fillBlanksWrite's null
+   * contract) — Nookal's editPatient silently ignores unknown params with
+   * status:success, so writing blind is never safe.
    */
-  private async writePatientFields(
+  private writePatientFields(
     externalId: string,
     fields: PmsFormFieldInput[]
   ): Promise<PmsFieldResult[]> {
-    // Read current values to honour fill-blanks-only (exact-id match only).
-    let current: Record<string, unknown> = {};
-    try {
-      const raw = await this.fetchRawPatient(externalId);
-      current = (raw ?? {}) as unknown as Record<string, unknown>;
-    } catch (e) {
-      const detail = transportDetail(e as NookalApiError);
-      return fields.map((f) => ({
-        coviuQuestionName: f.questionName,
-        target: f.targetKey,
-        label: f.label,
-        attemptedValue: f.value,
-        status: "failed" as const,
-        ...detail,
-      }));
-    }
-
-    const patch: NookalPatientPatch = {};
-    const results: PmsFieldResult[] = [];
-
-    for (const f of fields) {
-      // Nookal reads (PascalCase) and writes (snake_case) use DIFFERENT names:
-      // readField checks the current value; writeParam is the editPatient param.
-      const writeParam = PATIENT_WRITE_PARAM[f.targetKey];
-      const readField = PATIENT_READ_FIELD[f.targetKey];
-      if (!writeParam) {
-        results.push(failResult(f, "mapping", "Unknown Nookal field."));
-        continue;
-      }
-      const v = this.validateField(f.targetKey, f.value);
-      if (!v.ok) {
-        results.push(failResult(f, v.failureKind, v.detail));
-        continue;
-      }
-      const existing = readField ? current[readField] : undefined;
-      if (existing !== null && existing !== undefined && existing !== "") {
-        results.push({
-          coviuQuestionName: f.questionName,
-          target: f.targetKey,
-          label: f.label,
-          attemptedValue: f.value,
-          status: "skipped_existing",
-          detail: "Kept the value already in Nookal.",
-        });
-        continue;
-      }
-      patch[writeParam] = f.value;
-      results.push({
-        coviuQuestionName: f.questionName,
-        target: f.targetKey,
-        label: f.label,
-        attemptedValue: f.value,
-        status: "written",
-      });
-    }
-
-    const toWrite = results.filter((r) => r.status === "written");
-    if (toWrite.length > 0) {
-      try {
+    return fillBlanksWrite(fields, {
+      providerLabel: this.displayName,
+      // null when the patient can't be found (or searchPatients' patient_id
+      // filter isn't honoured server-side) → every field fails rather than
+      // treating the record as all-blank and overwriting clinic data.
+      readCurrent: async () => {
+        const raw = await this.fetchRawPatient(externalId);
+        return raw ? (raw as unknown as Record<string, unknown>) : null;
+      },
+      writeParamFor: (key) => PATIENT_WRITE_PARAM[key],
+      readFieldFor: (key) => PATIENT_READ_FIELD[key],
+      validate: (key, value) => this.validateField(key, value),
+      writeBatch: async (patch) => {
         await this.client.request("editPatient", {
           patient_id: externalId,
-          ...stringifyPatch(patch),
+          ...patch,
         });
-      } catch {
-        // A single invalid field can reject the batch; retry each in isolation
-        // so valid fields still land and only the offender is marked failed.
-        for (const r of toWrite) {
-          const writeParam = PATIENT_WRITE_PARAM[r.target];
-          if (!writeParam) continue;
-          try {
-            await this.client.request("editPatient", {
-              patient_id: externalId,
-              [writeParam]: r.attemptedValue,
-            });
-          } catch (e2) {
-            const detail = transportDetail(e2 as NookalApiError);
-            r.status = "failed";
-            r.failureKind = detail.failureKind;
-            r.detail = detail.detail;
-          }
-        }
-      }
-    }
-    return results;
+      },
+      writeOne: async (param, value) => {
+        await this.client.request("editPatient", {
+          patient_id: externalId,
+          [param]: value,
+        });
+      },
+      mapError: (e) => transportDetail(e as NookalApiError),
+    });
   }
 
   /**
@@ -417,43 +335,7 @@ class NookalAdapter implements PmsAdapter {
   }
 
   validateField(key: string, value: string): PmsFieldValidation {
-    const entry = catalogueEntry(key);
-    if (!entry) {
-      return { ok: false, failureKind: "mapping", detail: "Unknown Nookal field." };
-    }
-    const trimmed = value?.trim() ?? "";
-    if (trimmed === "") return { ok: true }; // empty → skipped upstream
-    switch (entry.valueType) {
-      case "date":
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-          return {
-            ok: false,
-            failureKind: "validation",
-            detail: "Nookal expects a date as YYYY-MM-DD.",
-          };
-        }
-        return { ok: true };
-      case "phone":
-        if (!/^\+?[0-9 ()-]{6,20}$/.test(trimmed)) {
-          return {
-            ok: false,
-            failureKind: "validation",
-            detail: "Not a valid phone number.",
-          };
-        }
-        return { ok: true };
-      case "enum":
-        if (entry.enumChoices && !entry.enumChoices.includes(trimmed)) {
-          return {
-            ok: false,
-            failureKind: "validation",
-            detail: `Nookal doesn't recognise "${trimmed}" for ${entry.label}. Expected one of: ${entry.enumChoices.join(", ")}.`,
-          };
-        }
-        return { ok: true };
-      default:
-        return { ok: true };
-    }
+    return validateCatalogueValue(catalogueEntry(key), value, this.displayName);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -469,33 +351,6 @@ class NookalAdapter implements PmsAdapter {
   }
 }
 
-function failResult(
-  f: PmsFormFieldInput,
-  failureKind: string,
-  detail: string
-): PmsFieldResult {
-  return {
-    coviuQuestionName: f.questionName,
-    target: f.targetKey,
-    label: f.label,
-    attemptedValue: f.value,
-    status: "failed",
-    failureKind: failureKind as PmsFieldResult["failureKind"],
-    detail,
-  };
-}
-
-/** Coerce a NookalPatientPatch to string form params for the POST body. */
-function stringifyPatch(
-  patch: NookalPatientPatch
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(patch)) {
-    if (v !== undefined) out[k] = String(v);
-  }
-  return out;
-}
-
 /** Read a scalar (non-array) value out of data.results. */
 function scalarResult(
   results: Record<string, unknown>,
@@ -509,7 +364,7 @@ function scalarResult(
 
 /** Translate a Nookal transport/envelope error into an actionable result. */
 function transportDetail(err: NookalApiError): {
-  failureKind: PmsFieldResult["failureKind"];
+  failureKind: PmsFailureKind;
   detail: string;
 } {
   if (err.status === 401 || err.status === 403) {

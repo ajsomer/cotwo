@@ -1,9 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import {
   getAuthenticatedUserId,
+  requireStaffLocationAccess,
   resolveDefaultStaffOrg,
 } from "@/lib/auth/staff-access";
 import { connectPms } from "@/lib/pms/integrations-service";
+
+const PM_ROLES = new Set(["clinic_owner", "practice_manager"]);
 
 /**
  * Onboarding-time real PMS connect. Resolves the user's default location
@@ -30,6 +33,14 @@ export async function POST(request: NextRequest) {
   const resolved = await resolveDefaultStaffOrg(userId);
   if (!resolved) {
     return NextResponse.json({ error: "No org found." }, { status: 400 });
+  }
+
+  // Connecting (or switching) a PMS is admin-level config — same PM gate as
+  // the Settings connection route, so a receptionist/clinician can't
+  // re-credential the location's integration post-setup.
+  const access = await requireStaffLocationAccess(resolved.locationId);
+  if (!access.ok || !PM_ROLES.has(access.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const result = await connectPms({

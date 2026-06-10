@@ -1,4 +1,7 @@
-// Client-side mirrors of the integration API payloads (no server imports).
+// Client-side mirrors of the integration API payloads (no server imports —
+// "@/lib/pms/adapter" is types-only, so it's safe in client bundles).
+
+import type { PmsCapabilities } from "@/lib/pms/adapter";
 
 export interface IntegrationStatusDTO {
   hasConnection: boolean;
@@ -9,13 +12,7 @@ export interface IntegrationStatusDTO {
   lastSyncedAt: string | null;
   lastSyncError: string | null;
   accountSubdomain: string | null;
-  capabilities: {
-    webhooks: boolean;
-    writeForms: boolean;
-    writePatientFields: boolean;
-    writeNotes: boolean;
-    webLinks: boolean;
-  } | null;
+  capabilities: PmsCapabilities | null;
   fieldCatalogue: Array<{
     key: string;
     group: string;
