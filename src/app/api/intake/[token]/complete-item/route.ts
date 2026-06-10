@@ -4,12 +4,12 @@ import {
   intakePackageJourneys,
   formSubmissions,
   appointmentActions,
-  workflowActionBlocks,
   appointments as appointmentsT,
 } from '@/lib/db/schema';
-import { eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { broadcastReadinessChange, broadcastSessionChange } from '@/lib/realtime/broadcast';
 import { fireActionNow } from '@/lib/workflows/engine';
+import { findAppointmentActionsByType } from '@/lib/workflows/queries';
 import { getBaseUrl } from '@/lib/utils/url';
 import { parseJsonBody } from '@/lib/api/route-helpers';
 
@@ -212,33 +212,11 @@ export async function POST(
 async function fireAddToRunsheetEarly(
   appointmentId: string
 ): Promise<string | null> {
-  const actions = await db
-    .select({
-      id: appointmentActions.id,
-      action_block_id: appointmentActions.actionBlockId,
-      status: appointmentActions.status,
-    })
-    .from(appointmentActions)
-    .where(eq(appointmentActions.appointmentId, appointmentId));
-  if (!actions.length) return null;
-
-  const blockIds = actions.map((a) => a.action_block_id);
-  const blocks = blockIds.length === 0 ? [] : await db
-    .select({
-      id: workflowActionBlocks.id,
-      action_type: workflowActionBlocks.actionType,
-    })
-    .from(workflowActionBlocks)
-    .where(inArray(workflowActionBlocks.id, blockIds));
-
-  const runsheetBlockIds = new Set(
-    blocks
-      .filter((b) => b.action_type === 'add_to_runsheet')
-      .map((b) => b.id)
+  const runsheetActions = await findAppointmentActionsByType(
+    appointmentId,
+    'add_to_runsheet'
   );
-  const runsheetAction = actions.find(
-    (a) => runsheetBlockIds.has(a.action_block_id) && a.status === 'scheduled'
-  );
+  const runsheetAction = runsheetActions.find((a) => a.status === 'scheduled');
   if (!runsheetAction) return null;
 
   // The patient is finishing intake in-app — they're about to be routed to the
@@ -271,35 +249,10 @@ function isJourneyComplete(j: {
 }
 
 async function markIntakeActionCompleted(appointmentId: string) {
-  // Fetch all actions for this appointment and their action-block type in a
-  // two-step query to avoid ambiguity around nested-row shape in joins.
-  const actions = await db
-    .select({
-      id: appointmentActions.id,
-      action_block_id: appointmentActions.actionBlockId,
-      status: appointmentActions.status,
-    })
-    .from(appointmentActions)
-    .where(eq(appointmentActions.appointmentId, appointmentId));
-
-  if (actions.length === 0) return;
-
-  const blockIds = actions.map((a) => a.action_block_id);
-  const blocks = blockIds.length === 0 ? [] : await db
-    .select({
-      id: workflowActionBlocks.id,
-      action_type: workflowActionBlocks.actionType,
-    })
-    .from(workflowActionBlocks)
-    .where(inArray(workflowActionBlocks.id, blockIds));
-
-  const intakeBlockIds = new Set(
-    blocks
-      .filter((b) => b.action_type === 'intake_package')
-      .map((b) => b.id)
+  const [intakeAction] = await findAppointmentActionsByType(
+    appointmentId,
+    'intake_package'
   );
-
-  const intakeAction = actions.find((a) => intakeBlockIds.has(a.action_block_id));
 
   if (!intakeAction) {
     console.warn(

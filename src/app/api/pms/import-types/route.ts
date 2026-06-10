@@ -1,10 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireStaffLocationAccess } from "@/lib/auth/staff-access";
+import { PM_ROLES, requireStaffLocationAccess } from "@/lib/auth/staff-access";
 import { getConnectionForLocation, isSyncActive } from "@/lib/pms/connection";
 import { importAppointmentTypes } from "@/lib/pms/integrations-service";
 import { denyResponse } from "@/lib/api/route-helpers";
-
-const PM_ROLES = new Set(["clinic_owner", "practice_manager"]);
 
 /**
  * POST { locationId } → pull all appointment types from the location's PMS

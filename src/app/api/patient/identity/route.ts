@@ -2,13 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import {
   patients as patientsT,
-  patientPhoneNumbers,
   sessionParticipants,
   sessions as sessionsT,
   appointments as appointmentsT,
 } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { resolveEntryTokenScope } from '@/lib/patient/entry-token';
+import { createPatientWithPhone } from '@/lib/patient/create-patient';
 import { assertPatientInOrg } from '@/lib/auth/staff-access';
 import { normalisePhone } from '@/lib/phone/normalise';
 import { parseJsonBody } from '@/lib/api/route-helpers';
@@ -73,31 +73,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'First name and last name are required' }, { status: 400 });
     }
 
-    let patient: { id: string };
-    try {
-      [patient] = await db
-        .insert(patientsT)
-        .values({
-          orgId,
-          firstName: first_name,
-          lastName: last_name,
-          dateOfBirth: date_of_birth || null,
-        })
-        .returning({ id: patientsT.id });
-    } catch (patientError) {
-      console.error('[IDENTITY] Failed to create patient:', patientError);
+    // Create new patient + linked phone. The number was OTP-verified earlier
+    // in this entry flow, so it's stamped verified. A phone-link failure is
+    // fatal: identity confirmation without a resolvable contact would strand
+    // the session downstream.
+    const created = await createPatientWithPhone({
+      orgId,
+      firstName: first_name,
+      lastName: last_name,
+      dateOfBirth: date_of_birth || null,
+      phoneNumber: phone_number,
+      phoneVerified: true,
+      logTag: 'IDENTITY',
+    });
+    if (!created.ok || !created.phoneLinked) {
       return NextResponse.json({ error: 'Failed to create patient' }, { status: 500 });
     }
 
-    patientId = patient.id;
-
-    // Link phone number to new patient
-    await db.insert(patientPhoneNumbers).values({
-      patientId,
-      phoneNumber: phone_number,
-      isPrimary: true,
-      verifiedAt: new Date().toISOString(),
-    });
+    patientId = created.patientId;
   }
 
   // Link patient to session (if the token resolved to one)

@@ -2,8 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import {
   appointments as appointmentsT,
-  appointmentActions,
-  workflowActionBlocks,
   intakePackageJourneys,
   patients as patientsT,
   forms as formsT,
@@ -11,6 +9,7 @@ import {
   paymentMethods,
 } from "@/lib/db/schema";
 import { and, desc, eq, inArray } from "drizzle-orm";
+import { findAppointmentActionsByType } from "@/lib/workflows/queries";
 import { extractFieldsFromSchema } from "@/lib/forms/extract-fields";
 import { requireStaffCanAccessAppointment } from "@/lib/auth/staff-access";
 import { denyResponse } from "@/lib/api/route-helpers";
@@ -58,30 +57,9 @@ export async function GET(request: NextRequest) {
 
     // Find the intake_package appointment_action — the source of truth for
     // completion / transcribed state.
-    const actionRows = await db
-      .select({
-        id: appointmentActions.id,
-        status: appointmentActions.status,
-        action_block_id: appointmentActions.actionBlockId,
-        completed_at: appointmentActions.completedAt,
-        updated_at: appointmentActions.updatedAt,
-      })
-      .from(appointmentActions)
-      .where(eq(appointmentActions.appointmentId, appointmentId));
-
-    const blockIds = actionRows.map((a) => a.action_block_id);
-    const blocks = blockIds.length === 0 ? [] : await db
-      .select({
-        id: workflowActionBlocks.id,
-        action_type: workflowActionBlocks.actionType,
-        config: workflowActionBlocks.config,
-      })
-      .from(workflowActionBlocks)
-      .where(inArray(workflowActionBlocks.id, blockIds));
-
-    const blockMap = new Map(blocks.map((b) => [b.id, b]));
-    const intakeAction = actionRows.find(
-      (a) => blockMap.get(a.action_block_id)?.action_type === "intake_package"
+    const [intakeAction] = await findAppointmentActionsByType(
+      appointmentId,
+      "intake_package"
     );
 
     if (!intakeAction) {
@@ -91,8 +69,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const intakeBlock = blockMap.get(intakeAction.action_block_id);
-    const blockConfig = (intakeBlock?.config ?? {}) as {
+    const blockConfig = (intakeAction.block_config ?? {}) as {
       includes_card_capture?: boolean;
       includes_consent?: boolean;
       form_ids?: string[];

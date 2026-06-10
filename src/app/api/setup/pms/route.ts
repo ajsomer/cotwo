@@ -8,12 +8,11 @@ import {
 } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import {
+  PM_ROLES,
   getAuthenticatedUserId,
   requireStaffLocationAccess,
   resolveDefaultStaffOrg,
 } from "@/lib/auth/staff-access";
-
-const PM_ROLES = new Set(["clinic_owner", "practice_manager"]);
 import { seedDefaultWorkflows } from "@/lib/workflows/seed-defaults";
 import { newPatientIntakeSchema, defaultFormSchema } from "@/lib/survey/identity-page";
 import { NextResponse, type NextRequest } from "next/server";

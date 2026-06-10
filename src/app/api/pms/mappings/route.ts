@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireStaffLocationAccess } from "@/lib/auth/staff-access";
+import { PM_ROLES, requireStaffLocationAccess } from "@/lib/auth/staff-access";
 import {
   getConnectionForLocation,
   isSyncActive,
@@ -10,8 +10,6 @@ import {
   savePractitionerMapping,
 } from "@/lib/pms/integrations-service";
 import { denyResponse } from "@/lib/api/route-helpers";
-
-const PM_ROLES = new Set(["clinic_owner", "practice_manager"]);
 
 /** GET ?locationId= → live PMS resources joined with current mappings. */
 export async function GET(request: NextRequest) {

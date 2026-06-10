@@ -1,13 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import {
+  PM_ROLES,
   getAuthenticatedUserId,
   requireStaffLocationAccess,
   resolveDefaultStaffOrg,
 } from "@/lib/auth/staff-access";
 import { connectPms } from "@/lib/pms/integrations-service";
 import { unauthenticatedResponse } from "@/lib/api/route-helpers";
-
-const PM_ROLES = new Set(["clinic_owner", "practice_manager"]);
 
 /**
  * Onboarding-time real PMS connect. Resolves the user's default location
