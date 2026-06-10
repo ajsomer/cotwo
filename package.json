@@ -11,7 +11,8 @@
     "start": "NODE_ENV=production tsx server.ts",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "supabase:gen": "supabase gen types typescript --linked > src/lib/supabase/database.generated.ts"
+    "supabase:gen": "supabase gen types typescript --linked > src/lib/supabase/database.generated.ts",
+    "test": "vitest run"
   },
   "dependencies": {
     "@livekit/components-react": "^2.9.20",
@@ -50,6 +51,7 @@
     "eslint-config-next": "16.2.1",
     "supabase": "^2.84.4",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.8"
   }
 }

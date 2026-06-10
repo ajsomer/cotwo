@@ -13,6 +13,7 @@ import {
 import { and, eq } from "drizzle-orm";
 import { getSmsProvider } from "@/lib/sms";
 import { getBaseUrl } from "@/lib/utils/url";
+import { renderTemplate, smsTemplateVars, intakeTemplateVars } from "./template";
 import type { ActionHandlerResult, ActionType } from "./types";
 
 export interface HandlerContext {
@@ -24,6 +25,9 @@ export interface HandlerContext {
   scheduledAt: string | null;
   clinicName: string;
   clinicianName: string | null;
+  /** IANA timezone of the appointment's location — merge-field times must
+   *  render in clinic-local time, never the server's TZ. */
+  timezone: string;
   formId: string | null;
   config: Record<string, unknown>;
   /** The action block's parent_action_block_id (for intake_reminder). */
@@ -68,7 +72,7 @@ export async function executeHandler(
     case "send_file":
       return handleSendFile(ctx);
     case "task":
-      return handleTask(ctx);
+      return handleTask();
     default:
       // Action types that don't execute in v1 (send_rebooking_nudge, etc.)
       return { status: "sent", resultData: { note: "stub — not implemented in v1" } };
@@ -137,30 +141,7 @@ async function handleSendSms(ctx: HandlerContext): Promise<ActionHandlerResult> 
     return { status: "failed", error: "No message template configured" };
   }
 
-  const scheduledTime = ctx.scheduledAt
-    ? new Date(ctx.scheduledAt).toLocaleTimeString("en-AU", {
-        hour: "numeric",
-        minute: "2-digit",
-        hour12: true,
-      })
-    : "your appointment";
-
-  // Session date for post-appointment merge field {session_date}
-  const sessionDate = ctx.sessionEndedAt
-    ? new Date(ctx.sessionEndedAt).toLocaleDateString("en-AU", {
-        day: "numeric",
-        month: "long",
-        year: "numeric",
-      })
-    : "your recent appointment";
-
-  const message = template
-    .replace(/\{first_name\}/g, ctx.patientFirstName)
-    .replace(/\{patient_name\}/g, ctx.patientFirstName)
-    .replace(/\{appointment_time\}/g, scheduledTime)
-    .replace(/\{session_date\}/g, sessionDate)
-    .replace(/\{clinic_name\}/g, ctx.clinicName)
-    .replace(/\{clinician_name\}/g, ctx.clinicianName ?? "your clinician");
+  const message = renderTemplate(template, smsTemplateVars(ctx));
 
   const sms = getSmsProvider();
   const result = await sms.sendNotification(ctx.phoneNumber, message);
@@ -203,6 +184,7 @@ async function handleCaptureCard(ctx: HandlerContext): Promise<ActionHandlerResu
 // ============================================================================
 // Intake Package Handlers (v2 pre-appointment model)
 // ============================================================================
+
 
 /**
  * Create an intake package journey and send the patient the journey link.
@@ -254,10 +236,7 @@ async function handleIntakePackage(ctx: HandlerContext): Promise<ActionHandlerRe
   // handleIntakeReminder); otherwise fall back to the standard body.
   const template = (config.message_body as string) ?? "";
   const message = template
-    ? template
-        .replace(/\{patient_first_name\}/g, ctx.patientFirstName)
-        .replace(/\{link\}/g, url)
-        .replace(/\{clinic_name\}/g, ctx.clinicName)
+    ? renderTemplate(template, intakeTemplateVars(ctx, url))
     : `Hi ${ctx.patientFirstName}, please complete your intake before your appointment at ${ctx.clinicName}: ${url}`;
 
   const sms = getSmsProvider();
@@ -318,10 +297,7 @@ async function handleIntakeReminder(ctx: HandlerContext): Promise<ActionHandlerR
   const url = `${getBaseUrl()}/intake/${journey.journey_token}`;
   const template = (ctx.config.message_body as string) ?? "";
   const message = template
-    ? template
-        .replace(/\{patient_first_name\}/g, ctx.patientFirstName)
-        .replace(/\{link\}/g, url)
-        .replace(/\{clinic_name\}/g, ctx.clinicName)
+    ? renderTemplate(template, intakeTemplateVars(ctx, url))
     : `Hi ${ctx.patientFirstName}, just a reminder to complete your intake. Tap here to continue: ${url}`;
 
   const sms = getSmsProvider();
@@ -484,11 +460,12 @@ async function handleSendFile(ctx: HandlerContext): Promise<ActionHandlerResult>
   // Interpolate the SMS message template
   const template = (ctx.config.message as string) ?? "";
   const message = template
-    ? template
-        .replace(/\{first_name\}/g, ctx.patientFirstName)
-        .replace(/\{clinic_name\}/g, ctx.clinicName)
-        .replace(/\{clinician_name\}/g, ctx.clinicianName ?? "your clinician")
-        .replace(/\{file_link\}/g, viewUrl)
+    ? renderTemplate(template, {
+        first_name: ctx.patientFirstName,
+        clinic_name: ctx.clinicName,
+        clinician_name: ctx.clinicianName ?? "your clinician",
+        file_link: viewUrl,
+      })
     : `Hi ${ctx.patientFirstName}, your clinician has shared a document with you. View it here: ${viewUrl}`;
 
   const sms = getSmsProvider();
@@ -510,6 +487,6 @@ async function handleSendFile(ctx: HandlerContext): Promise<ActionHandlerResult>
  * the post-appointment readiness dashboard. The receptionist resolves it
  * manually via the Resolve button.
  */
-async function handleTask(ctx: HandlerContext): Promise<ActionHandlerResult> {
+async function handleTask(): Promise<ActionHandlerResult> {
   return { status: "fired" };
 }

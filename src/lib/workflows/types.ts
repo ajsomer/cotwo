@@ -477,9 +477,6 @@ export function getPreconditionLabel(
 // SMS message template variables
 // ---------------------------------------------------------------------------
 
-export const MESSAGE_VARIABLES = [
-  { key: "{first_name}", label: "First name" },
-  { key: "{appointment_time}", label: "Appointment time" },
-  { key: "{clinic_name}", label: "Clinic name" },
-  { key: "{clinician_name}", label: "Clinician name" },
-] as const;
+// Derived from the renderer's canonical vocabulary (lib/workflows/template.ts)
+// so the builder UI can't advertise placeholders the engine doesn't render.
+export { SMS_TEMPLATE_VARIABLES as MESSAGE_VARIABLES } from "./template";

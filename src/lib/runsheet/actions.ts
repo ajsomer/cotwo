@@ -7,10 +7,10 @@ import {
   sessionParticipants,
   payments as paymentsT,
   appointmentActions,
-  appointmentWorkflowRuns,
 } from "@/lib/db/schema";
-import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { getSmsProvider } from "@/lib/sms";
+import { maybeCompleteWorkflowRuns } from "@/lib/workflows/run-completion";
 import {
   broadcastSessionChange,
   broadcastSessionStatus,
@@ -322,25 +322,7 @@ export async function resolveTask(
     .from(appointmentActions)
     .where(eq(appointmentActions.id, actionId));
 
-  if (action?.workflow_run_id) {
-    const terminalStatuses: Array<typeof appointmentActions.status.enumValues[number]> = ["completed", "failed", "cancelled", "skipped", "dropped"];
-    const remaining = await db
-      .select({ id: appointmentActions.id })
-      .from(appointmentActions)
-      .where(
-        and(
-          eq(appointmentActions.workflowRunId, action.workflow_run_id),
-          notInArray(appointmentActions.status, terminalStatuses)
-        )
-      );
-
-    if (remaining.length === 0) {
-      await db
-        .update(appointmentWorkflowRuns)
-        .set({ status: "complete", completedAt: now })
-        .where(eq(appointmentWorkflowRuns.id, action.workflow_run_id));
-    }
-  }
+  await maybeCompleteWorkflowRuns([action?.workflow_run_id]);
 
   // Notify the readiness dashboard at this appointment's location.
   if (action?.appointment_id) {
@@ -386,25 +368,7 @@ export async function cancelAction(
     .from(appointmentActions)
     .where(eq(appointmentActions.id, actionId));
 
-  if (action?.workflow_run_id) {
-    const terminalStatuses: Array<typeof appointmentActions.status.enumValues[number]> = ["completed", "failed", "cancelled", "skipped", "dropped"];
-    const remaining = await db
-      .select({ id: appointmentActions.id })
-      .from(appointmentActions)
-      .where(
-        and(
-          eq(appointmentActions.workflowRunId, action.workflow_run_id),
-          notInArray(appointmentActions.status, terminalStatuses)
-        )
-      );
-
-    if (remaining.length === 0) {
-      await db
-        .update(appointmentWorkflowRuns)
-        .set({ status: "complete", completedAt: new Date().toISOString() })
-        .where(eq(appointmentWorkflowRuns.id, action.workflow_run_id));
-    }
-  }
+  await maybeCompleteWorkflowRuns([action?.workflow_run_id]);
 
   return { success: true };
 }
