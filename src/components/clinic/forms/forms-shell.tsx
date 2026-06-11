@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { postJson } from "@/lib/api-client";
 import { useOrg } from "@/hooks/useOrg";
@@ -13,6 +13,7 @@ import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import type { FormRow } from "@/stores/clinic-store";
 import type { FormStatus } from "@/lib/types/domain";
 import { formatDayMonthYear } from "@/lib/runsheet/format";
+import { useEnsureSlices } from "@/hooks/useEnsureSlices";
 
 type TabKey = "forms" | "files";
 
@@ -31,13 +32,7 @@ export function FormsShell() {
   const forms = useClinicStore((s) => s.forms);
   const loading = !useClinicStore((s) => s.formsLoaded);
 
-  // Fetch-if-empty
-  useEffect(() => {
-    if (!org) return;
-    if (!getClinicStore().formsLoaded) {
-      void getClinicStore().refreshForms(org.id);
-    }
-  }, [org]);
+  useEnsureSlices(["forms"]);
   const [sendingForm, setSendingForm] = useState<FormRow | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("forms");
   const [copiedFormId, setCopiedFormId] = useState<string | null>(null);

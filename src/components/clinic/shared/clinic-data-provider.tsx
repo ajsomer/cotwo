@@ -3,7 +3,8 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { useLocation } from "@/hooks/useLocation";
 import { useOrg } from "@/hooks/useOrg";
-import { getSocket } from "@/lib/socket-client";
+import { useEnsureSlices } from "@/hooks/useEnsureSlices";
+import { useSocketRoom } from "@/hooks/useSocketRoom";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 
 interface ClinicDataProviderProps {
@@ -17,7 +18,8 @@ export function ClinicDataProvider({ children }: ClinicDataProviderProps) {
   const orgId = org?.id ?? null;
 
   // Seed locationId/orgId so store selectors that read them return sane
-  // values. Each page populates its own slices via fetch-if-empty hooks.
+  // values. Deliberately in the render body (ref-guarded): children must see
+  // these on their first paint, which an effect would be too late for.
   const seededRef = useRef(false);
   if (!seededRef.current && locationId && orgId) {
     useClinicStore.setState({ locationId, orgId });
@@ -29,20 +31,19 @@ export function ClinicDataProvider({ children }: ClinicDataProviderProps) {
   //  - `presence:update` → update the connected-sessions set (patient tabs
   //    that are currently in the waiting room, for the "connected" dot on
   //    the run sheet).
-  useEffect(() => {
-    if (!locationId) return;
-    const socket = getSocket();
-
-    // On every (re)connect: join the location room AND resync sessions +
-    // readiness, since we may have missed events while disconnected.
-    //
-    // Per-slice freshness gate: skip the resync for any slice that was
-    // hydrated/fetched within the last 30s. This suppresses the cold-load
-    // race where the first socket `connect` fires moments after SSR
-    // hydration and would otherwise refetch what we just received. Real
-    // post-disconnect reconnects have stale timestamps and refresh as before.
-    const FRESH_WINDOW_MS = 30_000;
-    const onConnect = () => {
+  //
+  // On every (re)connect: join the location room AND resync sessions +
+  // readiness, since we may have missed events while disconnected.
+  //
+  // Per-slice freshness gate: skip the resync for any slice that was
+  // hydrated/fetched within the last 30s. This suppresses the cold-load
+  // race where the first socket `connect` fires moments after SSR
+  // hydration and would otherwise refetch what we just received. Real
+  // post-disconnect reconnects have stale timestamps and refresh as before.
+  const FRESH_WINDOW_MS = 30_000;
+  useSocketRoom(
+    locationId,
+    (socket) => {
       socket.emit("join:location", locationId);
       const store = getClinicStore();
       const now = Date.now();
@@ -59,107 +60,65 @@ export function ClinicDataProvider({ children }: ClinicDataProviderProps) {
         store.readinessLoadedPre &&
         store.readinessFetchedAt != null &&
         now - store.readinessFetchedAt < FRESH_WINDOW_MS;
-      if (!sessionsFresh) void store.refreshSessions(locationId);
-      if (!readinessFresh) void store.refreshReadiness(locationId);
-    };
-    if (socket.connected) socket.emit("join:location", locationId);
-    socket.on("connect", onConnect);
-
-    const onSessionChanged = () => {
-      const currentLocId = getClinicStore().locationId;
-      if (currentLocId) {
-        void getClinicStore().refreshSessions(currentLocId);
-      }
-    };
-    socket.on("session_changed", onSessionChanged);
-
-    const onReadinessChanged = () => {
-      const currentLocId = getClinicStore().locationId;
-      if (currentLocId) {
-        void getClinicStore().refreshReadiness(currentLocId);
-      }
-    };
-    socket.on("readiness_changed", onReadinessChanged);
-
-    const onPresenceUpdate = (payload: { sessionIds: string[] }) => {
-      getClinicStore().setConnectedSessions(new Set(payload.sessionIds ?? []));
-    };
-    socket.on("presence:update", onPresenceUpdate);
-
-    return () => {
-      socket.off("connect", onConnect);
-      socket.off("session_changed", onSessionChanged);
-      socket.off("readiness_changed", onReadinessChanged);
-      socket.off("presence:update", onPresenceUpdate);
-    };
-  }, [locationId]);
-
-  // Prewarm location-scoped slices used by the most common pages. Pages still
-  // own their fetch-if-empty guards, but this makes route transitions closer to
-  // Tasks: by the time the user clicks into another section, the shared store
-  // often already has the structural data it needs.
-  useEffect(() => {
-    if (!locationId) return;
-    const store = getClinicStore();
-    if (store.locationId !== locationId) return;
-
-    if (!store.roomsLoaded) void store.refreshRooms(locationId);
-    if (!store.clinicianRoomIdsLoaded) {
-      void store.refreshClinicianRoomIds(locationId);
+      if (!sessionsFresh) void store.refreshSessions(locationId!);
+      if (!readinessFresh) void store.refreshReadiness(locationId!);
+    },
+    {
+      session_changed: () => {
+        const currentLocId = getClinicStore().locationId;
+        if (currentLocId) {
+          void getClinicStore().refreshSessions(currentLocId);
+        }
+      },
+      readiness_changed: () => {
+        const currentLocId = getClinicStore().locationId;
+        if (currentLocId) {
+          void getClinicStore().refreshReadiness(currentLocId);
+        }
+      },
+      "presence:update": (payload: { sessionIds: string[] }) => {
+        getClinicStore().setConnectedSessions(new Set(payload.sessionIds ?? []));
+      },
     }
-    if (!store.sessionsLoaded) void store.refreshSessions(locationId);
-    if (!store.readinessLoadedPre || !store.readinessLoadedPost) {
-      void store.refreshReadiness(locationId);
-    }
-  }, [locationId]);
+  );
 
   // Org-wide socket room. Used for events that don't belong to a single
   // location — currently `submission_changed` fired by the standalone form
   // submit route. The server's join:org handler authorises against the
   // user's staff_assignments → locations.org_id chain, so anonymous /
   // foreign-org clients can't subscribe.
-  useEffect(() => {
-    if (!orgId) return;
-    const socket = getSocket();
-
-    const onConnect = () => {
+  useSocketRoom(
+    orgId,
+    (socket) => {
       socket.emit("join:org", orgId);
       const store = getClinicStore();
       if (store.orgId === orgId) {
-        void store.refreshStandaloneSubmissions(orgId);
+        void store.refreshStandaloneSubmissions(orgId!);
       }
-    };
-    if (socket.connected) socket.emit("join:org", orgId);
-    socket.on("connect", onConnect);
-
-    const onSubmissionChanged = () => {
-      const currentOrgId = getClinicStore().orgId;
-      if (currentOrgId) {
-        void getClinicStore().refreshStandaloneSubmissions(currentOrgId);
-      }
-    };
-    socket.on("submission_changed", onSubmissionChanged);
-
-    return () => {
-      socket.off("connect", onConnect);
-      socket.off("submission_changed", onSubmissionChanged);
-    };
-  }, [orgId]);
-
-  // Prewarm org-scoped configuration shared by Workflows, Tasks filters, and
-  // Forms. These are relatively stable and the store's loaded flags prevent
-  // repeated fetches in a warm tab.
-  useEffect(() => {
-    if (!orgId) return;
-    const store = getClinicStore();
-    if (store.orgId !== orgId) return;
-
-    if (!store.workflowsLoaded) void store.refreshWorkflows(orgId);
-    if (!store.formsLoaded) void store.refreshForms(orgId);
-    if (!store.standaloneSubmissionsLoaded) {
-      void store.refreshStandaloneSubmissions(orgId);
+    },
+    {
+      submission_changed: () => {
+        const currentOrgId = getClinicStore().orgId;
+        if (currentOrgId) {
+          void getClinicStore().refreshStandaloneSubmissions(currentOrgId);
+        }
+      },
     }
-  }, [orgId]);
+  );
+
+  // Prewarm the slices used by the most common pages. Pages still own their
+  // fetch-if-empty guards (useEnsureSlices), but this makes route transitions
+  // closer to instant: by the time the user clicks into another section, the
+  // shared store often already has the structural data it needs.
+  useEnsureSlices([
+    "rooms",
+    "clinicianRoomIds",
+    "sessions",
+    "readiness",
+    "workflows",
+    "forms",
+    "standaloneSubmissions",
+  ]);
 
   // Location switch handler — only fires when the user actually changes
   // location (multi-location switcher). Resets location-scoped slices and

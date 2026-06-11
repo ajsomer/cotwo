@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { postJson } from '@/lib/api-client';
-import { getSocket } from '@/lib/socket-client';
+import { useSocketRoom } from '@/hooks/useSocketRoom';
 import { PersistentHeader } from './persistent-header';
 import { PatientVideoCall } from './patient-video-call';
 import { formatSessionTime } from '@/lib/runsheet/format';
@@ -63,27 +63,19 @@ export function WaitingRoom({
   }, []);
 
   // Claim presence via Socket.IO so clinic clients see this session as
-  // connected. Re-emit on every socket connect (including reconnects).
-  useEffect(() => {
-    const socket = getSocket();
-    const track = () => {
-      // Send only the entry token; the server resolves (and binds) the
-      // session + location from it, so the payload can't claim another session.
-      socket.emit('presence:track', { entryToken });
-    };
-    if (socket.connected) track();
-    socket.on('connect', track);
-    return () => {
-      socket.off('connect', track);
-    };
-  }, [entryToken]);
+  // connected. Re-emitted on every socket connect (including reconnects).
+  // Send only the entry token; the server resolves (and binds) the
+  // session + location from it, so the payload can't claim another session.
+  useSocketRoom(entryToken, (socket) => {
+    socket.emit('presence:track', { entryToken });
+  });
 
   // Subscribe to session status changes via Socket.IO. When the clinician
   // flips the session into `in_session`, PatientVideoCall auto-mounts;
   // when they complete, we switch to the "appointment complete" view.
-  useEffect(() => {
-    const socket = getSocket();
-    const joinRoom = () => {
+  useSocketRoom(
+    entryToken,
+    (socket) => {
       socket.emit('join:session', { entryToken });
       // Resync the session status on every (re)connect: if the clinician
       // admitted or completed while this socket was down, the status_changed
@@ -99,20 +91,13 @@ export function WaitingRoom({
         const dbStatus = result.data?.context?.session?.status;
         if (dbStatus) setStatus(toWaitingUiStatus(dbStatus));
       })();
-    };
-    if (socket.connected) joinRoom();
-    socket.on('connect', joinRoom);
-
-    const onStatusChanged = (payload: { status: SessionStatus }) => {
-      if (payload?.status) setStatus(payload.status);
-    };
-    socket.on('status_changed', onStatusChanged);
-
-    return () => {
-      socket.off('connect', joinRoom);
-      socket.off('status_changed', onStatusChanged);
-    };
-  }, [entryToken]);
+    },
+    {
+      status_changed: (payload: { status: SessionStatus }) => {
+        if (payload?.status) setStatus(payload.status);
+      },
+    }
+  );
 
   if (status === 'in_session') {
     return <PatientVideoCall entryToken={entryToken} clinicianName={clinicianName} />;

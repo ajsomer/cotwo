@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import { useOrg } from "@/hooks/useOrg";
 import { useLocation } from "@/hooks/useLocation";
 import { usePmsConnection } from "@/hooks/usePmsConnection";
 import type { AppointmentTypeRow } from "@/stores/clinic-store";
 import { AppointmentTypeEditor } from "./appointment-type-editor";
+import { useEnsureSlices } from "@/hooks/useEnsureSlices";
 
 /* ── Colours ── */
 const IN_FLIGHT_AMBER = "#BA7517";
@@ -64,13 +65,7 @@ export function AppointmentTypesSettingsShell() {
 
   const { selectedLocation } = useLocation();
 
-  // Fetch-if-empty
-  useEffect(() => {
-    if (!org) return;
-    if (!getClinicStore().workflowsLoaded) {
-      void getClinicStore().refreshWorkflows(org.id);
-    }
-  }, [org]);
+  useEnsureSlices(["workflows"]);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingType, setEditingType] = useState<AppointmentTypeRow | null>(null);
 

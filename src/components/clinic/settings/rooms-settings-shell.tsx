@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useLocation } from "@/hooks/useLocation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +9,7 @@ import { RoomFormPanel } from "./room-form-panel";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import type { RoomWithClinicians } from "@/stores/clinic-store";
 import type { RoomType } from "@/lib/types/domain";
+import { useEnsureSlices } from "@/hooks/useEnsureSlices";
 
 const ROOM_TYPE_BADGE: Record<
   RoomType,
@@ -25,13 +26,7 @@ export function RoomsSettingsShell() {
   const rooms = useClinicStore((s) => s.roomsWithClinicians);
   const loading = !useClinicStore((s) => s.roomsLoaded);
 
-  // Fetch-if-empty
-  useEffect(() => {
-    if (!selectedLocation) return;
-    if (!getClinicStore().roomsLoaded) {
-      void getClinicStore().refreshRooms(selectedLocation.id);
-    }
-  }, [selectedLocation]);
+  useEnsureSlices(["rooms"]);
   const [panelOpen, setPanelOpen] = useState(false);
   const [editingRoom, setEditingRoom] = useState<RoomWithClinicians | null>(
     null

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback, useTransition } from "react";
+import { useState, useMemo, useCallback, useTransition } from "react";
 import { Zap } from "lucide-react";
 import { useClinicStore, getClinicStore, selectRooms } from "@/stores/clinic-store";
 import { usePmsConnection } from "@/hooks/usePmsConnection";
@@ -37,6 +37,7 @@ import {
 } from "@/components/clinic/forms/review-prefetch-cache";
 import { prefetchPatientDetails } from "@/components/clinic/patient/patient-contact-card/patient-details-cache";
 import { Textarea } from "@/components/ui/input";
+import { useEnsureSlices } from "@/hooks/useEnsureSlices";
 
 const AddPatientPanel = dynamic(
   () =>
@@ -79,25 +80,10 @@ export function ReadinessShell() {
   const standaloneRows = showStandaloneRows ? standaloneSubmissions : [];
 
   // Fetch-if-empty
-  useEffect(() => {
-    if (!locationId) return;
-    const store = useClinicStore.getState();
-    if (!store.readinessLoadedPre || !store.readinessLoadedPost) {
-      void store.refreshReadiness(locationId);
-    }
-    if (!store.roomsLoaded) void store.refreshRooms(locationId);
-    if (orgId && !store.workflowsLoaded) {
-      void store.refreshWorkflows(orgId);
-    }
-    if (orgId) {
-      // Standalone submissions live on the org room; the clinic-data
-      // provider also refreshes on socket connect, this covers the
-      // first-render-after-cold-load case.
-      if (!store.standaloneSubmissionsLoaded) {
-        void store.refreshStandaloneSubmissions(orgId);
-      }
-    }
-  }, [locationId, orgId]);
+  // Standalone submissions live on the org room; the clinic-data provider
+  // also refreshes them on socket connect — the ensure hook covers the
+  // first-render-after-cold-load case.
+  useEnsureSlices(["readiness", "rooms", "workflows", "standaloneSubmissions"]);
 
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
   const [filters, setFilters] = useState<ReadinessFilters>({

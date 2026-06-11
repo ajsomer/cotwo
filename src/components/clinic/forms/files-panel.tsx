@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { getJson } from "@/lib/api-client";
 import { useOrg } from "@/hooks/useOrg";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import type { FileRow } from "@/stores/clinic-store";
 import { TextInput } from "@/components/ui/input";
 import { formatDayMonthYear } from "@/lib/runsheet/format";
+import { useEnsureSlices } from "@/hooks/useEnsureSlices";
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -255,12 +256,7 @@ export function FilesPanel() {
     if (org) getClinicStore().refreshFiles(org.id);
   };
 
-  // Load files on mount if not loaded
-  useEffect(() => {
-    if (org && !useClinicStore.getState().filesLoaded) {
-      getClinicStore().refreshFiles(org.id);
-    }
-  }, [org]);
+  useEnsureSlices(["files"]);
 
   const handleView = async (file: FileRow) => {
     const result = await getJson<{ signed_url: string }>(

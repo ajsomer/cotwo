@@ -16,6 +16,7 @@ import type {
 import { AppointmentTypesSettingsShell } from "@/components/clinic/settings/appointment-types-settings-shell";
 import { OutcomePathwaysPanel } from "./outcome-pathways-panel";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
+import { useEnsureSlices } from "@/hooks/useEnsureSlices";
 import type {
   AppointmentTypeRow,
   OutcomePathwayRow,
@@ -31,12 +32,7 @@ export function WorkflowsShell() {
   const orgId = org?.id ?? "";
 
   // Fetch-if-empty
-  useEffect(() => {
-    if (!orgId) return;
-    const store = getClinicStore();
-    if (!store.workflowsLoaded) void store.refreshWorkflows(orgId);
-    if (!store.formsLoaded) void store.refreshForms(orgId);
-  }, [orgId]);
+  useEnsureSlices(["workflows", "forms"]);
 
   const [direction, setDirection] = useState<WorkflowDirection>("pre_appointment");
   const [selectedId, setSelectedId] = useState<string | null>(null);

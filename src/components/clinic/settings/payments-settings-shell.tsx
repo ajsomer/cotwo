@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useLocation } from "@/hooks/useLocation";
 import { useRole } from "@/hooks/useRole";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { ConfirmModal } from "@/components/ui/modal";
 import { useClinicStore, getClinicStore, selectPaymentRooms } from "@/stores/clinic-store";
 import type { PaymentsData, RoomPayment } from "@/stores/clinic-store";
 import type { RoomType } from "@/lib/types/domain";
+import { useEnsureSlices } from "@/hooks/useEnsureSlices";
 
 type RoutingMode = "location" | "clinician";
 type Tab = "configuration" | "rooms";
@@ -32,19 +33,10 @@ export function PaymentsSettingsShell() {
   const rooms = useClinicStore(selectPaymentRooms);
   const loading = !useClinicStore((s) => s.paymentConfigLoaded);
 
-  // Fetch-if-empty. paymentRooms is now derived in refreshRooms, so ensure
-  // rooms are loaded too (covers a direct/cold landing on this page where the
+  // paymentRooms is derived from roomsWithClinicians, so ensure rooms are
+  // loaded too (covers a direct/cold landing on this page where the
   // location-switch bootstrap hasn't run).
-  useEffect(() => {
-    if (!selectedLocation) return;
-    const store = getClinicStore();
-    if (!store.paymentConfigLoaded) {
-      void store.refreshPaymentConfig(selectedLocation.id);
-    }
-    if (!store.roomsLoaded) {
-      void store.refreshRooms(selectedLocation.id);
-    }
-  }, [selectedLocation]);
+  useEnsureSlices(["paymentConfig", "rooms"]);
   const [saving, setSaving] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState<
     | { kind: "routing"; mode: RoutingMode; label: string }
