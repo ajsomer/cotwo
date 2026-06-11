@@ -4,6 +4,7 @@ import { useState } from "react";
 import { postJson } from "@/lib/api-client";
 import { SlideOver } from "@/components/ui/slide-over";
 import { useClinicStore } from "@/stores/clinic-store";
+import { Button } from "@/components/ui/button";
 import { TextInput, Select } from "@/components/ui/input";
 
 interface AddPatientPanelProps {
@@ -265,19 +266,12 @@ export function AddPatientPanel({
 
         {/* Footer */}
         <div className="border-t border-gray-200 px-5 py-3 flex gap-2 justify-end">
-          <button
-            onClick={onClose}
-            className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"
-          >
+          <Button variant="secondary" onClick={onClose}>
             Cancel
-          </button>
-          <button
-            onClick={() => handleSave(false)}
-            disabled={saving}
-            className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 disabled:opacity-50"
-          >
+          </Button>
+          <Button onClick={() => handleSave(false)} disabled={saving}>
             {saving ? "Saving..." : "Save"}
-          </button>
+          </Button>
         </div>
       </div>
     </SlideOver>

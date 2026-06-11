@@ -28,6 +28,7 @@ import { OnboardingOverlay } from "@/components/clinic/onboarding/onboarding-ove
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { OnboardingCoachMark } from "@/components/clinic/onboarding/onboarding-coach-mark";
 import { RoomContainerSkeleton } from "./room-container-skeleton";
+import { Button } from "@/components/ui/button";
 
 const EMPTY_SUMMARY = {
   total: 0,
@@ -366,12 +367,7 @@ export function RunsheetShell() {
               <p className="text-sm text-gray-500">
                 Check your connection and try again.
               </p>
-              <button
-                onClick={() => setRetryKey((k) => k + 1)}
-                className="inline-flex items-center gap-2 rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 transition-colors"
-              >
-                Retry
-              </button>
+              <Button onClick={() => setRetryKey((k) => k + 1)}>Retry</Button>
             </div>
           </div>
         </PatientSlideOverProvider>
@@ -469,13 +465,9 @@ export function RunsheetShell() {
         {groups.length === 0 && (
           <div className="bg-white rounded-xl border border-gray-200 p-12 text-center space-y-4">
             <p className="text-gray-500">No rooms configured for this location</p>
-            <button
-              onClick={handleSeed}
-              disabled={isSeeding}
-              className="inline-flex items-center gap-2 rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 disabled:opacity-50 transition-colors"
-            >
+            <Button onClick={handleSeed} disabled={isSeeding}>
               {isSeeding ? "Seeding..." : "Seed demo data"}
-            </button>
+            </Button>
           </div>
         )}
 

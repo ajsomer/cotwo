@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { postJson } from "@/lib/api-client";
+import { Button } from "@/components/ui/button";
 import { SlideOver } from "@/components/ui/slide-over";
 import { CollapsibleSection } from "@/components/ui/collapsible-section";
 import { Toggle } from "@/components/ui/toggle";
@@ -670,21 +671,12 @@ export function AppointmentTypeEditor({
             {isPmsSynced ? "Archive" : isNew ? "Discard" : "Delete"}
           </button>
           <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={handleClose}
-              className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"
-            >
+            <Button type="button" variant="secondary" onClick={handleClose}>
               Cancel
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={saving}
-              className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 disabled:opacity-50"
-            >
+            </Button>
+            <Button type="button" onClick={handleSave} disabled={saving}>
               {saving ? "Saving..." : isNew ? "Create appointment type" : "Save changes"}
-            </button>
+            </Button>
           </div>
         </div>
       </div>
