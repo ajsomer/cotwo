@@ -6,13 +6,13 @@ import { SlideOver } from "@/components/ui/slide-over";
 import { Button } from "@/components/ui/button";
 import { Toggle } from "@/components/ui/toggle";
 import { useClinicStore } from "@/stores/clinic-store";
+import { getActionTypeMeta, type ActionType } from "@/lib/workflows/types";
+import { TextInput } from "@/components/ui/input";
 import {
-  getActionTypeMeta,
-  formatFireTime,
-  type ActionType,
-} from "@/lib/workflows/types";
-import { ActionTypeIcon } from "@/components/clinic/shared/action-type-icon";
-import { TextInput, Textarea, Select } from "@/components/ui/input";
+  ActionBlockCard,
+  ActionBlockFieldEditor,
+  TimelineStartMarker,
+} from "./action-block-editor";
 import {
   Plus,
   Trash2,
@@ -20,8 +20,6 @@ import {
   FileText,
   ClipboardCheck,
   FileUp,
-  ChevronDown,
-  ChevronUp,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -47,13 +45,6 @@ interface OutcomePathwayEditorProps {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function timingLabel(offsetMinutes: number): string {
-  if (offsetMinutes === 0) return "Same day";
-  const days = offsetMinutes / 1440;
-  if (Number.isInteger(days)) return `Day ${days}`;
-  return formatFireTime(offsetMinutes, "after").label;
-}
-
 let tempIdCounter = 0;
 function tempId() {
   return `temp-${++tempIdCounter}`;
@@ -78,8 +69,6 @@ export function OutcomePathwayEditor({
   const forms = useClinicStore((s) => s.forms);
   const files = useClinicStore((s) => s.files);
   const orgId = useClinicStore((s) => s.orgId);
-  const formNameMap = new Map(forms.map((f) => [f.id, f.name]));
-  const fileNameMap = new Map(files.map((f) => [f.id, f.name]));
 
   // Load existing pathway data
   useEffect(() => {
@@ -250,296 +239,74 @@ export function OutcomePathwayEditor({
 
           {/* Timeline */}
           <div className="flex-1 overflow-y-auto p-5 space-y-0">
-            {/* T+0 marker */}
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-2 h-2 rounded-full bg-gray-300 ml-1" />
-              <span className="text-xs text-gray-400 font-medium">
-                Session complete
-              </span>
-            </div>
+            <TimelineStartMarker />
 
             {/* Blocks */}
             {blocks.map((block, idx) => {
               const isExpanded = expandedBlockId === block.id;
-              const formName = block.form_id
-                ? formNameMap.get(block.form_id)
-                : undefined;
               const meta = getActionTypeMeta(block.action_type);
 
               return (
-                <div key={block.id} className="flex gap-3">
-                  {/* Rail */}
-                  <div className="flex flex-col items-center w-4 shrink-0">
-                    {idx > 0 && (
-                      <div className="w-px flex-1 bg-gray-200 -mt-1" />
-                    )}
-                    <div className="w-2.5 h-2.5 rounded-full bg-teal-500 shrink-0" />
-                    {idx < blocks.length - 1 && (
-                      <div className="w-px flex-1 bg-gray-200" />
-                    )}
-                  </div>
-
-                  {/* Card */}
-                  <div className="flex-1 rounded-lg border border-gray-200 bg-white p-3 mb-2">
-                    <div
-                      className="flex items-center gap-2 cursor-pointer"
-                      onClick={() =>
-                        setExpandedBlockId(isExpanded ? null : block.id)
-                      }
+                <ActionBlockCard
+                  key={block.id}
+                  isFirst={idx === 0}
+                  isLast={idx === blocks.length - 1}
+                  actionType={block.action_type}
+                  timingMinutes={block.offset_minutes}
+                  typeLabel={meta?.label ?? block.action_type}
+                  expanded={isExpanded}
+                  onToggleExpand={() =>
+                    setExpandedBlockId(isExpanded ? null : block.id)
+                  }
+                  afterChevron={
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeBlock(block.id);
+                      }}
+                      className="text-gray-300 hover:text-red-400"
                     >
-                      <ActionTypeIcon actionType={block.action_type} size={16} />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-medium text-gray-400">
-                            {timingLabel(block.offset_minutes)}
-                          </span>
-                          <span className="text-xs text-gray-300">·</span>
-                          <span className="text-xs text-gray-500">
-                            {meta?.label ?? block.action_type}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="text-gray-400">
-                        {isExpanded ? (
-                          <ChevronUp className="h-4 w-4" />
-                        ) : (
-                          <ChevronDown className="h-4 w-4" />
-                        )}
-                      </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          removeBlock(block.id);
-                        }}
-                        className="text-gray-300 hover:text-red-400"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  }
+                >
+                  <ActionBlockFieldEditor
+                    variant="builder"
+                    allowFormReminder
+                    actionType={block.action_type}
+                    offsetMinutes={block.offset_minutes}
+                    onOffsetChange={(minutes) =>
+                      updateBlock(block.id, { offset_minutes: minutes })
+                    }
+                    config={block.config}
+                    onConfigChange={(updates) =>
+                      updateBlockConfig(block.id, updates)
+                    }
+                    formId={block.form_id}
+                    onFormIdChange={(formId) =>
+                      updateBlock(block.id, { form_id: formId })
+                    }
+                    forms={forms}
+                    files={files}
+                  >
+                    {/* Default enabled toggle */}
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-medium text-gray-500">
+                        Enabled by default at Process
+                      </label>
+                      <Toggle
+                        checked={block.config.default_enabled !== false}
+                        onChange={() =>
+                          updateBlockConfig(block.id, {
+                            default_enabled:
+                              block.config.default_enabled === false,
+                          })
+                        }
+                        aria-label="On by default"
+                      />
                     </div>
-
-                    {/* Expanded editor */}
-                    {isExpanded && (
-                      <div className="mt-3 pt-3 border-t border-gray-100 space-y-3">
-                        {/* Timing */}
-                        <div>
-                          <label className="text-xs font-medium text-gray-500 block mb-1">
-                            Timing (days after session)
-                          </label>
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="number"
-                              min={0}
-                              value={block.offset_minutes / 1440}
-                              onChange={(e) =>
-                                updateBlock(block.id, {
-                                  offset_minutes:
-                                    parseInt(e.target.value || "0") * 1440,
-                                })
-                              }
-                              className="w-16 text-sm border border-gray-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-teal-500"
-                            />
-                            <div className="flex gap-1">
-                              {[1, 3, 7, 14, 30].map((d) => (
-                                <button
-                                  key={d}
-                                  onClick={() =>
-                                    updateBlock(block.id, {
-                                      offset_minutes: d * 1440,
-                                    })
-                                  }
-                                  className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
-                                    block.offset_minutes === d * 1440
-                                      ? "border-teal-500 bg-teal-50 text-teal-700"
-                                      : "border-gray-200 text-gray-500 hover:border-gray-300"
-                                  }`}
-                                >
-                                  {d}d
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Default enabled toggle */}
-                        <div className="flex items-center justify-between">
-                          <label className="text-xs font-medium text-gray-500">
-                            Enabled by default at Process
-                          </label>
-                          <Toggle
-                            checked={block.config.default_enabled !== false}
-                            onChange={() =>
-                              updateBlockConfig(block.id, {
-                                default_enabled:
-                                  block.config.default_enabled === false,
-                              })
-                            }
-                            aria-label="On by default"
-                          />
-                        </div>
-
-                        {/* SMS fields */}
-                        {block.action_type === "send_sms" && (
-                          <div>
-                            <label className="text-xs font-medium text-gray-500 block mb-1">
-                              SMS message
-                            </label>
-                            <Textarea
-                              value={(block.config.message as string) ?? ""}
-                              onChange={(e) =>
-                                updateBlockConfig(block.id, {
-                                  message: e.target.value,
-                                })
-                              }
-                              rows={3}
-                              placeholder="Hi {first_name}, ..."
-                            />
-                            <p className="text-xs text-gray-400 mt-1">
-                              Variables: {"{first_name}"}, {"{clinic_name}"},{" "}
-                              {"{clinician_name}"}, {"{session_date}"}
-                            </p>
-                          </div>
-                        )}
-
-                        {/* Form fields */}
-                        {block.action_type === "deliver_form" && (
-                          <>
-                            <div>
-                              <label className="text-xs font-medium text-gray-500 block mb-1">
-                                Form
-                              </label>
-                              <Select
-                                value={block.form_id ?? ""}
-                                onChange={(e) =>
-                                  updateBlock(block.id, {
-                                    form_id: e.target.value || null,
-                                  })
-                                }
-                              >
-                                <option value="">Select a form...</option>
-                                {forms
-                                  .filter((f) => f.status === "published")
-                                  .map((f) => (
-                                    <option key={f.id} value={f.id}>
-                                      {f.name}
-                                    </option>
-                                  ))}
-                              </Select>
-                            </div>
-                            <div>
-                              <label className="text-xs font-medium text-gray-500 block mb-1">
-                                Reminder SMS (optional)
-                              </label>
-                              <Textarea
-                                value={
-                                  (block.config.reminder_sms as string) ?? ""
-                                }
-                                onChange={(e) =>
-                                  updateBlockConfig(block.id, {
-                                    reminder_sms: e.target.value,
-                                  })
-                                }
-                                rows={2}
-                                placeholder="Your clinician has sent you a form..."
-                              />
-                            </div>
-                          </>
-                        )}
-
-                        {/* Task fields */}
-                        {block.action_type === "task" && (
-                          <>
-                            <div>
-                              <label className="text-xs font-medium text-gray-500 block mb-1">
-                                Task title
-                              </label>
-                              <input
-                                type="text"
-                                value={
-                                  (block.config.task_title as string) ?? ""
-                                }
-                                onChange={(e) =>
-                                  updateBlockConfig(block.id, {
-                                    task_title: e.target.value,
-                                  })
-                                }
-                                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500"
-                                placeholder="e.g. Send referral"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-xs font-medium text-gray-500 block mb-1">
-                                Description (optional)
-                              </label>
-                              <Textarea
-                                value={
-                                  (block.config.task_description as string) ??
-                                  ""
-                                }
-                                onChange={(e) =>
-                                  updateBlockConfig(block.id, {
-                                    task_description: e.target.value,
-                                  })
-                                }
-                                rows={2}
-                                placeholder="Additional context..."
-                              />
-                            </div>
-                          </>
-                        )}
-
-                        {/* Send file fields */}
-                        {block.action_type === "send_file" && (
-                          <>
-                            <div>
-                              <label className="text-xs font-medium text-gray-500 block mb-1">
-                                File
-                              </label>
-                              <select
-                                value={
-                                  (block.config.file_id as string) ?? ""
-                                }
-                                onChange={(e) =>
-                                  updateBlockConfig(block.id, {
-                                    file_id: e.target.value || "",
-                                  })
-                                }
-                                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500"
-                              >
-                                <option value="">Select a file...</option>
-                                {files.map((f) => (
-                                  <option key={f.id} value={f.id}>
-                                    {f.name} ({Math.round(f.file_size_bytes / 1024)} KB)
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                            <div>
-                              <label className="text-xs font-medium text-gray-500 block mb-1">
-                                SMS message
-                              </label>
-                              <Textarea
-                                value={
-                                  (block.config.message as string) ?? ""
-                                }
-                                onChange={(e) =>
-                                  updateBlockConfig(block.id, {
-                                    message: e.target.value,
-                                  })
-                                }
-                                rows={3}
-                                placeholder="Hi {first_name}, your clinician has shared a document with you."
-                              />
-                              <p className="text-xs text-gray-400 mt-1">
-                                Variables: {"{first_name}"}, {"{clinic_name}"},{" "}
-                                {"{clinician_name}"}, {"{file_link}"}
-                              </p>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
+                  </ActionBlockFieldEditor>
+                </ActionBlockCard>
               );
             })}
 
