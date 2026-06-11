@@ -7,6 +7,7 @@ import { SlideOver } from "@/components/ui/slide-over";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { FormAssignmentStatus } from "@/lib/types/domain";
+import { Select } from "@/components/ui/input";
 
 interface AssignmentRow {
   id: string;
@@ -157,10 +158,9 @@ export function FormAssignmentsPanel({
           <h3 className="text-sm font-medium text-gray-800">
             Send to patient
           </h3>
-          <select
+          <Select
             value={selectedPatientId}
             onChange={(e) => setSelectedPatientId(e.target.value)}
-            className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500"
           >
             <option value="">Select a patient...</option>
             {patients.map((p) => (
@@ -169,7 +169,7 @@ export function FormAssignmentsPanel({
                 {p.phone_number ? ` (${p.phone_number})` : " (no phone)"}
               </option>
             ))}
-          </select>
+          </Select>
           <Button
             onClick={handleCreateAndSend}
             disabled={!selectedPatientId || creating}

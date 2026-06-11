@@ -10,6 +10,7 @@ import { ConfirmModal } from "@/components/ui/modal";
 import { useClinicStore } from "@/stores/clinic-store";
 import { useOrg } from "@/hooks/useOrg";
 import type { AppointmentTypeRow } from "@/stores/clinic-store";
+import { TextInput } from "@/components/ui/input";
 
 interface AppointmentTypeEditorProps {
   appointmentType: AppointmentTypeRow | null; // null = new
@@ -305,26 +306,24 @@ export function AppointmentTypeEditor({
                 <label className="block text-xs font-medium text-gray-700 mb-1">
                   Name {isPmsSynced && <span className="text-gray-400">(synced)</span>}
                 </label>
-                <input
+                <TextInput
                   type="text"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   disabled={isPmsSynced}
                   autoFocus={isNew}
                   placeholder="e.g. Initial Consultation"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none disabled:bg-gray-50 disabled:text-gray-500"
                 />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">
                   Duration (min) {isPmsSynced && <span className="text-gray-400">(synced)</span>}
                 </label>
-                <input
+                <TextInput
                   type="number"
                   value={durationMinutes}
                   onChange={(e) => setDurationMinutes(e.target.value ? parseInt(e.target.value) : "")}
                   disabled={isPmsSynced}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none disabled:bg-gray-50 disabled:text-gray-500"
                 />
               </div>
               <div>
@@ -340,14 +339,13 @@ export function AppointmentTypeEditor({
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Default fee ($)</label>
-                <input
+                <TextInput
                   type="number"
                   value={defaultFeeDollars}
                   onChange={(e) => setDefaultFeeDollars(e.target.value)}
                   step="0.01"
                   min="0"
                   placeholder="0.00"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none"
                 />
               </div>
             </div>

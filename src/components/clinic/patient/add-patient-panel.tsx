@@ -4,6 +4,7 @@ import { useState } from "react";
 import { postJson } from "@/lib/api-client";
 import { SlideOver } from "@/components/ui/slide-over";
 import { useClinicStore } from "@/stores/clinic-store";
+import { TextInput, Select } from "@/components/ui/input";
 
 interface AddPatientPanelProps {
   locationId: string;
@@ -143,11 +144,10 @@ export function AddPatientPanel({
             <label className="block text-xs font-medium text-gray-700 mb-1">
               First name *
             </label>
-            <input
+            <TextInput
               type="text"
               value={firstName}
               onChange={(e) => setFirstName(e.target.value)}
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none"
             />
           </div>
 
@@ -156,11 +156,10 @@ export function AddPatientPanel({
             <label className="block text-xs font-medium text-gray-700 mb-1">
               Last name *
             </label>
-            <input
+            <TextInput
               type="text"
               value={lastName}
               onChange={(e) => setLastName(e.target.value)}
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none"
             />
           </div>
 
@@ -169,12 +168,11 @@ export function AddPatientPanel({
             <label className="block text-xs font-medium text-gray-700 mb-1">
               Date of birth *
             </label>
-            <input
+            <TextInput
               type="date"
               value={dob}
               onChange={(e) => setDob(e.target.value)}
               max={today}
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none"
             />
           </div>
 
@@ -202,10 +200,9 @@ export function AddPatientPanel({
             <label className="block text-xs font-medium text-gray-700 mb-1">
               Workflow type *
             </label>
-            <select
+            <Select
               value={appointmentTypeId}
               onChange={(e) => setAppointmentTypeId(e.target.value)}
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none"
             >
               <option value="">Select type...</option>
               {appointmentTypes.map((t) => (
@@ -213,7 +210,7 @@ export function AddPatientPanel({
                   {t.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
 
           {/* Room */}
@@ -221,10 +218,9 @@ export function AddPatientPanel({
             <label className="block text-xs font-medium text-gray-700 mb-1">
               Room *
             </label>
-            <select
+            <Select
               value={roomId}
               onChange={(e) => setRoomId(e.target.value)}
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none"
             >
               <option value="">Select room...</option>
               {rooms.map((r) => (
@@ -232,7 +228,7 @@ export function AddPatientPanel({
                   {r.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
 
           {/* Date */}

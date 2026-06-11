@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Modal, ConfirmModal } from "@/components/ui/modal";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import type { FileRow } from "@/stores/clinic-store";
+import { TextInput } from "@/components/ui/input";
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -196,12 +197,11 @@ function UploadModal({
           <label className="text-xs font-medium text-gray-500 block mb-1">
             Name
           </label>
-          <input
+          <TextInput
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. ADHD Fact Sheet"
-            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500"
           />
         </div>
 
@@ -210,12 +210,11 @@ function UploadModal({
           <label className="text-xs font-medium text-gray-500 block mb-1">
             Description (optional)
           </label>
-          <input
+          <TextInput
             type="text"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="One-line description"
-            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500"
           />
         </div>
 

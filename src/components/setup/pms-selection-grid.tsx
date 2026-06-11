@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { CloseButton } from "@/components/ui/close-button";
 import { CheckCircle2, Loader2 } from "lucide-react";
+import { TextInput } from "@/components/ui/input";
 
 type PmsProvider = "cliniko" | "halaxy" | "nookal" | "power_diary" | "gentu";
 
@@ -279,14 +280,13 @@ export function PmsSelectionGrid() {
                   <label className="block text-xs font-medium text-gray-800 mb-1">
                     {f.label}
                   </label>
-                  <input
+                  <TextInput
                     type={f.inputType}
                     placeholder={f.placeholder}
                     value={credentialValues[f.key] ?? ""}
                     onChange={(e) =>
                       setCredentialValues((v) => ({ ...v, [f.key]: e.target.value }))
                     }
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
                   />
                   {f.helpText && (
                     <p className="text-xs text-gray-500 mt-1">{f.helpText}</p>

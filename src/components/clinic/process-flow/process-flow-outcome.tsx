@@ -13,6 +13,7 @@ import {
 import type { EnrichedSession } from "@/lib/types/domain";
 import { ActionTypeIcon } from "@/components/clinic/shared/action-type-icon";
 import { ChevronDown, ChevronUp, ArrowLeft } from "lucide-react";
+import { Textarea, Select } from "@/components/ui/input";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -450,7 +451,7 @@ export function ProcessFlowOutcome({
                         <label className="text-xs font-medium text-gray-500 block mb-1">
                           SMS message
                         </label>
-                        <textarea
+                        <Textarea
                           value={
                             (block.customConfig.message as string) ?? ""
                           }
@@ -460,7 +461,6 @@ export function ProcessFlowOutcome({
                             })
                           }
                           rows={3}
-                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500 resize-none"
                         />
                         <p className="text-xs text-gray-400 mt-1 break-words">
                           Variables: {"{first_name}"}, {"{clinic_name}"},{" "}
@@ -475,14 +475,13 @@ export function ProcessFlowOutcome({
                         <label className="text-xs font-medium text-gray-500 block mb-1">
                           Form
                         </label>
-                        <select
+                        <Select
                           value={block.customFormId ?? ""}
                           onChange={(e) =>
                             updateBlock(block.id, {
                               customFormId: e.target.value || null,
                             })
                           }
-                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500"
                         >
                           <option value="">Select a form...</option>
                           {forms
@@ -492,7 +491,7 @@ export function ProcessFlowOutcome({
                                 {f.name}
                               </option>
                             ))}
-                        </select>
+                        </Select>
                       </div>
                     )}
 
@@ -520,7 +519,7 @@ export function ProcessFlowOutcome({
                           <label className="text-xs font-medium text-gray-500 block mb-1">
                             Description (optional)
                           </label>
-                          <textarea
+                          <Textarea
                             value={
                               (block.customConfig.task_description as string) ??
                               ""
@@ -531,7 +530,6 @@ export function ProcessFlowOutcome({
                               })
                             }
                             rows={2}
-                            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500 resize-none"
                           />
                         </div>
                       </>
@@ -567,7 +565,7 @@ export function ProcessFlowOutcome({
                           <label className="text-xs font-medium text-gray-500 block mb-1">
                             SMS message
                           </label>
-                          <textarea
+                          <Textarea
                             value={
                               (block.customConfig.message as string) ?? ""
                             }
@@ -577,7 +575,6 @@ export function ProcessFlowOutcome({
                               })
                             }
                             rows={3}
-                            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500 resize-none"
                           />
                           <p className="text-xs text-gray-400 mt-1 break-words">
                             Variables: {"{first_name}"}, {"{clinic_name}"},{" "}

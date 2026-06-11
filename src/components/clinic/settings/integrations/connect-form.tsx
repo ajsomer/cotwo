@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { getJson } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import type { IntegrationStatusDTO } from "./types";
+import { Select } from "@/components/ui/input";
 
 /** Connect metadata for one registry-backed provider (from /api/pms/providers). */
 interface ProviderConnectMeta {
@@ -129,21 +130,20 @@ export function ConnectForm({
             <label className="block text-xs font-medium text-gray-800 mb-1">
               Practice management system
             </label>
-            <select
+            <Select
               value={selectedProvider ?? ""}
               onChange={(e) => {
                 setSelectedProvider(e.target.value);
                 setValues({});
                 setError(null);
               }}
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
             >
               {providerMeta.map((p) => (
                 <option key={p.provider} value={p.provider}>
                   {p.label}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
         )}
         {fields.map((f) => (

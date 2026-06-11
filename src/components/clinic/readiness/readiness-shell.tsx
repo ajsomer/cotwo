@@ -36,6 +36,7 @@ import {
   standaloneSubmissionUrl,
 } from "@/components/clinic/forms/review-prefetch-cache";
 import { prefetchPatientDetails } from "@/components/clinic/patient/patient-contact-card/patient-details-cache";
+import { Textarea } from "@/components/ui/input";
 
 const AddPatientPanel = dynamic(
   () =>
@@ -575,12 +576,11 @@ export function ReadinessShell() {
             <p className="text-xs text-gray-500 mb-3">
               What did you do? (optional)
             </p>
-            <textarea
+            <Textarea className="mb-3"
               value={taskNote}
               onChange={(e) => setTaskNote(e.target.value)}
               rows={3}
               placeholder="Add a note..."
-              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500 resize-none mb-3"
               autoFocus
             />
             <div className="flex gap-2 justify-end">

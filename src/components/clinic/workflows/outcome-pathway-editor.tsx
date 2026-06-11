@@ -12,6 +12,7 @@ import {
   type ActionType,
 } from "@/lib/workflows/types";
 import { ActionTypeIcon } from "@/components/clinic/shared/action-type-icon";
+import { TextInput, Textarea, Select } from "@/components/ui/input";
 import {
   Plus,
   Trash2,
@@ -226,12 +227,11 @@ export function OutcomePathwayEditor({
               <label className="text-xs font-medium text-gray-500 block mb-1">
                 Pathway name
               </label>
-              <input
+              <TextInput
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="e.g. Continue treatment"
-                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500"
                 autoFocus
               />
             </div>
@@ -239,12 +239,11 @@ export function OutcomePathwayEditor({
               <label className="text-xs font-medium text-gray-500 block mb-1">
                 Description (optional)
               </label>
-              <input
+              <TextInput
                 type="text"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="One-line description"
-                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500"
               />
             </div>
           </div>
@@ -384,7 +383,7 @@ export function OutcomePathwayEditor({
                             <label className="text-xs font-medium text-gray-500 block mb-1">
                               SMS message
                             </label>
-                            <textarea
+                            <Textarea
                               value={(block.config.message as string) ?? ""}
                               onChange={(e) =>
                                 updateBlockConfig(block.id, {
@@ -392,7 +391,6 @@ export function OutcomePathwayEditor({
                                 })
                               }
                               rows={3}
-                              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500 resize-none"
                               placeholder="Hi {first_name}, ..."
                             />
                             <p className="text-xs text-gray-400 mt-1">
@@ -409,14 +407,13 @@ export function OutcomePathwayEditor({
                               <label className="text-xs font-medium text-gray-500 block mb-1">
                                 Form
                               </label>
-                              <select
+                              <Select
                                 value={block.form_id ?? ""}
                                 onChange={(e) =>
                                   updateBlock(block.id, {
                                     form_id: e.target.value || null,
                                   })
                                 }
-                                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500"
                               >
                                 <option value="">Select a form...</option>
                                 {forms
@@ -426,13 +423,13 @@ export function OutcomePathwayEditor({
                                       {f.name}
                                     </option>
                                   ))}
-                              </select>
+                              </Select>
                             </div>
                             <div>
                               <label className="text-xs font-medium text-gray-500 block mb-1">
                                 Reminder SMS (optional)
                               </label>
-                              <textarea
+                              <Textarea
                                 value={
                                   (block.config.reminder_sms as string) ?? ""
                                 }
@@ -442,7 +439,6 @@ export function OutcomePathwayEditor({
                                   })
                                 }
                                 rows={2}
-                                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500 resize-none"
                                 placeholder="Your clinician has sent you a form..."
                               />
                             </div>
@@ -474,7 +470,7 @@ export function OutcomePathwayEditor({
                               <label className="text-xs font-medium text-gray-500 block mb-1">
                                 Description (optional)
                               </label>
-                              <textarea
+                              <Textarea
                                 value={
                                   (block.config.task_description as string) ??
                                   ""
@@ -485,7 +481,6 @@ export function OutcomePathwayEditor({
                                   })
                                 }
                                 rows={2}
-                                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500 resize-none"
                                 placeholder="Additional context..."
                               />
                             </div>
@@ -522,7 +517,7 @@ export function OutcomePathwayEditor({
                               <label className="text-xs font-medium text-gray-500 block mb-1">
                                 SMS message
                               </label>
-                              <textarea
+                              <Textarea
                                 value={
                                   (block.config.message as string) ?? ""
                                 }
@@ -532,7 +527,6 @@ export function OutcomePathwayEditor({
                                   })
                                 }
                                 rows={3}
-                                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500 resize-none"
                                 placeholder="Hi {first_name}, your clinician has shared a document with you."
                               />
                               <p className="text-xs text-gray-400 mt-1">
