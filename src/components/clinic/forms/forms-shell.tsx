@@ -1,15 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { postJson } from "@/lib/api-client";
 import { useOrg } from "@/hooks/useOrg";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { ConfirmModal } from "@/components/ui/modal";
 import { FormAssignmentsPanel } from "./form-assignments-panel";
 import { FilesPanel } from "./files-panel";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import type { FormRow } from "@/stores/clinic-store";
-import type { FormStatus } from "@/lib/supabase/types";
+import type { FormStatus } from "@/lib/types/domain";
+import { formatDayMonthYear } from "@/lib/runsheet/format";
+import { useEnsureSlices } from "@/hooks/useEnsureSlices";
 
 type TabKey = "forms" | "files";
 
@@ -28,16 +32,14 @@ export function FormsShell() {
   const forms = useClinicStore((s) => s.forms);
   const loading = !useClinicStore((s) => s.formsLoaded);
 
-  // Fetch-if-empty
-  useEffect(() => {
-    if (!org) return;
-    if (!getClinicStore().formsLoaded) {
-      void getClinicStore().refreshForms(org.id);
-    }
-  }, [org]);
+  useEnsureSlices(["forms"]);
   const [sendingForm, setSendingForm] = useState<FormRow | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("forms");
   const [copiedFormId, setCopiedFormId] = useState<string | null>(null);
+  const [deletingForm, setDeletingForm] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
 
   const copyStandaloneLink = async (form: FormRow) => {
     const url = `${window.location.origin}/f/${form.public_token}`;
@@ -54,8 +56,8 @@ export function FormsShell() {
     if (org) getClinicStore().refreshForms(org.id);
   };
 
-  const handleDelete = async (formId: string, formName: string) => {
-    if (!confirm(`Delete "${formName}"? This cannot be undone.`)) return;
+  const handleDelete = async (formId: string) => {
+    setDeletingForm(null);
 
     const res = await fetch(`/api/forms?id=${formId}`, { method: "DELETE" });
 
@@ -71,24 +73,18 @@ export function FormsShell() {
   const handleNew = async () => {
     if (!org) return;
 
-    const res = await fetch("/api/forms", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ org_id: org.id, name: "Untitled Form" }),
+    const result = await postJson<{ form: { id: string } }>("/api/forms", {
+      org_id: org.id,
+      name: "Untitled Form",
     });
 
-    if (res.ok) {
-      const data = await res.json();
-      router.push(`/forms/${data.form.id}`);
+    if (result.ok) {
+      router.push(`/forms/${result.data.form.id}`);
     }
   };
 
   const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString("en-AU", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    });
+    return formatDayMonthYear(dateStr);
   };
 
   if (!org) {
@@ -241,7 +237,9 @@ export function FormsShell() {
                               </button>
                             )}
                             <button
-                              onClick={() => handleDelete(form.id, form.name)}
+                              onClick={() =>
+                                setDeletingForm({ id: form.id, name: form.name })
+                              }
                               className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50"
                             >
                               Delete
@@ -268,6 +266,16 @@ export function FormsShell() {
               formName={sendingForm.name}
             />
           )}
+
+          <ConfirmModal
+            open={!!deletingForm}
+            title={`Delete "${deletingForm?.name}"?`}
+            message="This cannot be undone."
+            confirmLabel="Delete"
+            destructive
+            onConfirm={() => deletingForm && handleDelete(deletingForm.id)}
+            onCancel={() => setDeletingForm(null)}
+          />
         </>
       )}
     </div>

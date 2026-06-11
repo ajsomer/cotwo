@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { postJson } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 
 export interface PushFieldResultDTO {
@@ -120,22 +121,17 @@ function FieldRow({
 
   const retry = async () => {
     setRetrying(true);
-    const res = await fetch("/api/pms/push/retry", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const result = await postJson<{ ok?: boolean; field?: PushFieldResultDTO }>(
+      "/api/pms/push/retry",
+      {
         submissionId,
         questionName: field.coviuQuestionName,
         value,
-      }),
-    });
-    const data = (await res.json().catch(() => ({}))) as {
-      ok?: boolean;
-      field?: PushFieldResultDTO;
-    };
+      }
+    );
     setRetrying(false);
-    if (res.ok && data.ok && data.field) {
-      onRetried(submissionId, data.field);
+    if (result.ok && result.data?.ok && result.data.field) {
+      onRetried(submissionId, result.data.field);
     }
   };
 

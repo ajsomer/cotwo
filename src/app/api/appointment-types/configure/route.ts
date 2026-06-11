@@ -4,6 +4,7 @@ import { forms as formsT } from "@/lib/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { requireStaffOrgAccess } from "@/lib/auth/staff-access";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 /**
  * POST /api/appointment-types/configure
@@ -44,10 +45,7 @@ export async function POST(request: NextRequest) {
 
     const access = await requireStaffOrgAccess(org_id);
     if (!access.ok) {
-      return NextResponse.json(
-        { error: access.status === 401 ? "Unauthorized" : "Not found" },
-        { status: access.status }
-      );
+      return denyResponse(access);
     }
 
     if (!name?.trim()) {

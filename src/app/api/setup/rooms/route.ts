@@ -8,12 +8,13 @@ import {
 import { asc, eq, inArray } from "drizzle-orm";
 import { resolveDefaultStaffOrg, getAuthenticatedUserId } from "@/lib/auth/staff-access";
 import { NextResponse, type NextRequest } from "next/server";
+import { unauthenticatedResponse } from "@/lib/api/route-helpers";
 
 export async function GET() {
   const userId = await getAuthenticatedUserId();
 
   if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return unauthenticatedResponse();
   }
 
   // Setup flow: no scope is supplied, so resolve the user's default org.
@@ -54,7 +55,7 @@ export async function POST(request: NextRequest) {
   const userId = await getAuthenticatedUserId();
 
   if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return unauthenticatedResponse();
   }
 
   const body = await request.json();

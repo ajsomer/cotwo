@@ -1,15 +1,19 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback, useTransition } from "react";
+import { useState, useMemo, useCallback, useTransition } from "react";
 import { Zap } from "lucide-react";
-import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
+import { useClinicStore, getClinicStore, selectRooms } from "@/stores/clinic-store";
 import { usePmsConnection } from "@/hooks/usePmsConnection";
+import { usePmsSync } from "@/hooks/usePmsSync";
+import { useNow } from "@/hooks/useNow";
 import type {
   ReadinessAppointment,
   StandaloneSubmissionRow as StandaloneSubmissionRowType,
 } from "@/stores/clinic-store";
 import type { ReadinessPriority } from "@/lib/readiness/derived-state";
 import { Button } from "@/components/ui/button";
+import { Modal } from "@/components/ui/modal";
+import { SyncButton } from "@/components/clinic/shared/sync-button";
 import { ReadinessModeToggle } from "@/components/clinic/readiness/readiness-mode-toggle";
 import {
   ReadinessFilterBar,
@@ -32,6 +36,8 @@ import {
   standaloneSubmissionUrl,
 } from "@/components/clinic/forms/review-prefetch-cache";
 import { prefetchPatientDetails } from "@/components/clinic/patient/patient-contact-card/patient-details-cache";
+import { Textarea } from "@/components/ui/input";
+import { useEnsureSlices } from "@/hooks/useEnsureSlices";
 
 const AddPatientPanel = dynamic(
   () =>
@@ -60,7 +66,7 @@ export function ReadinessShell() {
   const loaded = direction === "pre_appointment" ? loadedPre : loadedPost;
   const counts = useClinicStore((s) => s.readinessCounts);
   const setDirection = useClinicStore((s) => s.setReadinessDirection);
-  const rooms = useClinicStore((s) => s.rooms);
+  const rooms = useClinicStore(selectRooms);
   const appointmentTypes = useClinicStore((s) => s.appointmentTypes);
   const locationId = useClinicStore((s) => s.locationId);
   const orgId = useClinicStore((s) => s.orgId);
@@ -74,25 +80,10 @@ export function ReadinessShell() {
   const standaloneRows = showStandaloneRows ? standaloneSubmissions : [];
 
   // Fetch-if-empty
-  useEffect(() => {
-    if (!locationId) return;
-    const store = useClinicStore.getState();
-    if (!store.readinessLoadedPre || !store.readinessLoadedPost) {
-      void store.refreshReadiness(locationId);
-    }
-    if (!store.roomsLoaded) void store.refreshRooms(locationId);
-    if (orgId && !store.workflowsLoaded) {
-      void store.refreshWorkflows(orgId);
-    }
-    if (orgId) {
-      // Standalone submissions live on the org room; the clinic-data
-      // provider also refreshes on socket connect, this covers the
-      // first-render-after-cold-load case.
-      if (!store.standaloneSubmissionsLoaded) {
-        void store.refreshStandaloneSubmissions(orgId);
-      }
-    }
-  }, [locationId, orgId]);
+  // Standalone submissions live on the org room; the clinic-data provider
+  // also refreshes them on socket connect — the ensure hook covers the
+  // first-render-after-cold-load case.
+  useEnsureSlices(["readiness", "rooms", "workflows", "standaloneSubmissions"]);
 
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
   const [filters, setFilters] = useState<ReadinessFilters>({
@@ -101,20 +92,20 @@ export function ReadinessShell() {
     statuses: new Set(),
   });
 
-  const now = useMemo(() => new Date(), []);
+  const now = useNow();
 
   const filtered = useMemo(() => {
     return appointments.filter((appt) => {
       if (filters.roomIds.size > 0) {
-        const roomId = rooms.find((r) => r.name === appt.room_name)?.id;
-        if (!roomId || !filters.roomIds.has(roomId)) return false;
+        if (!appt.room_id || !filters.roomIds.has(appt.room_id)) return false;
       }
 
       if (filters.typeIds.size > 0) {
-        const typeId = appointmentTypes.find(
-          (t) => t.name === appt.appointment_type_name
-        )?.id;
-        if (!typeId || !filters.typeIds.has(typeId)) return false;
+        if (
+          !appt.appointment_type_id ||
+          !filters.typeIds.has(appt.appointment_type_id)
+        )
+          return false;
       }
 
       if (filters.statuses.size > 0) {
@@ -124,7 +115,7 @@ export function ReadinessShell() {
 
       return true;
     });
-  }, [appointments, filters, rooms, appointmentTypes]);
+  }, [appointments, filters]);
 
   const hasPreOverdue = useMemo(
     () =>
@@ -316,39 +307,14 @@ export function ReadinessShell() {
   // PMS "Sync now" — shared from context (fetched once). Only shown when the
   // location is sync-active. Hidden for stubbed Gentu / no PMS.
   const pms = usePmsConnection();
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncMsg, setSyncMsg] = useState<string | null>(null);
-
-  const handleSyncNow = useCallback(async () => {
-    if (!locationId) return;
-    setIsSyncing(true);
-    setSyncMsg(null);
-    try {
-      const res = await fetch("/api/pms/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ locationId }),
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        ok?: boolean;
-        appointmentsUpserted?: number;
-        sessionsScheduled?: number;
-        error?: string;
-      };
-      if (res.ok && data.ok) {
-        setSyncMsg(
-          `Synced — ${data.sessionsScheduled ?? 0} new session(s), ${data.appointmentsUpserted ?? 0} appointment(s) updated.`
-        );
-        await refreshReadiness(locationId);
-      } else {
-        setSyncMsg(data.error ?? "Sync failed.");
-      }
-    } catch {
-      setSyncMsg("Couldn't reach the server.");
-    } finally {
-      setIsSyncing(false);
-    }
+  const handleSynced = useCallback(async () => {
+    if (locationId) await refreshReadiness(locationId);
   }, [locationId, refreshReadiness]);
+  const {
+    isSyncing,
+    syncMsg,
+    syncNow: handleSyncNow,
+  } = usePmsSync({ locationId, onSynced: handleSynced });
 
   const handlePatientDetail = useCallback(
     (
@@ -460,16 +426,11 @@ export function ReadinessShell() {
           )}
           {pms.syncActive && (
             <>
-              <Button
-                variant="secondary"
-                size="sm"
+              <SyncButton
+                isSyncing={isSyncing}
                 onClick={handleSyncNow}
-                disabled={isSyncing}
                 title={`Pull appointments from ${pms.providerLabel ?? "PMS"}`}
-              >
-                <RefreshIcon spinning={isSyncing} />
-                {isSyncing ? "Syncing…" : "Sync now"}
-              </Button>
+              />
               <div className="w-px h-5 bg-gray-200" />
             </>
           )}
@@ -589,61 +550,39 @@ export function ReadinessShell() {
 
       {/* Task resolution dialog */}
       {taskResolving && (
-        <>
-          <div
-            className="fixed inset-0 bg-black/20 z-50"
-            onClick={() => setTaskResolving(null)}
-          />
-          <div className="fixed inset-0 z-50 flex items-center justify-center">
-            <div className="bg-white rounded-xl shadow-xl border border-gray-200 w-[400px] p-5">
-              <h3 className="text-sm font-semibold text-gray-800 mb-1">
-                Resolve: {taskResolving.taskTitle}
-              </h3>
-              <p className="text-xs text-gray-500 mb-3">
-                What did you do? (optional)
-              </p>
-              <textarea
-                value={taskNote}
-                onChange={(e) => setTaskNote(e.target.value)}
-                rows={3}
-                placeholder="Add a note..."
-                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500 resize-none mb-3"
-                autoFocus
-              />
-              <div className="flex gap-2 justify-end">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setTaskResolving(null)}
-                >
-                  Cancel
-                </Button>
-                <Button size="sm" onClick={handleTaskResolve}>
-                  Confirm
-                </Button>
-              </div>
+        <Modal
+          open
+          onClose={() => setTaskResolving(null)}
+          aria-label={`Resolve: ${taskResolving.taskTitle}`}
+          panelClassName="w-[400px] rounded-xl border border-gray-200 bg-white p-5 shadow-xl"
+        >
+            <h3 className="text-sm font-semibold text-gray-800 mb-1">
+              Resolve: {taskResolving.taskTitle}
+            </h3>
+            <p className="text-xs text-gray-500 mb-3">
+              What did you do? (optional)
+            </p>
+            <Textarea className="mb-3"
+              value={taskNote}
+              onChange={(e) => setTaskNote(e.target.value)}
+              rows={3}
+              placeholder="Add a note..."
+              autoFocus
+            />
+            <div className="flex gap-2 justify-end">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setTaskResolving(null)}
+              >
+                Cancel
+              </Button>
+              <Button size="sm" onClick={handleTaskResolve}>
+                Confirm
+              </Button>
             </div>
-          </div>
-        </>
+        </Modal>
       )}
     </div>
-  );
-}
-
-function RefreshIcon({ spinning }: { spinning?: boolean }) {
-  return (
-    <svg
-      className={`h-3.5 w-3.5 ${spinning ? "animate-spin" : ""}`}
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={2}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-      />
-    </svg>
   );
 }

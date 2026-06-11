@@ -7,36 +7,16 @@ import {
   sessionParticipants,
   payments as paymentsT,
   appointmentActions,
-  appointmentWorkflowRuns,
 } from "@/lib/db/schema";
-import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { getSmsProvider } from "@/lib/sms";
+import { getBaseUrl } from "@/lib/utils/url";
+import { maybeCompleteWorkflowRuns } from "@/lib/workflows/run-completion";
 import {
   broadcastSessionChange,
   broadcastSessionStatus,
   broadcastReadinessChange,
 } from "@/lib/realtime/broadcast";
-
-/** Call a late patient — logs to console for prototype. */
-export async function callPatient(sessionId: string) {
-  const [session] = await db
-    .select({ id: sessionsT.id, appointment_id: sessionsT.appointmentId })
-    .from(sessionsT)
-    .where(eq(sessionsT.id, sessionId));
-
-  if (!session) return { success: false, error: "Session not found" };
-
-  let phone: string | null = null;
-  if (session.appointment_id) {
-    const [appt] = await db
-      .select({ phone_number: appointmentsT.phoneNumber })
-      .from(appointmentsT)
-      .where(eq(appointmentsT.id, session.appointment_id));
-    phone = appt?.phone_number ?? null;
-  }
-
-  return { success: true, phone };
-}
 
 /** Send a nudge SMS to an upcoming patient who hasn't responded. */
 export async function nudgePatient(sessionId: string) {
@@ -62,8 +42,7 @@ export async function nudgePatient(sessionId: string) {
 
   // Send nudge SMS via provider
   if (phone && session.entry_token) {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-    const entryLink = `${appUrl}/entry/${session.entry_token}`;
+    const entryLink = `${getBaseUrl()}/entry/${session.entry_token}`;
     const sms = getSmsProvider();
     await sms.sendNotification(
       phone,
@@ -322,25 +301,7 @@ export async function resolveTask(
     .from(appointmentActions)
     .where(eq(appointmentActions.id, actionId));
 
-  if (action?.workflow_run_id) {
-    const terminalStatuses: Array<typeof appointmentActions.status.enumValues[number]> = ["completed", "failed", "cancelled", "skipped", "dropped"];
-    const remaining = await db
-      .select({ id: appointmentActions.id })
-      .from(appointmentActions)
-      .where(
-        and(
-          eq(appointmentActions.workflowRunId, action.workflow_run_id),
-          notInArray(appointmentActions.status, terminalStatuses)
-        )
-      );
-
-    if (remaining.length === 0) {
-      await db
-        .update(appointmentWorkflowRuns)
-        .set({ status: "complete", completedAt: now })
-        .where(eq(appointmentWorkflowRuns.id, action.workflow_run_id));
-    }
-  }
+  await maybeCompleteWorkflowRuns([action?.workflow_run_id]);
 
   // Notify the readiness dashboard at this appointment's location.
   if (action?.appointment_id) {
@@ -386,25 +347,7 @@ export async function cancelAction(
     .from(appointmentActions)
     .where(eq(appointmentActions.id, actionId));
 
-  if (action?.workflow_run_id) {
-    const terminalStatuses: Array<typeof appointmentActions.status.enumValues[number]> = ["completed", "failed", "cancelled", "skipped", "dropped"];
-    const remaining = await db
-      .select({ id: appointmentActions.id })
-      .from(appointmentActions)
-      .where(
-        and(
-          eq(appointmentActions.workflowRunId, action.workflow_run_id),
-          notInArray(appointmentActions.status, terminalStatuses)
-        )
-      );
-
-    if (remaining.length === 0) {
-      await db
-        .update(appointmentWorkflowRuns)
-        .set({ status: "complete", completedAt: new Date().toISOString() })
-        .where(eq(appointmentWorkflowRuns.id, action.workflow_run_id));
-    }
-  }
+  await maybeCompleteWorkflowRuns([action?.workflow_run_id]);
 
   return { success: true };
 }

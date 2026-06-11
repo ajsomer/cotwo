@@ -4,7 +4,8 @@ import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { ActionTypeIcon } from "@/components/clinic/shared/action-type-icon";
 import type { ActionType } from "@/lib/workflows/types";
-import type { EnrichedSession } from "@/lib/supabase/types";
+import type { EnrichedSession } from "@/lib/types/domain";
+import { formatDayMonthTime } from "@/lib/runsheet/format";
 import type {
   ReadinessAppointment,
   WorkflowAction,
@@ -94,12 +95,7 @@ export function WorkflowActionRow({
           </Badge>
           {action.fired_at && (
             <span className="text-[10px] text-gray-400">
-              {new Date(action.fired_at).toLocaleString("en-AU", {
-                day: "numeric",
-                month: "short",
-                hour: "numeric",
-                minute: "2-digit",
-              })}
+              {formatDayMonthTime(action.fired_at)}
             </span>
           )}
         </div>

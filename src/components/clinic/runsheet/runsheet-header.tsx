@@ -2,7 +2,8 @@
 
 import { Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { RunsheetSummary } from "@/lib/supabase/types";
+import { SyncButton } from "@/components/clinic/shared/sync-button";
+import type { RunsheetSummary } from "@/lib/types/domain";
 
 interface RunsheetHeaderProps {
   summary: RunsheetSummary;
@@ -97,16 +98,11 @@ export function RunsheetHeader({
           </Button>
         )}
         {showSync && (
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={onSync}
-            disabled={isSyncing}
+          <SyncButton
+            isSyncing={isSyncing}
+            onClick={() => onSync?.()}
             title={`Pull sessions from ${syncLabel}`}
-          >
-            <RefreshIcon spinning={isSyncing} />
-            {isSyncing ? "Syncing…" : "Sync now"}
-          </Button>
+          />
         )}
         {showAddButton && (hasBulkActions || showSync) && (
           <div className="w-px h-5 bg-gray-200" />
@@ -116,23 +112,5 @@ export function RunsheetHeader({
         )}
       </div>
     </div>
-  );
-}
-
-function RefreshIcon({ spinning }: { spinning?: boolean }) {
-  return (
-    <svg
-      className={`h-3.5 w-3.5 ${spinning ? "animate-spin" : ""}`}
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={2}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-      />
-    </svg>
   );
 }

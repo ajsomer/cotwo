@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { listSyncActiveConnections } from "@/lib/pms/connection";
 import { pullConnection } from "@/lib/pms/sync/pull";
+import { unauthenticatedResponse } from "@/lib/api/route-helpers";
 
 /**
  * PMS read-sync cron. Plan §5: poll every 2-3 minutes (no webhooks).
@@ -10,7 +11,7 @@ import { pullConnection } from "@/lib/pms/sync/pull";
 export async function GET(request: Request) {
   const authHeader = request.headers.get("authorization");
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return unauthenticatedResponse();
   }
 
   const connections = await listSyncActiveConnections();

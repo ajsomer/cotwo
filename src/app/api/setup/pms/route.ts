@@ -8,15 +8,15 @@ import {
 } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import {
+  PM_ROLES,
   getAuthenticatedUserId,
   requireStaffLocationAccess,
   resolveDefaultStaffOrg,
 } from "@/lib/auth/staff-access";
-
-const PM_ROLES = new Set(["clinic_owner", "practice_manager"]);
 import { seedDefaultWorkflows } from "@/lib/workflows/seed-defaults";
 import { newPatientIntakeSchema, defaultFormSchema } from "@/lib/survey/identity-page";
 import { NextResponse, type NextRequest } from "next/server";
+import { unauthenticatedResponse } from "@/lib/api/route-helpers";
 
 const GENTU_FORMS = [
   { name: "New Patient Intake", description: "Comprehensive new patient intake form" },
@@ -39,7 +39,7 @@ const GENTU_CLINICIANS = [
 
 export async function POST(request: NextRequest) {
   const userId = await getAuthenticatedUserId();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!userId) return unauthenticatedResponse();
 
   const body = await request.json();
   const { provider } = body as { provider: string | null };

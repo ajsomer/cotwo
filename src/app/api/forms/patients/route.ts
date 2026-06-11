@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { patients as patientsT, patientPhoneNumbers } from "@/lib/db/schema";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { requireStaffOrgAccess } from "@/lib/auth/staff-access";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 // GET /api/forms/patients?org_id=xxx
 export async function GET(request: NextRequest) {
@@ -14,10 +15,7 @@ export async function GET(request: NextRequest) {
 
   const access = await requireStaffOrgAccess(orgId);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Not found" },
-      { status: access.status }
-    );
+    return denyResponse(access);
   }
 
   try {

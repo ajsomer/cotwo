@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import type { RunsheetSummary } from "@/lib/supabase/types";
+import type { RunsheetSummary } from "@/lib/types/domain";
 
 /** Alternates the browser tab title when attention states exist. */
 export function useTabNotifications(summary: RunsheetSummary) {

@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useCallback } from 'react';
-import { EntryContext, PatientContact } from '@/lib/supabase/types';
+import { useState, useCallback, useEffect } from 'react';
+import { postJson } from '@/lib/api-client';
+import { EntryContext, PatientContact } from '@/lib/types/domain';
 import { PrimerScreen } from './primer-screen';
 import { PhoneVerification } from './phone-verification';
 import { IdentityConfirmation } from './identity-confirmation';
@@ -11,6 +12,7 @@ import { PersistentHeader } from './persistent-header';
 import { EmbeddedIntakeJourney } from './embedded-intake-journey';
 import type { OutstandingJourney } from '@/lib/intake/outstanding';
 import { useRouter } from 'next/navigation';
+import { Spinner } from '@/components/ui/spinner';
 
 type FlowStep =
   | 'primer'
@@ -82,37 +84,40 @@ export function EntryFlow({ context, token }: EntryFlowProps) {
     }
   }, [context.payments_enabled]);
 
+  // Defensive: if we land on the intake step without a journey to show (or
+  // without a confirmed patient), advance instead of rendering nothing. In an
+  // effect — not the render body — so we never set state during render.
+  const intakeStepInvalid =
+    step === 'outstanding_intake' &&
+    (!outstandingJourneys[outstandingIndex] || !confirmedPatient);
+  useEffect(() => {
+    // One-shot defensive correction, not a state-sync cascade: it fires only
+    // when the flow lands in an impossible state and moves it forward once.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (intakeStepInvalid) advancePastIntake();
+  }, [intakeStepInvalid, advancePastIntake]);
+
   const checkOutstandingIntake = useCallback(
     async (patient: PatientContact) => {
-      try {
-        const res = await fetch('/api/patient/outstanding-intake', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token,
-            patientId: patient.id,
-          }),
-        });
-        if (!res.ok) {
-          // Fail-open: a check failure shouldn't strand the patient. Log and
-          // continue. Better to let them through than refuse care over a
-          // dashboard error.
-          console.error('[entry-flow] outstanding-intake check failed:', res.status);
-          advancePastIntake();
-          return;
-        }
-        const data = (await res.json()) as { journeys: OutstandingJourney[] };
-        if (data.journeys.length === 0) {
-          advancePastIntake();
-          return;
-        }
-        setOutstandingJourneys(data.journeys);
-        setOutstandingIndex(0);
-        setStep('outstanding_intake');
-      } catch (err) {
-        console.error('[entry-flow] outstanding-intake check error:', err);
+      const result = await postJson<{ journeys: OutstandingJourney[] }>(
+        '/api/patient/outstanding-intake',
+        { token, patientId: patient.id }
+      );
+      if (!result.ok) {
+        // Fail-open: a check failure shouldn't strand the patient. Log and
+        // continue. Better to let them through than refuse care over a
+        // dashboard error.
+        console.error('[entry-flow] outstanding-intake check failed:', result.error);
         advancePastIntake();
+        return;
       }
+      if (result.data.journeys.length === 0) {
+        advancePastIntake();
+        return;
+      }
+      setOutstandingJourneys(result.data.journeys);
+      setOutstandingIndex(0);
+      setStep('outstanding_intake');
     },
     [token, advancePastIntake]
   );
@@ -136,35 +141,28 @@ export function EntryFlow({ context, token }: EntryFlowProps) {
       return;
     }
 
-    try {
-      const res = await fetch('/api/patient/outstanding-intake', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token,
-          patientId: confirmedPatient.id,
-        }),
-      });
-      const data = res.ok
-        ? ((await res.json()) as { journeys: OutstandingJourney[] })
-        : { journeys: [] };
-
-      if (data.journeys.length === 0) {
-        setOutstandingJourneys([]);
-        setOutstandingIndex(0);
-        advancePastIntake();
-        return;
-      }
-
-      setOutstandingJourneys(data.journeys);
-      setOutstandingIndex(0);
-      // Force a remount of the embedded journey by toggling step.
-      setStep('checking_intake');
-      setTimeout(() => setStep('outstanding_intake'), 0);
-    } catch (err) {
-      console.error('[entry-flow] post-completion re-check failed:', err);
-      advancePastIntake();
+    const result = await postJson<{ journeys: OutstandingJourney[] }>(
+      '/api/patient/outstanding-intake',
+      { token, patientId: confirmedPatient.id }
+    );
+    // Fail-open: a re-check failure shouldn't strand the patient.
+    if (!result.ok) {
+      console.error('[entry-flow] post-completion re-check failed:', result.error);
     }
+    const journeys = result.ok ? result.data.journeys : [];
+
+    if (journeys.length === 0) {
+      setOutstandingJourneys([]);
+      setOutstandingIndex(0);
+      advancePastIntake();
+      return;
+    }
+
+    setOutstandingJourneys(journeys);
+    setOutstandingIndex(0);
+    // Force a remount of the embedded journey by toggling step.
+    setStep('checking_intake');
+    setTimeout(() => setStep('outstanding_intake'), 0);
   }, [confirmedPatient, token, advancePastIntake]);
 
   const handleCardComplete = useCallback(() => {
@@ -176,37 +174,30 @@ export function EntryFlow({ context, token }: EntryFlowProps) {
       setStep('arriving');
       setError(null);
 
-      try {
-        // The server derives session/room/location from the token; we only
-        // pass patient_id (validated against the token's org) and flags.
-        const body: Record<string, unknown> = {
-          token,
-          patient_id: patientId,
-          device_tested: passed,
-          modality: 'telehealth',
-        };
+      // The server derives session/room/location from the token; we only
+      // pass patient_id (validated against the token's org) and flags.
+      const body: Record<string, unknown> = {
+        token,
+        patient_id: patientId,
+        device_tested: passed,
+        modality: 'telehealth',
+      };
 
-        const res = await fetch('/api/patient/arrive', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
+      const result = await postJson<{ entry_token?: string }>(
+        '/api/patient/arrive',
+        body,
+        'Failed to join'
+      );
 
-        const data = await res.json();
-
-        if (!res.ok) {
-          setError(data.error || 'Failed to join');
-          setStep('device_test');
-          return;
-        }
-
-        // Navigate to waiting room
-        const waitingToken = data.entry_token || context.session?.entry_token || token;
-        router.push(`/waiting/${waitingToken}`);
-      } catch {
-        setError('Something went wrong. Please try again.');
+      if (!result.ok) {
+        setError(result.error);
         setStep('device_test');
+        return;
       }
+
+      // Navigate to waiting room
+      const waitingToken = result.data?.entry_token || context.session?.entry_token || token;
+      router.push(`/waiting/${waitingToken}`);
     },
     [sessionId, patientId, context, token, router]
   );
@@ -292,7 +283,7 @@ export function EntryFlow({ context, token }: EntryFlowProps) {
             roomName={context.room?.name || null}
           />
           <div className="flex h-32 w-full items-center justify-center">
-            <div className="h-6 w-6 animate-spin rounded-full border-2 border-teal-500 border-t-transparent" />
+            <Spinner />
           </div>
           <p className="text-sm text-gray-500">Checking your details...</p>
         </div>
@@ -301,8 +292,7 @@ export function EntryFlow({ context, token }: EntryFlowProps) {
     case 'outstanding_intake': {
       const current = outstandingJourneys[outstandingIndex];
       if (!current || !confirmedPatient) {
-        // Defensive: shouldn't happen, but advance rather than render nothing.
-        advancePastIntake();
+        // Defensive: shouldn't happen — the effect above advances the step.
         return null;
       }
       return (
@@ -325,7 +315,6 @@ export function EntryFlow({ context, token }: EntryFlowProps) {
           totalSteps={totalSteps}
           patientId={patientId!}
           token={token}
-          stripeAccountId={context.location.stripe_account_id}
           onComplete={handleCardComplete}
         />
       );
@@ -358,7 +347,7 @@ export function EntryFlow({ context, token }: EntryFlowProps) {
             roomName={context.room?.name || null}
           />
           <div className="flex h-32 w-full items-center justify-center">
-            <div className="h-6 w-6 animate-spin rounded-full border-2 border-teal-500 border-t-transparent" />
+            <Spinner />
           </div>
           <p className="text-sm text-gray-500">Joining waiting room...</p>
         </div>

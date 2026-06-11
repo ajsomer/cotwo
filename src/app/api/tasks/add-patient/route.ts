@@ -9,8 +9,10 @@ import {
 } from "@/lib/db/schema";
 import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { scheduleWorkflowForAppointment } from "@/lib/workflows/scanner";
+import { createPatientWithPhone } from "@/lib/patient/create-patient";
 import { requireStaffLocationAccess } from "@/lib/auth/staff-access";
 import { normalisePhone } from "@/lib/phone/normalise";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 /**
  * POST /api/tasks/add-patient
@@ -62,10 +64,7 @@ export async function POST(request: NextRequest) {
 
     const access = await requireStaffLocationAccess(location_id);
     if (!access.ok) {
-      return NextResponse.json(
-        { error: access.status === 401 ? "Unauthorized" : "Forbidden" },
-        { status: access.status },
-      );
+      return denyResponse(access);
     }
 
     // Check for existing patient by phone + DOB + org
@@ -104,38 +103,22 @@ export async function POST(request: NextRequest) {
       // Use existing patient
       patientId = matchingPatient.patient_id;
     } else {
-      // Create new patient
-      let newPatient: { id: string } | undefined;
-      try {
-        [newPatient] = await db
-          .insert(patientsT)
-          .values({
-            orgId: org_id,
-            firstName: first_name,
-            lastName: last_name,
-            dateOfBirth: dob,
-          })
-          .returning({ id: patientsT.id });
-      } catch (patientError) {
-        console.error("[add-patient] Failed to create patient:", patientError);
-      }
-
-      if (!newPatient) {
+      // Create new patient + linked phone. Staff-entered number → not
+      // verified. A phone-link failure is non-fatal here (logged in the lib);
+      // the appointment can still be created.
+      const created = await createPatientWithPhone({
+        orgId: org_id,
+        firstName: first_name,
+        lastName: last_name,
+        dateOfBirth: dob,
+        phoneNumber: normalised,
+        phoneVerified: false,
+        logTag: "add-patient",
+      });
+      if (!created.ok) {
         return NextResponse.json({ error: "Failed to create patient" }, { status: 500 });
       }
-
-      patientId = newPatient.id;
-
-      // Create phone number record
-      try {
-        await db.insert(patientPhoneNumbers).values({
-          patientId,
-          phoneNumber: normalised,
-          isPrimary: true,
-        });
-      } catch (phoneError) {
-        console.error("[add-patient] Failed to create phone:", phoneError);
-      }
+      patientId = created.patientId;
     }
 
     // Create appointment

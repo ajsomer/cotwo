@@ -9,8 +9,9 @@ import {
   users as usersT,
 } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
-import { EntryContext } from '@/lib/supabase/types';
-import type { OrgTier, RoomType } from '@/lib/supabase/custom-types';
+import { EntryContext } from '@/lib/types/domain';
+import type { OrgTier, RoomType } from '@/lib/types/domain';
+import { parseJsonBody } from '@/lib/api/route-helpers';
 
 /**
  * POST /api/patient/resolve
@@ -18,7 +19,9 @@ import type { OrgTier, RoomType } from '@/lib/supabase/custom-types';
  * Checks sessions.entry_token → rooms.link_token → locations.qr_token in order.
  */
 export async function POST(request: NextRequest) {
-  const { token } = await request.json();
+  const parsed = await parseJsonBody<{ token?: unknown }>(request);
+  if (!parsed.ok) return parsed.response;
+  const { token } = parsed.body;
 
   if (!token || typeof token !== 'string') {
     return NextResponse.json({ error: 'Token is required' }, { status: 400 });

@@ -6,19 +6,152 @@ import {
   patients as patientsT,
   patientPhoneNumbers,
   organisations as organisationsT,
+  locations as locationsT,
   users as usersT,
   sessions as sessionsT,
-  appointmentWorkflowRuns,
 } from "@/lib/db/schema";
-import { and, eq, inArray, lte, notInArray } from "drizzle-orm";
+import { and, eq, inArray, lte } from "drizzle-orm";
 import type { PreconditionConfig, ActionType } from "./types";
 import { evaluatePrecondition } from "./preconditions";
 import { executeHandler } from "./handlers";
+import {
+  buildHandlerContext,
+  resolveActionPhone,
+  type ClaimedActionData,
+  type ActionBlockData,
+  type AppointmentData,
+  type ContextLookups,
+} from "./context";
+import { maybeCompleteWorkflowRuns } from "./run-completion";
+
+const FALLBACK_TIMEZONE = "Australia/Sydney";
 
 interface ScanResult {
   fired: number;
   skipped: number;
   failed: number;
+}
+
+type ActionOutcome =
+  | { kind: "failed"; error: string }
+  | { kind: "skipped" }
+  | {
+      kind: "succeeded";
+      status: string;
+      resultData: Record<string, unknown> | null;
+    };
+
+/** The success/failure write-back, shared by both execution paths. */
+async function markActionOutcome(
+  actionId: string,
+  outcome: ActionOutcome
+): Promise<void> {
+  const firedAt = new Date().toISOString();
+  if (outcome.kind === "failed") {
+    await db
+      .update(appointmentActions)
+      .set({ status: "failed", firedAt, errorMessage: outcome.error })
+      .where(eq(appointmentActions.id, actionId));
+  } else if (outcome.kind === "skipped") {
+    await db
+      .update(appointmentActions)
+      .set({ status: "skipped", firedAt })
+      .where(eq(appointmentActions.id, actionId));
+  } else {
+    await db
+      .update(appointmentActions)
+      .set({
+        // Handler statuses are a superset of the DB enum (e.g. "fired");
+        // write the value as-is, matching the prior Supabase behaviour.
+        status:
+          outcome.status as (typeof appointmentActions.status.enumValues)[number],
+        firedAt,
+        result: outcome.resultData ?? null,
+      })
+      .where(eq(appointmentActions.id, actionId));
+  }
+}
+
+interface BlockRow extends ActionBlockData {
+  precondition?: unknown;
+}
+
+/**
+ * Validate → (optionally) evaluate precondition → execute handler → write
+ * outcome back. Shared by both execution paths; `evaluatePreconditions` is
+ * explicit at the two call sites because the difference is intentional:
+ * the batch scan honours preconditions, the manual fire-now path skips them
+ * (the caller has already decided this should fire).
+ */
+async function executeClaimedAction(
+  action: ClaimedActionData,
+  block: BlockRow,
+  appt: AppointmentData,
+  lookups: ContextLookups,
+  opts: { evaluatePreconditions: boolean; suppressNotification?: boolean }
+): Promise<ActionOutcome> {
+  const patientId = appt.patient_id;
+  if (!patientId) {
+    const outcome: ActionOutcome = {
+      kind: "failed",
+      error: "No patient linked to appointment",
+    };
+    await markActionOutcome(action.id, outcome);
+    return outcome;
+  }
+
+  // Task actions don't need a phone number (staff-facing, no SMS sent).
+  const isTaskAction = block.action_type === "task";
+  if (!isTaskAction && !resolveActionPhone(lookups.primaryPhone, appt)) {
+    const outcome: ActionOutcome = {
+      kind: "failed",
+      error: "No phone number on file for patient",
+    };
+    await markActionOutcome(action.id, outcome);
+    return outcome;
+  }
+
+  if (opts.evaluatePreconditions) {
+    const shouldFire = await evaluatePrecondition(
+      block.precondition as PreconditionConfig,
+      action.appointment_id,
+      patientId
+    );
+    if (!shouldFire) {
+      const outcome: ActionOutcome = { kind: "skipped" };
+      await markActionOutcome(action.id, outcome);
+      return outcome;
+    }
+  }
+
+  const handlerResult = await executeHandler(
+    block.action_type as ActionType,
+    buildHandlerContext({
+      action,
+      block,
+      appt,
+      patientId,
+      lookups,
+      suppressNotification: opts.suppressNotification,
+    })
+  );
+
+  if (handlerResult.status === "failed") {
+    const outcome: ActionOutcome = {
+      kind: "failed",
+      error: handlerResult.error,
+    };
+    await markActionOutcome(action.id, outcome);
+    return outcome;
+  }
+
+  const outcome: ActionOutcome = {
+    kind: "succeeded",
+    status: handlerResult.status,
+    resultData: (handlerResult.resultData as Record<string, unknown>) ?? null,
+  };
+  await markActionOutcome(action.id, outcome);
+  return outcome;
 }
 
 /**
@@ -112,6 +245,7 @@ export async function executeScheduledActions(
       clinician_id: appointmentsT.clinicianId,
       org_id: appointmentsT.orgId,
       phone_number: appointmentsT.phoneNumber,
+      location_id: appointmentsT.locationId,
     })
     .from(appointmentsT)
     .where(inArray(appointmentsT.id, appointmentIds));
@@ -123,7 +257,7 @@ export async function executeScheduledActions(
     appointments.map((a) => a.patient_id).filter((x): x is string => !!x)
   )];
 
-  const patientMap = new Map<string, { first_name: string; phone_number: string }>();
+  const patientMap = new Map<string, { first_name: string; phone_number: string | null }>();
   if (patientIds.length > 0) {
     const patients = await db
       .select({ id: patientsT.id, first_name: patientsT.firstName })
@@ -145,7 +279,7 @@ export async function executeScheduledActions(
     for (const p of patients) {
       patientMap.set(p.id, {
         first_name: p.first_name,
-        phone_number: phoneMap.get(p.id) ?? "",
+        phone_number: phoneMap.get(p.id) ?? null,
       });
     }
   }
@@ -180,6 +314,21 @@ export async function executeScheduledActions(
     }
   }
 
+  // Fetch location timezones for merge-field time formatting
+  const locationIds = [...new Set(
+    appointments.map((a) => a.location_id).filter((x): x is string => !!x)
+  )];
+  const timezoneMap = new Map<string, string>();
+  if (locationIds.length > 0) {
+    const locationRows = await db
+      .select({ id: locationsT.id, timezone: locationsT.timezone })
+      .from(locationsT)
+      .where(inArray(locationsT.id, locationIds));
+    for (const l of locationRows) {
+      timezoneMap.set(l.id, l.timezone);
+    }
+  }
+
   // Fetch session data for post-appointment actions
   const sessionIds = [...new Set(
     actions.map((a) => a.session_id).filter((x): x is string => !!x)
@@ -204,157 +353,51 @@ export async function executeScheduledActions(
       console.error(
         `[WORKFLOW ENGINE] Missing block or appointment for action ${action.id}. Marking failed.`
       );
-      await db
-        .update(appointmentActions)
-        .set({
-          status: "failed",
-          firedAt: new Date().toISOString(),
-          errorMessage: "Missing action block or appointment data",
-        })
-        .where(eq(appointmentActions.id, action.id));
+      await markActionOutcome(action.id, {
+        kind: "failed",
+        error: "Missing action block or appointment data",
+      });
       result.failed++;
       continue;
     }
 
-    const patientId = appt.patient_id;
-    if (!patientId) {
-      await db
-        .update(appointmentActions)
-        .set({
-          status: "failed",
-          firedAt: new Date().toISOString(),
-          errorMessage: "No patient linked to appointment",
-        })
-        .where(eq(appointmentActions.id, action.id));
-      result.failed++;
-      continue;
-    }
+    const patient = appt.patient_id ? patientMap.get(appt.patient_id) : null;
 
-    const patient = patientMap.get(patientId);
-    const isTaskAction = block.action_type === "task";
-
-    // Task actions don't need a phone number (staff-facing, no SMS sent)
-    if (!isTaskAction && !patient?.phone_number) {
-      await db
-        .update(appointmentActions)
-        .set({
-          status: "failed",
-          firedAt: new Date().toISOString(),
-          errorMessage: "No phone number on file for patient",
-        })
-        .where(eq(appointmentActions.id, action.id));
-      result.failed++;
-      continue;
-    }
-
-    // 2a: Evaluate precondition
-    const precondition = block.precondition as PreconditionConfig;
-    const shouldFire = await evaluatePrecondition(
-      precondition,
-      action.appointment_id,
-      patientId
-    );
-
-    if (!shouldFire) {
-      await db
-        .update(appointmentActions)
-        .set({
-          status: "skipped",
-          firedAt: new Date().toISOString(),
-        })
-        .where(eq(appointmentActions.id, action.id));
-      result.skipped++;
-      continue;
-    }
-
-    // 2b: Execute handler
-    // For post-appointment actions, read config from the action's snapshot
-    // (config snapshot discipline). For pre-appointment, read from the block.
-    const actionConfig = action.session_id
-      ? ((action as Record<string, unknown>).config as Record<string, unknown>) ?? (block.config as Record<string, unknown>) ?? {}
-      : (block.config as Record<string, unknown>) ?? {};
-
-    const sessionData = action.session_id
-      ? sessionMap.get(action.session_id)
-      : null;
-
-    const handlerResult = await executeHandler(
-      block.action_type as ActionType,
+    const outcome = await executeClaimedAction(
+      action,
+      block,
+      appt,
       {
-        actionId: action.id,
-        appointmentId: action.appointment_id,
-        patientId,
         patientFirstName: patient?.first_name ?? "",
-        phoneNumber: patient?.phone_number ?? "",
-        scheduledAt: appt.scheduled_at ?? null,
+        primaryPhone: patient?.phone_number ?? null,
         clinicName: orgNameMap.get(appt.org_id) ?? "the clinic",
         clinicianName: appt.clinician_id
           ? clinicianNameMap.get(appt.clinician_id) ?? null
           : null,
-        formId: (action as Record<string, unknown>).form_id as string | null ?? block.form_id,
-        config: actionConfig,
-        parentActionBlockId: block.parent_action_block_id ?? null,
-        sessionId: action.session_id ?? null,
-        sessionEndedAt: sessionData?.session_ended_at ?? null,
-      }
+        timezone: appt.location_id
+          ? timezoneMap.get(appt.location_id) ?? FALLBACK_TIMEZONE
+          : FALLBACK_TIMEZONE,
+        sessionEndedAt: action.session_id
+          ? sessionMap.get(action.session_id)?.session_ended_at ?? null
+          : null,
+      },
+      { evaluatePreconditions: true }
     );
 
-    if (handlerResult.status === "failed") {
+    if (outcome.kind === "failed") {
       console.error(
-        `[WORKFLOW ENGINE] Action ${action.id} (${block.action_type}) failed: ${handlerResult.error}`
+        `[WORKFLOW ENGINE] Action ${action.id} (${block.action_type}) failed: ${outcome.error}`
       );
-      await db
-        .update(appointmentActions)
-        .set({
-          status: "failed",
-          firedAt: new Date().toISOString(),
-          errorMessage: handlerResult.error,
-        })
-        .where(eq(appointmentActions.id, action.id));
       result.failed++;
+    } else if (outcome.kind === "skipped") {
+      result.skipped++;
     } else {
-      await db
-        .update(appointmentActions)
-        .set({
-          // Handler statuses are a superset of the DB enum (e.g. "fired");
-          // write the value as-is, matching the prior Supabase behaviour.
-          status: handlerResult.status as typeof appointmentActions.status.enumValues[number],
-          firedAt: new Date().toISOString(),
-          result: (handlerResult.resultData as Record<string, unknown>) ?? null,
-        })
-        .where(eq(appointmentActions.id, action.id));
       result.fired++;
     }
   }
 
-  // Step 3: Check workflow run completion
-  // Collect unique workflow run IDs from processed actions
-  const runIds = [...new Set(
-    actions.map((a) => a.workflow_run_id).filter((x): x is string => !!x)
-  )];
-
-  for (const runId of runIds) {
-    const terminalStatuses: Array<typeof appointmentActions.status.enumValues[number]> = ["completed", "failed", "cancelled", "skipped", "dropped"];
-    const remaining = await db
-      .select({ id: appointmentActions.id })
-      .from(appointmentActions)
-      .where(
-        and(
-          eq(appointmentActions.workflowRunId, runId),
-          notInArray(appointmentActions.status, terminalStatuses)
-        )
-      );
-
-    if (remaining.length === 0) {
-      await db
-        .update(appointmentWorkflowRuns)
-        .set({
-          status: "complete",
-          completedAt: new Date().toISOString(),
-        })
-        .where(eq(appointmentWorkflowRuns.id, runId));
-    }
-  }
+  // Step 3: Check workflow run completion (one grouped query for the batch)
+  await maybeCompleteWorkflowRuns(actions.map((a) => a.workflow_run_id));
 
   return result;
 }
@@ -369,9 +412,9 @@ export async function executeScheduledActions(
  * Returns the handler's result (same shape as `executeHandler`) so the
  * caller can pull `session_id` / `entry_token` out for logging.
  *
- * Claims the action atomically (scheduled | firing → firing) so concurrent
- * scans don't double-fire. Skips precondition evaluation — the caller has
- * already decided this should fire now.
+ * Claims the action atomically (scheduled → firing) so concurrent scans
+ * don't double-fire. Skips precondition evaluation — the caller has already
+ * decided this should fire now (explicit `evaluatePreconditions: false`).
  */
 export async function fireActionNow(
   actionId: string,
@@ -400,115 +443,105 @@ export async function fireActionNow(
     return { status: "skipped", reason: "action not in scheduled state" };
   }
 
-  const [block] = await db
-    .select({
-      id: workflowActionBlocks.id,
-      action_type: workflowActionBlocks.actionType,
-      config: workflowActionBlocks.config,
-      form_id: workflowActionBlocks.formId,
-      parent_action_block_id: workflowActionBlocks.parentActionBlockId,
-    })
-    .from(workflowActionBlocks)
-    .where(eq(workflowActionBlocks.id, claimed.action_block_id));
-  if (!block) {
-    await db
-      .update(appointmentActions)
-      .set({ status: "failed", firedAt: new Date().toISOString(), errorMessage: "missing block" })
-      .where(eq(appointmentActions.id, actionId));
-    return { status: "failed", error: "missing block" };
-  }
-
-  const [appt] = await db
-    .select({
-      id: appointmentsT.id,
-      patient_id: appointmentsT.patientId,
-      scheduled_at: appointmentsT.scheduledAt,
-      clinician_id: appointmentsT.clinicianId,
-      org_id: appointmentsT.orgId,
-      phone_number: appointmentsT.phoneNumber,
-    })
-    .from(appointmentsT)
-    .where(eq(appointmentsT.id, claimed.appointment_id));
-  if (!appt || !appt.patient_id) {
-    await db
-      .update(appointmentActions)
-      .set({ status: "failed", firedAt: new Date().toISOString(), errorMessage: "missing appointment or patient" })
-      .where(eq(appointmentActions.id, actionId));
-    return { status: "failed", error: "missing appointment or patient" };
-  }
-
-  const [patient] = await db
-    .select({ first_name: patientsT.firstName })
-    .from(patientsT)
-    .where(eq(patientsT.id, appt.patient_id));
-  const [phone] = await db
-    .select({ phone_number: patientPhoneNumbers.phoneNumber })
-    .from(patientPhoneNumbers)
-    .where(
-      and(
-        eq(patientPhoneNumbers.patientId, appt.patient_id),
-        eq(patientPhoneNumbers.isPrimary, true)
-      )
-    )
-    .limit(1);
-
-  const org = appt.org_id
-    ? (await db.select({ name: organisationsT.name }).from(organisationsT).where(eq(organisationsT.id, appt.org_id)))[0] ?? null
-    : null;
-  const clinician = appt.clinician_id
-    ? (await db.select({ full_name: usersT.fullName }).from(usersT).where(eq(usersT.id, appt.clinician_id)))[0] ?? null
-    : null;
-
-  const sessionData = claimed.session_id
-    ? (await db.select({ session_ended_at: sessionsT.sessionEndedAt }).from(sessionsT).where(eq(sessionsT.id, claimed.session_id)))[0] ?? null
-    : null;
-
-  const actionConfig = claimed.session_id
-    ? ((claimed.config as Record<string, unknown>) ?? (block.config as Record<string, unknown>) ?? {})
-    : ((block.config as Record<string, unknown>) ?? {});
-
-  const handlerResult = await executeHandler(block.action_type as ActionType, {
-    actionId: claimed.id,
-    appointmentId: claimed.appointment_id,
-    patientId: appt.patient_id,
-    patientFirstName: patient?.first_name ?? "",
-    phoneNumber: phone?.phone_number ?? appt.phone_number ?? "",
-    scheduledAt: appt.scheduled_at ?? null,
-    clinicName: org?.name ?? "the clinic",
-    clinicianName: clinician?.full_name ?? null,
-    formId: (claimed.form_id as string | null) ?? block.form_id,
-    config: actionConfig,
-    parentActionBlockId: block.parent_action_block_id ?? null,
-    sessionId: claimed.session_id ?? null,
-    sessionEndedAt: sessionData?.session_ended_at ?? null,
-    suppressNotification: options.suppressNotification ?? false,
-  });
-
-  if (handlerResult.status === "failed") {
-    await db
-      .update(appointmentActions)
-      .set({
-        status: "failed",
-        firedAt: new Date().toISOString(),
-        errorMessage: handlerResult.error,
+  const [[block], [appt]] = await Promise.all([
+    db
+      .select({
+        id: workflowActionBlocks.id,
+        action_type: workflowActionBlocks.actionType,
+        config: workflowActionBlocks.config,
+        form_id: workflowActionBlocks.formId,
+        parent_action_block_id: workflowActionBlocks.parentActionBlockId,
       })
-      .where(eq(appointmentActions.id, actionId));
-    return { status: "failed", error: handlerResult.error };
+      .from(workflowActionBlocks)
+      .where(eq(workflowActionBlocks.id, claimed.action_block_id)),
+    db
+      .select({
+        id: appointmentsT.id,
+        patient_id: appointmentsT.patientId,
+        scheduled_at: appointmentsT.scheduledAt,
+        clinician_id: appointmentsT.clinicianId,
+        org_id: appointmentsT.orgId,
+        phone_number: appointmentsT.phoneNumber,
+        location_id: appointmentsT.locationId,
+      })
+      .from(appointmentsT)
+      .where(eq(appointmentsT.id, claimed.appointment_id)),
+  ]);
+
+  if (!block || !appt) {
+    const error = "Missing action block or appointment data";
+    await markActionOutcome(actionId, { kind: "failed", error });
+    return { status: "failed", error };
   }
 
-  await db
-    .update(appointmentActions)
-    .set({
-      // Handler statuses are a superset of the DB enum (e.g. "fired"); write
-      // the value as-is, matching the prior Supabase behaviour.
-      status: handlerResult.status as typeof appointmentActions.status.enumValues[number],
-      firedAt: new Date().toISOString(),
-      result: (handlerResult.resultData as Record<string, unknown>) ?? null,
-    })
-    .where(eq(appointmentActions.id, actionId));
+  // The independent per-action lookups, in parallel.
+  const [[patient], [phone], [org], [clinician], [sessionData], [location]] =
+    await Promise.all([
+      appt.patient_id
+        ? db
+            .select({ first_name: patientsT.firstName })
+            .from(patientsT)
+            .where(eq(patientsT.id, appt.patient_id))
+        : Promise.resolve([undefined]),
+      appt.patient_id
+        ? db
+            .select({ phone_number: patientPhoneNumbers.phoneNumber })
+            .from(patientPhoneNumbers)
+            .where(
+              and(
+                eq(patientPhoneNumbers.patientId, appt.patient_id),
+                eq(patientPhoneNumbers.isPrimary, true)
+              )
+            )
+            .limit(1)
+        : Promise.resolve([undefined]),
+      db
+        .select({ name: organisationsT.name })
+        .from(organisationsT)
+        .where(eq(organisationsT.id, appt.org_id)),
+      appt.clinician_id
+        ? db
+            .select({ full_name: usersT.fullName })
+            .from(usersT)
+            .where(eq(usersT.id, appt.clinician_id))
+        : Promise.resolve([undefined]),
+      claimed.session_id
+        ? db
+            .select({ session_ended_at: sessionsT.sessionEndedAt })
+            .from(sessionsT)
+            .where(eq(sessionsT.id, claimed.session_id))
+        : Promise.resolve([undefined]),
+      appt.location_id
+        ? db
+            .select({ timezone: locationsT.timezone })
+            .from(locationsT)
+            .where(eq(locationsT.id, appt.location_id))
+        : Promise.resolve([undefined]),
+    ]);
 
-  return {
-    status: "fired",
-    resultData: (handlerResult.resultData as Record<string, unknown>) ?? null,
-  };
+  const outcome = await executeClaimedAction(
+    claimed,
+    block,
+    appt,
+    {
+      patientFirstName: patient?.first_name ?? "",
+      primaryPhone: phone?.phone_number ?? null,
+      clinicName: org?.name ?? "the clinic",
+      clinicianName: clinician?.full_name ?? null,
+      timezone: location?.timezone ?? FALLBACK_TIMEZONE,
+      sessionEndedAt: sessionData?.session_ended_at ?? null,
+    },
+    {
+      evaluatePreconditions: false,
+      suppressNotification: options.suppressNotification ?? false,
+    }
+  );
+
+  if (outcome.kind === "failed") {
+    return { status: "failed", error: outcome.error };
+  }
+  if (outcome.kind === "skipped") {
+    return { status: "skipped", reason: "precondition not met" };
+  }
+  return { status: "fired", resultData: outcome.resultData };
 }

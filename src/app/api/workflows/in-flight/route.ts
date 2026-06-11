@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { appointmentWorkflowRuns } from "@/lib/db/schema";
 import { and, eq, sql } from "drizzle-orm";
 import { requireStaffCanAccessWorkflowTemplate } from "@/lib/auth/staff-access";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 // GET /api/workflows/in-flight?template_id=xxx
 // Returns count of active appointment_workflow_runs for a given template.
@@ -18,10 +19,7 @@ export async function GET(request: NextRequest) {
 
   const access = await requireStaffCanAccessWorkflowTemplate(templateId);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Not found" },
-      { status: access.status },
-    );
+    return denyResponse(access);
   }
 
   try {

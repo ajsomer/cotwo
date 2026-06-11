@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext } from "react";
-import type { Location } from "@/lib/supabase/types";
+import type { Location } from "@/lib/types/domain";
 
 export interface LocationContextValue {
   selectedLocation: Location | null;

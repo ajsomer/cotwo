@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchReadinessSlice } from "@/lib/clinic/fetchers/readiness";
 import { requireStaffLocationAccess } from "@/lib/auth/staff-access";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 // GET /api/tasks?location_id=xxx&direction=pre_appointment|post_appointment
 // Returns appointments with workflow actions for the readiness dashboard,
@@ -22,10 +23,7 @@ export async function GET(request: NextRequest) {
 
   const access = await requireStaffLocationAccess(locationId);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Forbidden" },
-      { status: access.status },
-    );
+    return denyResponse(access);
   }
 
   try {

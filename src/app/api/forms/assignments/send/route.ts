@@ -10,11 +10,13 @@ import { and, eq } from "drizzle-orm";
 import { getSmsProvider } from "@/lib/sms";
 import { getBaseUrl } from "@/lib/utils/url";
 import { requireStaffCanAccessFormAssignment } from "@/lib/auth/staff-access";
+import { denyResponse, parseJsonBody } from "@/lib/api/route-helpers";
 
 // POST /api/forms/assignments/send
 export async function POST(request: NextRequest) {
-  const body = await request.json();
-  const { assignment_id } = body;
+  const parsed = await parseJsonBody<{ assignment_id?: string }>(request);
+  if (!parsed.ok) return parsed.response;
+  const { assignment_id } = parsed.body;
 
   if (!assignment_id) {
     return NextResponse.json(
@@ -27,10 +29,7 @@ export async function POST(request: NextRequest) {
     assignment_id
   );
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Not found" },
-      { status: access.status }
-    );
+    return denyResponse(access);
   }
 
   try {

@@ -1,9 +1,19 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { getJson, postJson } from "@/lib/api-client";
 import { SlideOver } from "@/components/ui/slide-over";
+import { CloseButton } from "@/components/ui/close-button";
 import { usePmsConnection } from "@/hooks/usePmsConnection";
+import { formatDayMonthTime } from "@/lib/runsheet/format";
 import { fetchReviewData, intakeHandoffUrl } from "./review-prefetch-cache";
+import {
+  FieldRow,
+  ReviewCopyButton,
+  ReviewFooter,
+  ReviewFooterButton,
+  ReviewSkeleton,
+} from "./review-panel-parts";
 
 interface IntakePackageHandoffPanelProps {
   appointmentId: string;
@@ -41,38 +51,6 @@ interface HandoffPayload {
   forms: FormBlock[];
   card: { brand: string; last_four: string; captured_at: string } | null;
   consent: { completed_at: string } | null;
-}
-
-function CopyButton({ text, small, label }: { text: string; small?: boolean; label?: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = async () => {
-    await navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  return (
-    <button
-      onClick={handleCopy}
-      className={`shrink-0 ${
-        small
-          ? "text-[10px] text-gray-400 hover:text-teal-600"
-          : "rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
-      }`}
-    >
-      {copied ? (small ? "\u2713" : "Copied!") : small ? "Copy" : label ?? "Copy all fields"}
-    </button>
-  );
-}
-
-function formatTimestamp(iso: string): string {
-  return new Date(iso).toLocaleString("en-AU", {
-    day: "numeric",
-    month: "short",
-    hour: "numeric",
-    minute: "2-digit",
-  });
 }
 
 export function IntakePackageHandoffPanel({
@@ -144,33 +122,24 @@ export function IntakePackageHandoffPanel({
       return;
     }
     (async () => {
-      try {
-        const res = await fetch(
-          `/api/pms/push-appointment?appointmentId=${appointmentId}`
-        );
-        if (cancelled) return;
-        const data = res.ok
-          ? ((await res.json()) as {
-              active?: boolean;
-              providerLabel?: string | null;
-              writeAttachments?: boolean;
-              hasPushableFields?: boolean;
-            })
-          : null;
-        if (cancelled) return;
-        setPmsGate(
-          data?.active
-            ? {
-                active: true,
-                label: data.providerLabel ?? "PMS",
-                writeAttachments: data.writeAttachments === true,
-                hasPushableFields: data.hasPushableFields === true,
-              }
-            : inactive
-        );
-      } catch {
-        if (!cancelled) setPmsGate(inactive);
-      }
+      const result = await getJson<{
+        active?: boolean;
+        providerLabel?: string | null;
+        writeAttachments?: boolean;
+        hasPushableFields?: boolean;
+      }>(`/api/pms/push-appointment?appointmentId=${appointmentId}`);
+      if (cancelled) return;
+      const data = result.ok ? result.data : null;
+      setPmsGate(
+        data?.active
+          ? {
+              active: true,
+              label: data.providerLabel ?? "PMS",
+              writeAttachments: data.writeAttachments === true,
+              hasPushableFields: data.hasPushableFields === true,
+            }
+          : inactive
+      );
     })();
     return () => {
       cancelled = true;
@@ -178,14 +147,13 @@ export function IntakePackageHandoffPanel({
   }, [appointmentId, pmsSyncActive]);
 
   const markTranscribed = async (): Promise<boolean> => {
-    const res = await fetch("/api/tasks/mark-intake-transcribed", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action_id: actionId }),
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setError(data.error ?? "Failed to mark as transcribed");
+    const result = await postJson(
+      "/api/tasks/mark-intake-transcribed",
+      { action_id: actionId },
+      "Failed to mark as transcribed"
+    );
+    if (!result.ok) {
+      setError(result.error);
       return false;
     }
     return true;
@@ -194,13 +162,8 @@ export function IntakePackageHandoffPanel({
   const handleMarkTranscribed = async () => {
     setMarking(true);
     setError(null);
-    try {
-      if (await markTranscribed()) onTranscribed();
-    } catch {
-      setError("Network error");
-    } finally {
-      setMarking(false);
-    }
+    if (await markTranscribed()) onTranscribed();
+    setMarking(false);
   };
 
   // Sync to the PMS: push the field write-back AND — when the provider supports
@@ -286,26 +249,15 @@ export function IntakePackageHandoffPanel({
           {submittedAt && (
             <>
               {" "}
-              &middot; Submitted {formatTimestamp(submittedAt)}
+              &middot; Submitted {formatDayMonthTime(submittedAt)}
             </>
           )}
         </p>
       </div>
-      <button
+      <CloseButton
         onClick={onClose}
         className="shrink-0 -mt-0.5 p-1 text-gray-500 hover:text-gray-800 transition-colors rounded"
-        aria-label="Close"
-      >
-        <svg
-          className="h-5 w-5"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={2}
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      </button>
+      />
     </div>
   );
 
@@ -321,14 +273,7 @@ export function IntakePackageHandoffPanel({
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
           {loading ? (
-            <div className="space-y-3">
-              {[1, 2, 3, 4].map((i) => (
-                <div key={i} className="animate-pulse">
-                  <div className="h-3 bg-gray-100 rounded w-1/3 mb-1" />
-                  <div className="h-4 bg-gray-100 rounded w-2/3" />
-                </div>
-              ))}
-            </div>
+            <ReviewSkeleton />
           ) : payload ? (
             <>
               {/* Forms */}
@@ -351,12 +296,12 @@ export function IntakePackageHandoffPanel({
                         </p>
                         {form.submitted_at && (
                           <p className="text-[10px] text-gray-400">
-                            Submitted {formatTimestamp(form.submitted_at)}
+                            Submitted {formatDayMonthTime(form.submitted_at)}
                           </p>
                         )}
                       </div>
                       {form.fields.length > 0 && (
-                        <CopyButton text={allText} label="Copy all" />
+                        <ReviewCopyButton text={allText} label="Copy all" />
                       )}
                     </div>
 
@@ -367,20 +312,11 @@ export function IntakePackageHandoffPanel({
                     ) : (
                       <div className="space-y-2">
                         {form.fields.map((field, i) => (
-                          <div
+                          <FieldRow
                             key={i}
-                            className="flex items-start justify-between gap-2 rounded-lg border border-gray-100 px-3 py-2"
-                          >
-                            <div className="min-w-0">
-                              <p className="text-[10px] font-medium text-gray-400 uppercase tracking-wide">
-                                {field.label}
-                              </p>
-                              <p className="text-sm text-gray-800 break-words">
-                                {field.value || "—"}
-                              </p>
-                            </div>
-                            <CopyButton text={field.value} small />
-                          </div>
+                            label={field.label}
+                            value={field.value}
+                          />
                         ))}
                       </div>
                     )}
@@ -398,7 +334,7 @@ export function IntakePackageHandoffPanel({
                     {payload.card.brand}
                     {payload.card.last_four ? ` ending ${payload.card.last_four}` : ""}{" "}
                     <span className="text-gray-400">
-                      &middot; captured {formatTimestamp(payload.card.captured_at)}
+                      &middot; captured {formatDayMonthTime(payload.card.captured_at)}
                     </span>
                   </p>
                 </div>
@@ -411,7 +347,7 @@ export function IntakePackageHandoffPanel({
                     Consent
                   </p>
                   <p className="text-sm text-gray-800">
-                    Recorded {formatTimestamp(payload.consent.completed_at)}
+                    Recorded {formatDayMonthTime(payload.consent.completed_at)}
                   </p>
                 </div>
               )}
@@ -470,14 +406,9 @@ export function IntakePackageHandoffPanel({
         </div>
 
         {/* Footer */}
-        <div className="border-t border-gray-200 px-5 py-3 flex gap-2 justify-end">
-          <button
-            onClick={onClose}
-            className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"
-          >
-            Back
-          </button>
-          <button
+        <ReviewFooter>
+          <ReviewFooterButton onClick={onClose}>Back</ReviewFooterButton>
+          <ReviewFooterButton
             onClick={() =>
               window.open(
                 `/api/tasks/intake-handoff/pdf?appointment_id=${appointmentId}`,
@@ -485,27 +416,26 @@ export function IntakePackageHandoffPanel({
               )
             }
             disabled={loading || !payload}
-            className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50"
           >
             Download
-          </button>
+          </ReviewFooterButton>
           {pmsGate?.active && (
-            <button
+            <ReviewFooterButton
+              variant="tealOutline"
               onClick={handleSync}
               disabled={marking || loading || !payload}
-              className="rounded-lg border border-teal-500 px-4 py-2 text-sm font-medium text-teal-600 hover:bg-teal-50 disabled:opacity-50"
             >
               {marking ? "Syncing…" : `Sync to ${pmsGate.label}`}
-            </button>
+            </ReviewFooterButton>
           )}
-          <button
+          <ReviewFooterButton
+            variant="primary"
             onClick={handleMarkTranscribed}
             disabled={marking || loading || !payload}
-            className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 disabled:opacity-50"
           >
             {marking ? "Completing..." : "Complete"}
-          </button>
-        </div>
+          </ReviewFooterButton>
+        </ReviewFooter>
       </div>
     </SlideOver>
   );

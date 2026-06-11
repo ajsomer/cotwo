@@ -26,7 +26,21 @@ export interface PriorityBadgeConfig {
 
 // ───────────────────────────── Constants ─────────────────────────
 
-const TERMINAL_STATUSES = [
+/**
+ * Action statuses the readiness UI treats as "nothing left to do" for display
+ * purposes (drives the done/outstanding counters and the all-terminal →
+ * recently_completed derivation).
+ *
+ * NOT the same set as `TERMINAL_ACTION_STATUSES` in
+ * `src/lib/workflows/run-completion.ts`, which answers the engine question
+ * "will this action ever fire again?". The two deliberately differ:
+ * - This display set includes patient-completion states (`captured`,
+ *   `verified`, `transcribed`) that the run-completion check doesn't list.
+ * - The run-completion set includes `cancelled` and `dropped`, which the
+ *   readiness display intentionally leaves visible as outstanding.
+ * Don't merge them without reconciling those semantics.
+ */
+export const TERMINAL_STATUSES = [
   'completed',
   'captured',
   'verified',
@@ -39,7 +53,12 @@ const MS_PER_HOUR = 60 * 60 * 1000;
 const OVERDUE_APPOINTMENT_WINDOW_MS = 24 * MS_PER_HOUR;
 const OVERDUE_ACTION_FALLBACK_MS = 48 * MS_PER_HOUR;
 const AT_RISK_WINDOW_MS = 7 * 24 * MS_PER_HOUR;
-const RECENTLY_COMPLETED_RETENTION_MS = 7 * 24 * MS_PER_HOUR;
+
+/**
+ * How long an all-terminal appointment stays in the "Recently completed" slot
+ * before the readiness fetcher drops it from the payload.
+ */
+export const RECENTLY_COMPLETED_RETENTION_MS = 7 * 24 * MS_PER_HOUR;
 
 // ───────────────────────────── Priority Order ───────────────────
 
@@ -265,7 +284,7 @@ export function getReadinessPriority(
  * Uses fired_at as a proxy since the API may not expose updated_at directly.
  * Falls back to scheduled_for.
  */
-function getMostRecentActionUpdate(actions: WorkflowAction[]): number | null {
+export function getMostRecentActionUpdate(actions: WorkflowAction[]): number | null {
   let latest = 0;
   for (const action of actions) {
     // Prefer updated_at if available, then fired_at, then scheduled_for
@@ -452,28 +471,4 @@ export function isAttentionPriority(priority: ReadinessPriority): boolean {
     priority === 'form_completed_needs_transcription' ||
     priority === 'at_risk'
   );
-}
-
-/**
- * Get the actions that are causing the attention state (for auto-expanded rows).
- * Returns only the triggering actions, not all actions.
- */
-export function getTriggeringActions(
-  appointment: AppointmentWithPriority,
-  now: Date
-): WorkflowAction[] {
-  const priority = appointment.priority ?? getReadinessPriority(appointment, now);
-
-  switch (priority) {
-    case 'overdue':
-      return appointment.actions.filter((a) => isOverdue(a, appointment, now));
-    case 'form_completed_needs_transcription':
-      return appointment.actions.filter(
-        (a) => isFormNeedsTranscription(a) || isIntakePackageActionNeedsTranscription(a)
-      );
-    case 'at_risk':
-      return appointment.actions.filter((a) => isAtRisk(a, appointment, now));
-    default:
-      return [];
-  }
 }

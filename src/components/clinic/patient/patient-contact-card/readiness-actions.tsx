@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { postJson } from "@/lib/api-client";
 import type { ReadinessAppointment } from "@/stores/clinic-store";
 
 interface ReadinessActionsProps {
@@ -17,21 +18,16 @@ export function ReadinessActions({
 
   const handleDelete = async () => {
     setDeleting(true);
-    try {
-      const res = await fetch("/api/tasks/delete-appointment", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ appointment_id: appointment.appointment_id }),
-      });
-      if (res.ok) {
-        onDeleted();
-      }
-    } catch (err) {
-      console.error("Failed to delete:", err);
-    } finally {
-      setDeleting(false);
-      setConfirmDelete(false);
+    const result = await postJson("/api/tasks/delete-appointment", {
+      appointment_id: appointment.appointment_id,
+    });
+    if (result.ok) {
+      onDeleted();
+    } else {
+      console.error("Failed to delete:", result.error);
     }
+    setDeleting(false);
+    setConfirmDelete(false);
   };
 
   return (

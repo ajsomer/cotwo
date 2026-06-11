@@ -4,6 +4,7 @@ import { appointments as appointmentsT } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { requireStaffLocationAccess } from "@/lib/auth/staff-access";
 import { attachIntakePdfToPms } from "@/lib/pms/sync/push";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 /**
  * POST { appointmentId } → attach the appointment's intake-package PDF to the
@@ -31,7 +32,7 @@ export async function POST(request: NextRequest) {
 
   const access = await requireStaffLocationAccess(appt.locationId);
   if (!access.ok) {
-    return NextResponse.json({ error: "Forbidden" }, { status: access.status });
+    return denyResponse(access);
   }
   if (!appt.patientId) {
     return NextResponse.json({ error: "No patient on appointment" }, { status: 409 });

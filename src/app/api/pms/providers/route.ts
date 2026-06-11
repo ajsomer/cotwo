@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUserId } from "@/lib/auth/staff-access";
 import { getFactory, supportedProviders } from "@/lib/pms/registry";
+import { unauthenticatedResponse } from "@/lib/api/route-helpers";
 
 /**
  * GET → connect metadata for every provider with a real adapter (label +
@@ -10,7 +11,7 @@ import { getFactory, supportedProviders } from "@/lib/pms/registry";
 export async function GET() {
   const userId = await getAuthenticatedUserId();
   if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return unauthenticatedResponse();
   }
 
   const providers = supportedProviders().flatMap((provider) => {

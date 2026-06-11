@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { postJson } from '@/lib/api-client';
 import { PersistentHeader } from './persistent-header';
+import { FormField, TextInput } from '@/components/ui/input';
 
 interface PhoneVerificationProps {
   clinicName: string;
@@ -106,51 +108,47 @@ export function PhoneVerification({
     setError(null);
     setLoading(true);
 
-    try {
-      const res = await fetch('/api/patient/otp/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone_number: phoneNumber, session_id: sessionId }),
-      });
+    const result = await postJson<{ verification_id: string; dev_code?: unknown }>(
+      '/api/patient/otp/send',
+      { phone_number: phoneNumber, session_id: sessionId },
+      'Failed to send code'
+    );
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.error || 'Failed to send code');
-        return;
-      }
-
-      // PROTOTYPE auto-fill. The send route hard-codes dev_code in the response
-      // for this demo build (see api/patient/otp/send/route.ts). In a production
-      // build dev_code is absent and the patient enters the SMS code manually.
-      const devCode: string | null =
-        typeof data.dev_code === 'string' ? data.dev_code : null;
-      setAutoFilledCode(devCode);
-
-      setVerificationId(data.verification_id);
-      setPhase('enter_code');
-      setResendTimer(30);
-      setCode(['', '', '', '', '', '']);
-      setAttempts(0);
-
-      if (devCode) {
-        // Wait for the code inputs to mount (phase just switched), then fill
-        // and submit. Pass verification_id straight from the response — the
-        // `verificationId` state hasn't committed yet, so verifyCode's closure
-        // would otherwise send null.
-        setTimeout(() => {
-          setCode(devCode.split(''));
-          verifyCode(devCode, data.verification_id);
-        }, 150);
-      } else {
-        // Auto-focus first code input
-        setTimeout(() => codeInputsRef.current[0]?.focus(), 100);
-      }
-    } catch {
-      setError('Something went wrong. Please try again.');
-    } finally {
+    if (!result.ok) {
+      setError(result.error);
       setLoading(false);
+      return;
     }
+
+    const data = result.data;
+
+    // PROTOTYPE auto-fill. The send route hard-codes dev_code in the response
+    // for this demo build (see api/patient/otp/send/route.ts). In a production
+    // build dev_code is absent and the patient enters the SMS code manually.
+    const devCode: string | null =
+      typeof data.dev_code === 'string' ? data.dev_code : null;
+    setAutoFilledCode(devCode);
+
+    setVerificationId(data.verification_id);
+    setPhase('enter_code');
+    setResendTimer(30);
+    setCode(['', '', '', '', '', '']);
+    setAttempts(0);
+
+    if (devCode) {
+      // Wait for the code inputs to mount (phase just switched), then fill
+      // and submit. Pass verification_id straight from the response — the
+      // `verificationId` state hasn't committed yet, so verifyCode's closure
+      // would otherwise send null.
+      setTimeout(() => {
+        setCode(devCode.split(''));
+        verifyCode(devCode, data.verification_id);
+      }, 150);
+    } else {
+      // Auto-focus first code input
+      setTimeout(() => codeInputsRef.current[0]?.focus(), 100);
+    }
+    setLoading(false);
   }, [phoneNumber, sessionId, verifyCode]);
 
   const handleCodeChange = (index: number, value: string) => {
@@ -207,17 +205,15 @@ export function PhoneVerification({
             We&apos;ll send you a code to confirm your identity.
           </p>
 
-          <div>
-            <label htmlFor="phone" className="mb-1 block text-xs font-medium text-gray-500">
-              Phone number
-            </label>
+          <FormField label="Phone number" htmlFor="phone">
             <div className="flex gap-2">
               <div className="flex h-12 items-center rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm text-gray-500">
                 +61
               </div>
-              <input
+              <TextInput
                 id="phone"
                 type="tel"
+                inputSize="lg"
                 inputMode="numeric"
                 autoFocus
                 value={phoneNumber.replace(/^\+61/, '')}
@@ -229,10 +225,10 @@ export function PhoneVerification({
                   setPhoneNumber('+61' + digits);
                 }}
                 placeholder="450 336 880"
-                className="h-12 flex-1 rounded-lg border border-gray-200 px-3 text-base text-gray-800 outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500"
+                className="flex-1"
               />
             </div>
-          </div>
+          </FormField>
 
           {error && (
             <p className="text-sm text-red-500" role="alert" aria-live="assertive">{error}</p>

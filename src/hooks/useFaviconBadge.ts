@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import type { RunsheetSummary } from "@/lib/supabase/types";
+import type { RunsheetSummary } from "@/lib/types/domain";
 
 /**
  * Swaps the favicon to include a red notification dot when attention is required.

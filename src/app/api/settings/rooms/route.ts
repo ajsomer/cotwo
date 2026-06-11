@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
 import { db } from "@/lib/db";
 import {
   rooms as roomsT,
@@ -14,6 +13,7 @@ import {
   requireAuthenticatedUser,
   requireStaffLocationAccess,
 } from "@/lib/auth/staff-access";
+import { denyResponse, unauthenticatedResponse } from "@/lib/api/route-helpers";
 
 // Mutation routes take a room id, not a location id. Order matters: auth
 // FIRST, then service-role lookup, then location access. Reversing those
@@ -31,7 +31,7 @@ async function gateRoomMutation(
   if (!auth.ok) {
     return {
       ok: false,
-      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+      response: unauthenticatedResponse(),
     };
   }
 
@@ -52,10 +52,7 @@ async function gateRoomMutation(
   if (!access.ok) {
     return {
       ok: false,
-      response: NextResponse.json(
-        { error: access.status === 401 ? "Unauthorized" : "Forbidden" },
-        { status: access.status },
-      ),
+      response: denyResponse(access),
     };
   }
 
@@ -77,10 +74,7 @@ export async function GET(request: NextRequest) {
 
   const access = await requireStaffLocationAccess(locationId);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Forbidden" },
-      { status: access.status },
-    );
+    return denyResponse(access);
   }
 
   try {
@@ -135,13 +129,8 @@ export async function POST(request: NextRequest) {
 
   const access = await requireStaffLocationAccess(location_id);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Forbidden" },
-      { status: access.status },
-    );
+    return denyResponse(access);
   }
-
-  const service = createServiceClient();
 
   const [room] = await db
     .insert(roomsT)
@@ -157,7 +146,6 @@ export async function POST(request: NextRequest) {
   // Insert clinician assignments if provided
   if (clinician_assignment_ids?.length > 0 && room) {
     const res = await updateClinicianAssignments(
-      service,
       room.id,
       clinician_assignment_ids,
       location_id,
@@ -185,8 +173,6 @@ export async function PATCH(request: NextRequest) {
   const gate = await gateRoomMutation(id);
   if (!gate.ok) return gate.response;
 
-  const service = createServiceClient();
-
   // Build update object with only provided fields
   const updates: Partial<typeof roomsT.$inferInsert> = {};
   if (name !== undefined) updates.name = name;
@@ -201,7 +187,6 @@ export async function PATCH(request: NextRequest) {
   // Replace clinician assignments if provided
   if (clinician_assignment_ids !== undefined) {
     const res = await updateClinicianAssignments(
-      service,
       id,
       clinician_assignment_ids,
       gate.locationId,

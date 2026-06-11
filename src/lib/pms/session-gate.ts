@@ -1,14 +1,13 @@
 import "server-only";
 import { db } from "@/lib/db";
 import {
-  appointmentActions,
   appointments as appointmentsT,
   forms as formsT,
   formSubmissions,
   sessions as sessionsT,
-  workflowActionBlocks,
 } from "@/lib/db/schema";
 import { and, eq, isNotNull } from "drizzle-orm";
+import { findAppointmentActionsByType } from "@/lib/workflows/queries";
 import { collectPmsTargets } from "@/lib/survey/pms-target-schema";
 import { getFactory, getStaticMetadata } from "./registry";
 import { getConnectionForLocation, isSyncActive } from "./connection";
@@ -135,21 +134,11 @@ async function gateFor(
 
 /** Does this appointment have an intake_package action (= a PDF to attach)? */
 async function hasIntakePackage(appointmentId: string): Promise<boolean> {
-  const [row] = await db
-    .select({ id: appointmentActions.id })
-    .from(appointmentActions)
-    .innerJoin(
-      workflowActionBlocks,
-      eq(workflowActionBlocks.id, appointmentActions.actionBlockId)
-    )
-    .where(
-      and(
-        eq(appointmentActions.appointmentId, appointmentId),
-        eq(workflowActionBlocks.actionType, "intake_package")
-      )
-    )
-    .limit(1);
-  return Boolean(row);
+  const actions = await findAppointmentActionsByType(
+    appointmentId,
+    "intake_package"
+  );
+  return actions.length > 0;
 }
 
 function labelFor(provider: string): string {

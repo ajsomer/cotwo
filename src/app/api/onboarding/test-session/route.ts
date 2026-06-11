@@ -8,8 +8,6 @@ import {
   rooms as roomsT,
   appointmentTypes,
   forms as formsT,
-  patients as patientsT,
-  patientPhoneNumbers,
   appointments as appointmentsT,
   sessions as sessionsT,
   sessionParticipants,
@@ -18,10 +16,12 @@ import {
 } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import { NextResponse, type NextRequest } from "next/server";
+import { createPatientWithPhone } from "@/lib/patient/create-patient";
+import { unauthenticatedResponse } from "@/lib/api/route-helpers";
 
 export async function POST(request: NextRequest) {
   const userId = await getAuthenticatedUserId();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!userId) return unauthenticatedResponse();
 
   // The test session uses a placeholder phone number — the OTP code is
   // surfaced via the console SMS provider (dev) and the user copies it from
@@ -155,27 +155,22 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // 1. Create patient contact
-  let patient: { id: string };
-  try {
-    [patient] = await db
-      .insert(patientsT)
-      .values({ orgId, firstName, lastName })
-      .returning({ id: patientsT.id });
-  } catch (patientErr) {
-    console.error("[onboarding/test-session] patient insert failed:", patientErr);
+  // 1. Create patient contact + linked phone. Staff-typed number → not
+  // verified; kept trimmed-as-entered (this is a throwaway test contact). A
+  // phone-link failure is non-fatal (logged in the lib) — the test session
+  // can still be demonstrated.
+  const created = await createPatientWithPhone({
+    orgId,
+    firstName,
+    lastName,
+    phoneNumber: phone_number.trim(),
+    phoneVerified: false,
+    logTag: "onboarding/test-session",
+  });
+  if (!created.ok) {
     return NextResponse.json({ error: "Failed to create patient." }, { status: 500 });
   }
-
-  try {
-    await db.insert(patientPhoneNumbers).values({
-      patientId: patient.id,
-      phoneNumber: phone_number.trim(),
-      isPrimary: true,
-    });
-  } catch (phoneErr) {
-    console.error("[onboarding/test-session] phone insert failed:", phoneErr);
-  }
+  const patient: { id: string } = { id: created.patientId };
 
   // 2. Create appointment (~5 minutes from now)
   const scheduledAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();

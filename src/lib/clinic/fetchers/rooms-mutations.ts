@@ -1,4 +1,3 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { db } from "@/lib/db";
 import { clinicianRoomAssignments } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -24,7 +23,6 @@ import { assertStaffAssignmentsInLocation } from "@/lib/auth/staff-access";
  * matching the route's prior behaviour.
  */
 export async function updateClinicianAssignments(
-  service: SupabaseClient,
   roomId: string,
   staffAssignmentIds: string[],
   locationId: string,

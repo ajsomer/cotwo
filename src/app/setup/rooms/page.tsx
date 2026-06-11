@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { getJson, postJson } from "@/lib/api-client";
 import { getCurrentUserName } from "@/app/(auth)/actions";
 import { Button } from "@/components/ui/button";
 import { Trash2, Plus, CheckCircle2 } from "lucide-react";
@@ -30,16 +31,18 @@ export default function SetupRoomsPage() {
 
   useEffect(() => {
     async function init() {
-      const res = await fetch("/api/setup/rooms");
-      const data = await res.json();
-      const existing: { id: string; name: string; sort_order: number }[] =
-        data.rooms ?? [];
+      const result = await getJson<{
+        rooms?: { id: string; name: string; sort_order: number }[];
+        imported?: boolean;
+      }>("/api/setup/rooms");
+      const data = result.ok ? result.data : null;
+      const existing = data?.rooms ?? [];
 
       if (existing.length > 0) {
         setRooms(
           existing.map((r) => ({ id: makeId(), dbId: r.id, name: r.name }))
         );
-        setImported(!!data.imported);
+        setImported(!!data?.imported);
       } else {
         // Pre-fill with user's full name (no "Room" suffix)
         const fullName = (await getCurrentUserName()) ?? "Room 1";
@@ -92,24 +95,17 @@ export default function SetupRoomsPage() {
 
     setLoading(true);
 
-    const res = await fetch("/api/setup/rooms", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        rooms: rooms.map((r, i) => ({
-          id: r.dbId,
-          name: r.name.trim(),
-          sort_order: i,
-        })),
-      }),
+    const result = await postJson("/api/setup/rooms", {
+      rooms: rooms.map((r, i) => ({
+        id: r.dbId,
+        name: r.name.trim(),
+        sort_order: i,
+      })),
     });
 
-    if (!res.ok) {
+    if (!result.ok) {
       setLoading(false);
-      const data = await res.json().catch(() => null);
-      setErrors({
-        form: data?.error ?? "Something went wrong. Please try again.",
-      });
+      setErrors({ form: result.error });
       return;
     }
 

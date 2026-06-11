@@ -1,13 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireStaffLocationAccess } from "@/lib/auth/staff-access";
+import { PM_ROLES, requireStaffLocationAccess } from "@/lib/auth/staff-access";
 import {
   connectPms,
   disconnectPms,
   getIntegrationStatus,
   updateAccountSubdomain,
 } from "@/lib/pms/integrations-service";
-
-const PM_ROLES = new Set(["clinic_owner", "practice_manager"]);
+import { denyResponse } from "@/lib/api/route-helpers";
 
 /** GET ?locationId= → integration status + provider metadata. */
 export async function GET(request: NextRequest) {
@@ -17,7 +16,7 @@ export async function GET(request: NextRequest) {
   }
   const access = await requireStaffLocationAccess(locationId);
   if (!access.ok) {
-    return NextResponse.json({ error: "Forbidden" }, { status: access.status });
+    return denyResponse(access);
   }
   const status = await getIntegrationStatus(locationId);
   return NextResponse.json(status);
@@ -38,7 +37,7 @@ export async function POST(request: NextRequest) {
   }
   const access = await requireStaffLocationAccess(body.locationId);
   if (!access.ok) {
-    return NextResponse.json({ error: "Forbidden" }, { status: access.status });
+    return denyResponse(access);
   }
   if (!PM_ROLES.has(access.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -62,7 +61,7 @@ export async function PATCH(request: NextRequest) {
   }
   const access = await requireStaffLocationAccess(body.locationId);
   if (!access.ok) {
-    return NextResponse.json({ error: "Forbidden" }, { status: access.status });
+    return denyResponse(access);
   }
   if (!PM_ROLES.has(access.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -79,7 +78,7 @@ export async function DELETE(request: NextRequest) {
   }
   const access = await requireStaffLocationAccess(locationId);
   if (!access.ok) {
-    return NextResponse.json({ error: "Forbidden" }, { status: access.status });
+    return denyResponse(access);
   }
   if (!PM_ROLES.has(access.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });

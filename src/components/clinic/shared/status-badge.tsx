@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { getStatusBadgeConfig } from "@/lib/runsheet/derived-state";
-import type { DerivedDisplayState } from "@/lib/supabase/types";
+import type { DerivedDisplayState } from "@/lib/types/domain";
 
 interface StatusBadgeProps {
   state: DerivedDisplayState;

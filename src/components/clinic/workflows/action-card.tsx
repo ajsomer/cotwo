@@ -17,6 +17,7 @@ import { ActionTypeIcon } from "@/components/clinic/shared/action-type-icon";
 import { FireTimePicker, FireTimePill } from "./fire-time-picker";
 import { PreconditionPicker } from "./precondition-picker";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/input";
 
 interface ActionCardProps {
   block: DbWorkflowActionBlock;
@@ -217,12 +218,11 @@ export function ActionCard({
             <label className="mb-1 block text-xs font-medium text-gray-500">
               File
             </label>
-            <select
+            <Select
               value={(editConfig.file_id as string) ?? ""}
               onChange={(e) =>
                 setEditConfig({ ...editConfig, file_id: e.target.value || "" })
               }
-              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500"
             >
               <option value="">Select a file...</option>
               {(files ?? []).map((f) => (
@@ -230,7 +230,7 @@ export function ActionCard({
                   {f.name} ({Math.round(f.file_size_bytes / 1024)} KB)
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
         )}
 

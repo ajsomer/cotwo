@@ -1,5 +1,5 @@
 import { auth } from "@/lib/auth/neon-auth";
-import type { Location, Organisation, UserRole } from "@/lib/supabase/types";
+import type { Location, Organisation, UserRole } from "@/lib/types/domain";
 import { db } from "@/lib/db";
 import {
   staffAssignments,
@@ -8,6 +8,7 @@ import {
   formSubmissions,
   forms as formsT,
   appointments as appointmentsT,
+  sessions as sessionsT,
   appointmentTypes as appointmentTypesT,
   workflowTemplates as workflowTemplatesT,
   outcomePathways as outcomePathwaysT,
@@ -17,6 +18,19 @@ import {
 } from "@/lib/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
+
+/**
+ * Roles allowed to perform practice-manager-level configuration (PMS
+ * connections, mappings, type imports, setup flows).
+ *
+ * `clinic_owner` must always ride along with `practice_manager` here — the
+ * owner is a practising clinician who also holds every PM permission. Any
+ * new "PM-only" check should use this set rather than re-declaring it.
+ */
+export const PM_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
+  "practice_manager",
+  "clinic_owner",
+]);
 
 export interface StaffAssignmentData {
   location: Location;
@@ -129,19 +143,46 @@ const staffScopeCache = new Map<
   { expiresAt: number; scope: StaffAccessScope }
 >();
 
+// ---------------------------------------------------------------------------
+// The single staff → location → org join.
+//
+// Every "where is this user staff?" consumer routes through this query — the
+// scope cache, the default-org pick, and the clinic-layout assignments — with
+// small pure adapters shaping the rows. Previously the same join existed in
+// four hand-rolled variants here and in readiness/seed.ts.
+// ---------------------------------------------------------------------------
+
+async function fetchStaffAssignmentJoinRows(userId: string, limit?: number) {
+  const query = db
+    .select({
+      role: staffAssignments.role,
+      location_id: locationsT.id,
+      loc_name: locationsT.name,
+      loc_address: locationsT.address,
+      loc_timezone: locationsT.timezone,
+      loc_qr_token: locationsT.qrToken,
+      loc_stripe_account_id: locationsT.stripeAccountId,
+      org_id: organisationsT.id,
+      org_name: organisationsT.name,
+      org_slug: organisationsT.slug,
+      org_tier: organisationsT.tier,
+      org_logo_url: organisationsT.logoUrl,
+      org_stripe_routing: organisationsT.stripeRouting,
+      org_timezone: organisationsT.timezone,
+    })
+    .from(staffAssignments)
+    .innerJoin(locationsT, eq(locationsT.id, staffAssignments.locationId))
+    .innerJoin(organisationsT, eq(organisationsT.id, locationsT.orgId))
+    .where(eq(staffAssignments.userId, userId));
+
+  return limit !== undefined ? await query.limit(limit) : await query;
+}
+
 async function getUserAccessScope(userId: string): Promise<StaffAccessScope> {
   const cached = staffScopeCache.get(userId);
   if (cached && cached.expiresAt > Date.now()) return cached.scope;
 
-  const assignments = await db
-    .select({
-      location_id: staffAssignments.locationId,
-      role: staffAssignments.role,
-      org_id: locationsT.orgId,
-    })
-    .from(staffAssignments)
-    .innerJoin(locationsT, eq(locationsT.id, staffAssignments.locationId))
-    .where(eq(staffAssignments.userId, userId));
+  const assignments = await fetchStaffAssignmentJoinRows(userId);
 
   const locationRoles = new Map<string, UserRole>();
   const orgIds = new Set<string>();
@@ -531,6 +572,57 @@ export async function requireStaffCanAccessAppointment(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Location-anchored resource gates (403 family).
+//
+// Unlike the org-anchored `requireStaffCanAccess*` gates above (which return
+// 404 on non-membership to avoid existence leaks), these resolve a resource's
+// `location_id` and run the standard location gate, so non-membership is a
+// 403. Used by the PMS push routes, whose clients distinguish "resource gone"
+// (404) from "not your location" (403). Both return the resolved `locationId`
+// so callers don't re-query it.
+// ---------------------------------------------------------------------------
+
+export type StaffLocationResourceAccess =
+  | { ok: true; userId: string; role: UserRole; locationId: string }
+  | { ok: false; status: 401 | 403 | 404 };
+
+/** Resolve a session's location, then require staff access to it. */
+export async function requireStaffSessionLocationAccess(
+  sessionId: string,
+): Promise<StaffLocationResourceAccess> {
+  const [session] = await db
+    .select({ location_id: sessionsT.locationId })
+    .from(sessionsT)
+    .where(eq(sessionsT.id, sessionId))
+    .limit(1);
+  if (!session) return { ok: false, status: 404 };
+
+  const access = await requireStaffLocationAccess(session.location_id);
+  if (!access.ok) return access;
+  return { ...access, locationId: session.location_id };
+}
+
+/**
+ * Resolve an appointment's location, then require staff access to it.
+ * Location-anchored sibling of `requireStaffCanAccessAppointment` (which is
+ * org-anchored and 404-on-denial) — pick by the status semantics you need.
+ */
+export async function requireStaffAppointmentLocationAccess(
+  appointmentId: string,
+): Promise<StaffLocationResourceAccess> {
+  const [appt] = await db
+    .select({ location_id: appointmentsT.locationId })
+    .from(appointmentsT)
+    .where(eq(appointmentsT.id, appointmentId))
+    .limit(1);
+  if (!appt) return { ok: false, status: 404 };
+
+  const access = await requireStaffLocationAccess(appt.location_id);
+  if (!access.ok) return access;
+  return { ...access, locationId: appt.location_id };
+}
+
 /**
  * Verify staff access to a form assignment, resolved via its form's org.
  */
@@ -571,15 +663,7 @@ export async function requireStaffCanAccessFormAssignment(
 export async function resolveDefaultStaffOrg(
   userId: string,
 ): Promise<{ orgId: string; locationId: string } | null> {
-  const [assignment] = await db
-    .select({
-      location_id: staffAssignments.locationId,
-      org_id: locationsT.orgId,
-    })
-    .from(staffAssignments)
-    .innerJoin(locationsT, eq(locationsT.id, staffAssignments.locationId))
-    .where(eq(staffAssignments.userId, userId))
-    .limit(1);
+  const [assignment] = await fetchStaffAssignmentJoinRows(userId, 1);
 
   if (!assignment) return null;
   const orgId = assignment.org_id;
@@ -603,28 +687,7 @@ export async function fetchUserClinicAssignments(
   userId: string,
   fullName: string,
 ): Promise<StaffAssignmentData[]> {
-  const rows = await db
-    .select({
-      role: staffAssignments.role,
-      loc_id: locationsT.id,
-      loc_org_id: locationsT.orgId,
-      loc_name: locationsT.name,
-      loc_address: locationsT.address,
-      loc_timezone: locationsT.timezone,
-      loc_qr_token: locationsT.qrToken,
-      loc_stripe_account_id: locationsT.stripeAccountId,
-      org_id: organisationsT.id,
-      org_name: organisationsT.name,
-      org_slug: organisationsT.slug,
-      org_tier: organisationsT.tier,
-      org_logo_url: organisationsT.logoUrl,
-      org_stripe_routing: organisationsT.stripeRouting,
-      org_timezone: organisationsT.timezone,
-    })
-    .from(staffAssignments)
-    .innerJoin(locationsT, eq(locationsT.id, staffAssignments.locationId))
-    .innerJoin(organisationsT, eq(organisationsT.id, locationsT.orgId))
-    .where(eq(staffAssignments.userId, userId));
+  const rows = await fetchStaffAssignmentJoinRows(userId);
 
   const assignments: StaffAssignmentData[] = rows.map((sa) => {
     return {
@@ -632,8 +695,8 @@ export async function fetchUserClinicAssignments(
       fullName,
       role: sa.role as UserRole,
       location: {
-        id: sa.loc_id,
-        org_id: sa.loc_org_id,
+        id: sa.location_id,
+        org_id: sa.org_id,
         name: sa.loc_name,
         address: sa.loc_address,
         timezone: sa.loc_timezone,

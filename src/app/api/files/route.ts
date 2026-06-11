@@ -8,6 +8,7 @@ import {
   requireStaffOrgAccess,
   requireStaffCanAccessFile,
 } from "@/lib/auth/staff-access";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 // GET /api/files?org_id=xxx — list active files for an org
 export async function GET(request: NextRequest) {
@@ -19,10 +20,7 @@ export async function GET(request: NextRequest) {
 
   const access = await requireStaffOrgAccess(orgId);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Not found" },
-      { status: access.status },
-    );
+    return denyResponse(access);
   }
 
   try {
@@ -69,10 +67,7 @@ export async function POST(request: NextRequest) {
 
     const access = await requireStaffOrgAccess(orgId);
     if (!access.ok) {
-      return NextResponse.json(
-        { error: access.status === 401 ? "Unauthorized" : "Not found" },
-        { status: access.status },
-      );
+      return denyResponse(access);
     }
 
     const fileId = crypto.randomUUID();
@@ -149,10 +144,7 @@ export async function DELETE(request: NextRequest) {
 
     const access = await requireStaffCanAccessFile(id);
     if (!access.ok) {
-      return NextResponse.json(
-        { error: access.status === 401 ? "Unauthorized" : "Not found" },
-        { status: access.status },
-      );
+      return denyResponse(access);
     }
 
     await db

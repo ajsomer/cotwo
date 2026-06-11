@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useLocation } from "@/hooks/useLocation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { ConfirmModal } from "@/components/ui/modal";
 import { RoomFormPanel } from "./room-form-panel";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import type { RoomWithClinicians } from "@/stores/clinic-store";
-import type { RoomType } from "@/lib/supabase/types";
+import type { RoomType } from "@/lib/types/domain";
+import { useEnsureSlices } from "@/hooks/useEnsureSlices";
 
 const ROOM_TYPE_BADGE: Record<
   RoomType,
@@ -24,24 +26,22 @@ export function RoomsSettingsShell() {
   const rooms = useClinicStore((s) => s.roomsWithClinicians);
   const loading = !useClinicStore((s) => s.roomsLoaded);
 
-  // Fetch-if-empty
-  useEffect(() => {
-    if (!selectedLocation) return;
-    if (!getClinicStore().roomsLoaded) {
-      void getClinicStore().refreshRooms(selectedLocation.id);
-    }
-  }, [selectedLocation]);
+  useEnsureSlices(["rooms"]);
   const [panelOpen, setPanelOpen] = useState(false);
   const [editingRoom, setEditingRoom] = useState<RoomWithClinicians | null>(
     null
   );
+  const [deletingRoom, setDeletingRoom] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
 
   const refetchRooms = () => {
     if (selectedLocation) getClinicStore().refreshRooms(selectedLocation.id);
   };
 
-  const handleDelete = async (roomId: string, roomName: string) => {
-    if (!confirm(`Delete "${roomName}"? This cannot be undone.`)) return;
+  const handleDelete = async (roomId: string) => {
+    setDeletingRoom(null);
 
     const res = await fetch(`/api/settings/rooms?id=${roomId}`, {
       method: "DELETE",
@@ -183,7 +183,9 @@ export function RoomsSettingsShell() {
                           variant="ghost"
                           size="sm"
                           className="text-red-500 hover:text-red-600 hover:bg-red-50"
-                          onClick={() => handleDelete(room.id, room.name)}
+                          onClick={() =>
+                            setDeletingRoom({ id: room.id, name: room.name })
+                          }
                         >
                           Delete
                         </Button>
@@ -203,6 +205,16 @@ export function RoomsSettingsShell() {
         onSaved={handleSaved}
         room={editingRoom}
         locationId={selectedLocation.id}
+      />
+
+      <ConfirmModal
+        open={!!deletingRoom}
+        title={`Delete "${deletingRoom?.name}"?`}
+        message="This cannot be undone."
+        confirmLabel="Delete"
+        destructive
+        onConfirm={() => deletingRoom && handleDelete(deletingRoom.id)}
+        onCancel={() => setDeletingRoom(null)}
       />
     </div>
   );

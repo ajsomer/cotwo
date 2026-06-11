@@ -8,6 +8,7 @@ import {
 } from "@/lib/db/schema";
 import { and, desc, eq } from "drizzle-orm";
 import type { OnboardingState } from "@/stores/clinic-store";
+import { unauthenticatedResponse } from "@/lib/api/route-helpers";
 
 // GET /api/onboarding/state
 // Returns the calling user's OnboardingState. Used by RunsheetShell on cold
@@ -16,7 +17,7 @@ import type { OnboardingState } from "@/stores/clinic-store";
 export async function GET() {
   const auth = await requireAuthenticatedUser();
   if (!auth.ok) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return unauthenticatedResponse();
   }
 
   const [userRow] = await db

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, type ReactNode } from "react";
+import { CloseButton } from "./close-button";
 
 interface SlideOverProps {
   open: boolean;
@@ -63,25 +64,7 @@ export function SlideOver({
         {customHeader ?? (
           <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
             <h2 className="text-base font-semibold text-gray-800">{title}</h2>
-            <button
-              onClick={onClose}
-              className="p-1 text-gray-500 hover:text-gray-800 transition-colors rounded"
-              aria-label="Close"
-            >
-              <svg
-                className="h-5 w-5"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={2}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
-            </button>
+            <CloseButton onClick={onClose} />
           </div>
         )}
 

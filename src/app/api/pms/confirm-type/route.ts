@@ -4,6 +4,7 @@ import { appointmentTypes } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { requireStaffOrgAccess } from "@/lib/auth/staff-access";
 import { confirmAppointmentTypeSync } from "@/lib/pms/integrations-service";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 /**
  * POST { appointmentTypeId, confirmedModality, syncEnabled }
@@ -35,10 +36,7 @@ export async function POST(request: NextRequest) {
   }
   const access = await requireStaffOrgAccess(type.orgId);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Forbidden" },
-      { status: access.status }
-    );
+    return denyResponse(access);
   }
 
   const result = await confirmAppointmentTypeSync({

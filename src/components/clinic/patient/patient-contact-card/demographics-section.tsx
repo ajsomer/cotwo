@@ -2,6 +2,7 @@
 
 import { formatPhoneNumber } from "@/lib/runsheet/format";
 import type { PatientDetails } from "./types";
+import { formatDayMonthYear } from "@/lib/runsheet/format";
 
 interface DemographicsSectionProps {
   details: PatientDetails;
@@ -169,11 +170,7 @@ export function PaymentSection({
 
 function formatDob(dob: string): string {
   const date = new Date(dob + "T00:00:00");
-  const formatted = date.toLocaleDateString("en-AU", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  const formatted = formatDayMonthYear(date.toISOString());
   const age = Math.floor(
     (Date.now() - date.getTime()) / (365.25 * 24 * 60 * 60 * 1000)
   );

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { LiveKitRoom, VideoConference } from "@/lib/livekit/client";
 import { markSessionComplete } from "@/lib/runsheet/actions";
+import { Spinner } from "@/components/ui/spinner";
 
 interface VideoCallPanelProps {
   sessionId: string;
@@ -115,7 +116,7 @@ export function VideoCallPanel({
       <div className="flex-1 relative">
         {state === "loading" && (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-center text-white">
-            <div className="h-10 w-10 rounded-full border-2 border-teal-500 border-t-transparent animate-spin mb-4" />
+            <Spinner className="h-10 w-10 mb-4" />
             <p className="text-sm text-gray-300">Connecting to {patientName}…</p>
           </div>
         )}

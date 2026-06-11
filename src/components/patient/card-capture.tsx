@@ -1,17 +1,27 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { getJson, postJson } from '@/lib/api-client';
 import { PersistentHeader } from './persistent-header';
+import { FormField, TextInput } from '@/components/ui/input';
+import { Spinner } from '@/components/ui/spinner';
 
 interface CardCaptureProps {
   clinicName: string;
   logoUrl: string | null;
-  roomName: string | null;
+  roomName?: string | null;
   currentStep: number;
   totalSteps: number;
   patientId: string;
   token: string;
-  stripeAccountId: string | null;
+  /** Copy under the heading. Defaults to the entry-flow wording. */
+  intro?: string;
+  /**
+   * Runs after the card is saved (or confirmed) and before onComplete —
+   * the intake journey uses it to mark its card item complete.
+   * Return an error message to block completion and surface it.
+   */
+  postSave?: () => Promise<string | null>;
   onComplete: (cardInfo: { card_last_four: string; card_brand: string } | null) => void;
 }
 
@@ -24,12 +34,13 @@ interface ExistingCard {
 export function CardCapture({
   clinicName,
   logoUrl,
-  roomName,
+  roomName = null,
   currentStep,
   totalSteps,
   patientId,
   token,
-  stripeAccountId,
+  intro,
+  postSave,
   onComplete,
 }: CardCaptureProps) {
   const [existingCard, setExistingCard] = useState<ExistingCard | null>(null);
@@ -46,62 +57,74 @@ export function CardCapture({
   // Check for existing card on file
   useEffect(() => {
     async function checkCard() {
-      try {
-        const res = await fetch(
-          `/api/patient/card?token=${encodeURIComponent(token)}&patient_id=${patientId}`,
-        );
-        const data = await res.json();
-        if (data.card) {
-          setExistingCard(data.card);
-        }
-      } catch {
-        // No card on file
-      } finally {
-        setLoading(false);
+      const result = await getJson<{ card?: ExistingCard }>(
+        `/api/patient/card?token=${encodeURIComponent(token)}&patient_id=${patientId}`,
+      );
+      // No card on file (or fetch failed) — just move on.
+      if (result.ok && result.data?.card) {
+        setExistingCard(result.data.card);
       }
+      setLoading(false);
     }
     checkCard();
   }, [patientId, token]);
+
+  const finish = async (cardInfo: { card_last_four: string; card_brand: string }) => {
+    if (postSave) {
+      const postSaveError = await postSave();
+      if (postSaveError) {
+        setError(postSaveError);
+        setSaving(false);
+        return;
+      }
+    }
+    setSaving(false);
+    onComplete(cardInfo);
+  };
+
+  const continueWithExisting = async () => {
+    if (!existingCard) return;
+    setError(null);
+    setSaving(true);
+    await finish({
+      card_last_four: existingCard.card_last_four,
+      card_brand: existingCard.card_brand,
+    });
+  };
 
   const saveCard = async () => {
     setError(null);
     setSaving(true);
 
-    try {
-      // In production, this would use Stripe.js to tokenise the card.
-      // For the prototype, we simulate with test card data.
-      const cleanNumber = cardNumber.replace(/\s/g, '');
-      const lastFour = cleanNumber.slice(-4);
-      const brand = cleanNumber.startsWith('4') ? 'Visa' : cleanNumber.startsWith('5') ? 'Mastercard' : 'Card';
+    // In production, this would use Stripe.js to tokenise the card.
+    // For the prototype, we simulate with test card data.
+    const cleanNumber = cardNumber.replace(/\s/g, '');
+    const lastFour = cleanNumber.slice(-4);
+    const brand = cleanNumber.startsWith('4') ? 'Visa' : cleanNumber.startsWith('5') ? 'Mastercard' : 'Card';
 
-      // Simulate Stripe PaymentMethod creation
-      const mockPaymentMethodId = `pm_test_${Date.now()}`;
+    // Simulate Stripe PaymentMethod creation
+    const mockPaymentMethodId = `pm_test_${Date.now()}`;
 
-      const res = await fetch('/api/patient/card', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token,
-          patient_id: patientId,
-          stripe_payment_method_id: mockPaymentMethodId,
-          card_last_four: lastFour,
-          card_brand: brand,
-          card_expiry: expiry,
-        }),
-      });
+    const result = await postJson(
+      '/api/patient/card',
+      {
+        token,
+        patient_id: patientId,
+        stripe_payment_method_id: mockPaymentMethodId,
+        card_last_four: lastFour,
+        card_brand: brand,
+        card_expiry: expiry,
+      },
+      'Failed to save card'
+    );
 
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || 'Failed to save card');
-        return;
-      }
-
-      onComplete({ card_last_four: lastFour, card_brand: brand });
-    } catch {
-      setError('Something went wrong. Please try again.');
-    } finally {
+    if (!result.ok) {
+      setError(result.error);
       setSaving(false);
+      return;
     }
+
+    await finish({ card_last_four: lastFour, card_brand: brand });
   };
 
   if (loading) {
@@ -115,7 +138,7 @@ export function CardCapture({
           totalSteps={totalSteps}
         />
         <div className="flex h-32 w-full items-center justify-center">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-teal-500 border-t-transparent" />
+          <Spinner />
         </div>
       </div>
     );
@@ -137,8 +160,8 @@ export function CardCapture({
         </h1>
 
         <p className="text-sm text-gray-500">
-          {clinicName} collects payment after your appointment. Please store a
-          card so your clinician can focus on your care.
+          {intro ??
+            `${clinicName} collects payment after your appointment. Please store a card so your clinician can focus on your care.`}
         </p>
 
         {/* Existing card on file */}
@@ -166,13 +189,11 @@ export function CardCapture({
             </div>
 
             <button
-              onClick={() => onComplete({
-                card_last_four: existingCard.card_last_four,
-                card_brand: existingCard.card_brand,
-              })}
-              className="w-full rounded-lg bg-teal-500 px-6 py-3 text-base font-medium text-white transition-colors hover:bg-teal-600"
+              onClick={continueWithExisting}
+              disabled={saving}
+              className="w-full rounded-lg bg-teal-500 px-6 py-3 text-base font-medium text-white transition-colors hover:bg-teal-600 disabled:opacity-50"
             >
-              Continue with this card
+              {saving ? 'Saving...' : 'Continue with this card'}
             </button>
 
             <button
@@ -187,13 +208,11 @@ export function CardCapture({
         {/* New card form */}
         {(!existingCard || showNewCard) && (
           <>
-            <div>
-              <label htmlFor="cardNumber" className="mb-1 block text-xs font-medium text-gray-500">
-                Card number
-              </label>
-              <input
+            <FormField label="Card number" htmlFor="cardNumber">
+              <TextInput
                 id="cardNumber"
                 type="text"
+                inputSize="lg"
                 inputMode="numeric"
                 autoFocus
                 placeholder="4242 4242 4242 4242"
@@ -202,18 +221,15 @@ export function CardCapture({
                   const v = e.target.value.replace(/\D/g, '').slice(0, 16);
                   setCardNumber(v.replace(/(\d{4})/g, '$1 ').trim());
                 }}
-                className="h-12 w-full rounded-lg border border-gray-200 px-3 text-base text-gray-800 outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500"
               />
-            </div>
+            </FormField>
 
             <div className="flex gap-3">
-              <div className="flex-1">
-                <label htmlFor="expiry" className="mb-1 block text-xs font-medium text-gray-500">
-                  Expiry
-                </label>
-                <input
+              <FormField label="Expiry" htmlFor="expiry" className="flex-1">
+                <TextInput
                   id="expiry"
                   type="text"
+                  inputSize="lg"
                   inputMode="numeric"
                   placeholder="MM/YY"
                   value={expiry}
@@ -222,23 +238,19 @@ export function CardCapture({
                     if (v.length >= 3) v = v.slice(0, 2) + '/' + v.slice(2);
                     setExpiry(v);
                   }}
-                  className="h-12 w-full rounded-lg border border-gray-200 px-3 text-base text-gray-800 outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500"
                 />
-              </div>
-              <div className="flex-1">
-                <label htmlFor="cvc" className="mb-1 block text-xs font-medium text-gray-500">
-                  CVC
-                </label>
-                <input
+              </FormField>
+              <FormField label="CVC" htmlFor="cvc" className="flex-1">
+                <TextInput
                   id="cvc"
                   type="text"
+                  inputSize="lg"
                   inputMode="numeric"
                   placeholder="123"
                   value={cvc}
                   onChange={(e) => setCvc(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                  className="h-12 w-full rounded-lg border border-gray-200 px-3 text-base text-gray-800 outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500"
                 />
-              </div>
+              </FormField>
             </div>
 
             {error && (

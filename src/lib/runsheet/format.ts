@@ -158,6 +158,45 @@ export function dayBoundsInTimeZone(
   };
 }
 
+/** Format a date as day, short month and year. e.g. "11 Jun 2026" */
+export function formatDayMonthYear(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-AU', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+/** Format a date as short weekday, day and month. e.g. "Thu 11 Jun" */
+export function formatWeekdayDayMonth(date: Date, timeZone?: string): string {
+  return date.toLocaleDateString('en-AU', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    timeZone,
+  });
+}
+
+/** Format a timestamp as 24-hour "HH:MM" (used by time inputs). */
+export function formatTime24h(iso: string, timeZone?: string): string {
+  return new Date(iso).toLocaleTimeString('en-AU', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone,
+  });
+}
+
+/** Format a timestamp as day, short month and time. e.g. "11 Jun, 2:05 pm" */
+export function formatDayMonthTime(iso: string): string {
+  return new Date(iso).toLocaleString('en-AU', {
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 /** Format today's date. e.g. "Monday 30 March 2026" */
 export function formatRunsheetDate(date: Date): string {
   return date.toLocaleDateString('en-AU', {

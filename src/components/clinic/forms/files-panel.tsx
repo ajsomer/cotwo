@@ -1,10 +1,15 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
+import { getJson } from "@/lib/api-client";
 import { useOrg } from "@/hooks/useOrg";
 import { Button } from "@/components/ui/button";
+import { Modal, ConfirmModal } from "@/components/ui/modal";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import type { FileRow } from "@/stores/clinic-store";
+import { TextInput } from "@/components/ui/input";
+import { formatDayMonthYear } from "@/lib/runsheet/format";
+import { useEnsureSlices } from "@/hooks/useEnsureSlices";
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -22,11 +27,7 @@ function formatDate(dateStr: string): string {
   if (diffDays === 1) return "Yesterday";
   if (diffDays < 7) return `${diffDays} days ago`;
 
-  return date.toLocaleDateString("en-AU", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  return formatDayMonthYear(date.toISOString());
 }
 
 // ---------------------------------------------------------------------------
@@ -113,14 +114,13 @@ function UploadModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/30"
-        onClick={onClose}
-      />
-      {/* Modal */}
-      <div className="relative bg-white rounded-xl shadow-lg w-full max-w-md mx-4 p-5">
+    <Modal
+      open
+      onClose={onClose}
+      aria-label="Upload file"
+      panelClassName="w-full max-w-md rounded-xl bg-white p-5 shadow-lg"
+      backdropClassName="bg-black/30"
+    >
         <h2 className="text-lg font-semibold text-gray-800 mb-4">
           Upload file
         </h2>
@@ -195,12 +195,11 @@ function UploadModal({
           <label className="text-xs font-medium text-gray-500 block mb-1">
             Name
           </label>
-          <input
+          <TextInput
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. ADHD Fact Sheet"
-            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500"
           />
         </div>
 
@@ -209,12 +208,11 @@ function UploadModal({
           <label className="text-xs font-medium text-gray-500 block mb-1">
             Description (optional)
           </label>
-          <input
+          <TextInput
             type="text"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="One-line description"
-            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500"
           />
         </div>
 
@@ -239,8 +237,7 @@ function UploadModal({
             {uploading ? "Uploading..." : "Upload"}
           </Button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -253,35 +250,27 @@ export function FilesPanel() {
   const files = useClinicStore((s) => s.files);
   const loading = !useClinicStore((s) => s.filesLoaded);
   const [showUpload, setShowUpload] = useState(false);
+  const [archivingFile, setArchivingFile] = useState<FileRow | null>(null);
 
   const refetchFiles = () => {
     if (org) getClinicStore().refreshFiles(org.id);
   };
 
-  // Load files on mount if not loaded
-  useEffect(() => {
-    if (org && !useClinicStore.getState().filesLoaded) {
-      getClinicStore().refreshFiles(org.id);
-    }
-  }, [org]);
+  useEnsureSlices(["files"]);
 
   const handleView = async (file: FileRow) => {
-    try {
-      const res = await fetch(`/api/files/preview?storage_path=${encodeURIComponent(file.storage_path)}`);
-      if (!res.ok) {
-        alert("Failed to generate preview link");
-        return;
-      }
-      const data = await res.json();
-      window.open(data.signed_url, "_blank");
-    } catch {
+    const result = await getJson<{ signed_url: string }>(
+      `/api/files/preview?storage_path=${encodeURIComponent(file.storage_path)}`
+    );
+    if (!result.ok) {
       alert("Failed to generate preview link");
+      return;
     }
+    window.open(result.data.signed_url, "_blank");
   };
 
   const handleArchive = async (file: FileRow) => {
-    if (!confirm(`Archive "${file.name}"? Existing patient links will still work.`))
-      return;
+    setArchivingFile(null);
 
     const res = await fetch(`/api/files?id=${file.id}`, { method: "DELETE" });
 
@@ -398,7 +387,7 @@ export function FilesPanel() {
                         </svg>
                       </button>
                       <button
-                        onClick={() => handleArchive(file)}
+                        onClick={() => setArchivingFile(file)}
                         className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50"
                         title="Archive file"
                       >
@@ -433,6 +422,16 @@ export function FilesPanel() {
           onUploaded={refetchFiles}
         />
       )}
+
+      <ConfirmModal
+        open={!!archivingFile}
+        title={`Archive "${archivingFile?.name}"?`}
+        message="Existing patient links will still work."
+        confirmLabel="Archive"
+        destructive
+        onConfirm={() => archivingFile && handleArchive(archivingFile)}
+        onCancel={() => setArchivingFile(null)}
+      />
     </div>
   );
 }

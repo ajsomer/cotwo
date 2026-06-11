@@ -13,10 +13,9 @@ import {
   staffAssignments,
   clinicianRoomAssignments,
   locations as locationsT,
-  organisations as organisationsT,
 } from '@/lib/db/schema';
 import { and, eq, gte, lte, inArray, isNull, or } from 'drizzle-orm';
-import type { RunsheetSession, Room } from '@/lib/supabase/types';
+import type { RunsheetSession, Room } from '@/lib/types/domain';
 import { dayBoundsInTimeZone } from '@/lib/runsheet/format';
 
 /**
@@ -276,58 +275,4 @@ export const fetchClinicianRoomIds = cache(async (
     );
 
   return data.map((row) => row.room_id);
-});
-
-/** Fetch staff assignments for a user (to determine role and locations). */
-export const fetchUserStaffAssignments = cache(async (userId: string) => {
-  const rows = await db
-    .select({
-      id: staffAssignments.id,
-      user_id: staffAssignments.userId,
-      location_id: staffAssignments.locationId,
-      role: staffAssignments.role,
-      employment_type: staffAssignments.employmentType,
-      stripe_account_id: staffAssignments.stripeAccountId,
-      loc_id: locationsT.id,
-      loc_name: locationsT.name,
-      loc_org_id: locationsT.orgId,
-      loc_timezone: locationsT.timezone,
-      org_id: organisationsT.id,
-      org_name: organisationsT.name,
-      org_slug: organisationsT.slug,
-      org_tier: organisationsT.tier,
-      org_logo_url: organisationsT.logoUrl,
-      org_stripe_routing: organisationsT.stripeRouting,
-      org_timezone: organisationsT.timezone,
-    })
-    .from(staffAssignments)
-    .innerJoin(locationsT, eq(locationsT.id, staffAssignments.locationId))
-    .innerJoin(organisationsT, eq(organisationsT.id, locationsT.orgId))
-    .where(eq(staffAssignments.userId, userId));
-
-  // Re-nest into the shape the old Supabase join returned: assignment row with
-  // a nested `locations` object carrying a nested `organisations` object.
-  return rows.map((r) => ({
-    id: r.id,
-    user_id: r.user_id,
-    location_id: r.location_id,
-    role: r.role,
-    employment_type: r.employment_type,
-    stripe_account_id: r.stripe_account_id,
-    locations: {
-      id: r.loc_id,
-      name: r.loc_name,
-      org_id: r.loc_org_id,
-      timezone: r.loc_timezone,
-      organisations: {
-        id: r.org_id,
-        name: r.org_name,
-        slug: r.org_slug,
-        tier: r.org_tier,
-        logo_url: r.org_logo_url,
-        stripe_routing: r.org_stripe_routing,
-        timezone: r.org_timezone,
-      },
-    },
-  }));
 });

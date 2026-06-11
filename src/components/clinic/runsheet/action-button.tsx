@@ -2,7 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { getActionConfig } from "@/lib/runsheet/derived-state";
-import type { DerivedDisplayState, AppointmentModality } from "@/lib/supabase/types";
+import type { DerivedDisplayState, AppointmentModality } from "@/lib/types/domain";
 
 interface ActionButtonProps {
   state: DerivedDisplayState;

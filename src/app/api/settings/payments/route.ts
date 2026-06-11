@@ -8,6 +8,7 @@ import {
 import { eq } from "drizzle-orm";
 import { fetchPaymentConfig } from "@/lib/clinic/fetchers/payments";
 import { requireStaffLocationAccess } from "@/lib/auth/staff-access";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 // GET /api/settings/payments?location_id=xxx
 // Returns routing mode, location Stripe account, and clinician Stripe statuses
@@ -23,10 +24,7 @@ export async function GET(request: NextRequest) {
 
   const access = await requireStaffLocationAccess(locationId);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Forbidden" },
-      { status: access.status },
-    );
+    return denyResponse(access);
   }
 
   try {
@@ -69,10 +67,7 @@ export async function PATCH(request: NextRequest) {
 
         const routingAccess = await requireStaffLocationAccess(location_id);
         if (!routingAccess.ok) {
-          return NextResponse.json(
-            { error: routingAccess.status === 401 ? "Unauthorized" : "Forbidden" },
-            { status: routingAccess.status },
-          );
+          return denyResponse(routingAccess);
         }
 
         // Get org_id from location
@@ -97,122 +92,15 @@ export async function PATCH(request: NextRequest) {
         return NextResponse.json({ success: true });
       }
 
-      case "connect_account": {
-        const { target, location_id, staff_assignment_id } = body;
-
+      case "connect_account":
         // Generate a test Stripe account ID for the prototype
-        const testAccountId = `acct_test_${crypto.randomUUID().slice(0, 8)}`;
-
-        if (target === "location") {
-          if (!location_id) {
-            return NextResponse.json(
-              { error: "location_id required" },
-              { status: 400 }
-            );
-          }
-
-          const connectAccess = await requireStaffLocationAccess(location_id);
-          if (!connectAccess.ok) {
-            return NextResponse.json(
-              { error: connectAccess.status === 401 ? "Unauthorized" : "Forbidden" },
-              { status: connectAccess.status },
-            );
-          }
-
-          await db
-            .update(locationsT)
-            .set({ stripeAccountId: testAccountId })
-            .where(eq(locationsT.id, location_id));
-
-          return NextResponse.json({
-            success: true,
-            stripe_account_id: testAccountId,
-          });
-        }
-
-        if (target === "clinician") {
-          if (!staff_assignment_id) {
-            return NextResponse.json(
-              { error: "staff_assignment_id required" },
-              { status: 400 }
-            );
-          }
-
-          const saAccess = await requireStaffAssignmentLocationAccess(
-            staff_assignment_id,
-          );
-          if (!saAccess.ok) return saAccess.response;
-
-          await db
-            .update(staffAssignments)
-            .set({ stripeAccountId: testAccountId })
-            .where(eq(staffAssignments.id, staff_assignment_id));
-
-          return NextResponse.json({
-            success: true,
-            stripe_account_id: testAccountId,
-          });
-        }
-
-        return NextResponse.json(
-          { error: "target must be 'location' or 'clinician'" },
-          { status: 400 }
+        return setStripeAccount(
+          body,
+          `acct_test_${crypto.randomUUID().slice(0, 8)}`,
         );
-      }
 
-      case "disconnect_account": {
-        const { target, location_id, staff_assignment_id } = body;
-
-        if (target === "location") {
-          if (!location_id) {
-            return NextResponse.json(
-              { error: "location_id required" },
-              { status: 400 }
-            );
-          }
-
-          const disconnectAccess = await requireStaffLocationAccess(location_id);
-          if (!disconnectAccess.ok) {
-            return NextResponse.json(
-              { error: disconnectAccess.status === 401 ? "Unauthorized" : "Forbidden" },
-              { status: disconnectAccess.status },
-            );
-          }
-
-          await db
-            .update(locationsT)
-            .set({ stripeAccountId: null })
-            .where(eq(locationsT.id, location_id));
-
-          return NextResponse.json({ success: true });
-        }
-
-        if (target === "clinician") {
-          if (!staff_assignment_id) {
-            return NextResponse.json(
-              { error: "staff_assignment_id required" },
-              { status: 400 }
-            );
-          }
-
-          const saAccess = await requireStaffAssignmentLocationAccess(
-            staff_assignment_id,
-          );
-          if (!saAccess.ok) return saAccess.response;
-
-          await db
-            .update(staffAssignments)
-            .set({ stripeAccountId: null })
-            .where(eq(staffAssignments.id, staff_assignment_id));
-
-          return NextResponse.json({ success: true });
-        }
-
-        return NextResponse.json(
-          { error: "target must be 'location' or 'clinician'" },
-          { status: 400 }
-        );
-      }
+      case "disconnect_account":
+        return setStripeAccount(body, null);
 
       default:
         return NextResponse.json(
@@ -227,6 +115,72 @@ export async function PATCH(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+// connect_account and disconnect_account are the same write with a different
+// value: gate on the target's location, then set/clear the Stripe account id
+// on the location (location routing) or the staff assignment (clinician
+// routing). `stripeAccountId === null` means disconnect; the connect response
+// additionally echoes the new stripe_account_id.
+async function setStripeAccount(
+  body: {
+    target?: string;
+    location_id?: string;
+    staff_assignment_id?: string;
+  },
+  stripeAccountId: string | null,
+): Promise<NextResponse> {
+  const { target, location_id, staff_assignment_id } = body;
+  const successBody = stripeAccountId
+    ? { success: true, stripe_account_id: stripeAccountId }
+    : { success: true };
+
+  if (target === "location") {
+    if (!location_id) {
+      return NextResponse.json(
+        { error: "location_id required" },
+        { status: 400 }
+      );
+    }
+
+    const access = await requireStaffLocationAccess(location_id);
+    if (!access.ok) {
+      return denyResponse(access);
+    }
+
+    await db
+      .update(locationsT)
+      .set({ stripeAccountId })
+      .where(eq(locationsT.id, location_id));
+
+    return NextResponse.json(successBody);
+  }
+
+  if (target === "clinician") {
+    if (!staff_assignment_id) {
+      return NextResponse.json(
+        { error: "staff_assignment_id required" },
+        { status: 400 }
+      );
+    }
+
+    const saAccess = await requireStaffAssignmentLocationAccess(
+      staff_assignment_id,
+    );
+    if (!saAccess.ok) return saAccess.response;
+
+    await db
+      .update(staffAssignments)
+      .set({ stripeAccountId })
+      .where(eq(staffAssignments.id, staff_assignment_id));
+
+    return NextResponse.json(successBody);
+  }
+
+  return NextResponse.json(
+    { error: "target must be 'location' or 'clinician'" },
+    { status: 400 }
+  );
 }
 
 // Clinician-target payment actions key on staff_assignment_id, not location_id.
@@ -258,10 +212,7 @@ async function requireStaffAssignmentLocationAccess(
   if (!access.ok) {
     return {
       ok: false,
-      response: NextResponse.json(
-        { error: access.status === 401 ? "Unauthorized" : "Forbidden" },
-        { status: access.status },
-      ),
+      response: denyResponse(access),
     };
   }
 

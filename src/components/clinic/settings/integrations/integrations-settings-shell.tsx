@@ -1,14 +1,22 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { getJson } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { ConfirmModal } from "@/components/ui/modal";
 import { useLocation } from "@/hooks/useLocation";
 import { usePmsConnection } from "@/hooks/usePmsConnection";
+import { usePmsSync, type PmsSyncResponse } from "@/hooks/usePmsSync";
 import type { IntegrationStatusDTO, MappingDataDTO } from "./types";
 import { ConnectForm } from "./connect-form";
 import { PractitionerMappings } from "./practitioner-mappings";
 import { BusinessMappings } from "./business-mappings";
+
+// This page's success copy is more detailed than the run-sheet/readiness
+// default ("Synced — …") — it also reports the skipped count.
+const syncSuccessMessage = (data: PmsSyncResponse) =>
+  `Synced. ${data.appointmentsUpserted ?? 0} appointment(s) updated, ${data.sessionsScheduled ?? 0} scheduled to the run sheet, ${data.skippedNonTelehealth ?? 0} skipped.`;
 
 export function IntegrationsSettingsShell() {
   const { selectedLocation } = useLocation();
@@ -21,16 +29,15 @@ export function IntegrationsSettingsShell() {
   const [mappings, setMappings] = useState<MappingDataDTO | null>(null);
   const [loading, setLoading] = useState(true);
   const [mappingError, setMappingError] = useState<string | null>(null);
-  const [syncing, setSyncing] = useState(false);
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   // Imperative reloads (after sync/connect/disconnect/save) — safe to call
   // outside effects from event handlers.
   const loadStatus = useCallback(async () => {
     if (!locationId) return;
-    const res = await fetch(`/api/pms/connection?locationId=${locationId}`);
-    const data = res.ok ? ((await res.json()) as IntegrationStatusDTO) : null;
-    setStatus(data);
+    const result = await getJson<IntegrationStatusDTO>(
+      `/api/pms/connection?locationId=${locationId}`
+    );
+    setStatus(result.ok ? result.data : null);
     setLoading(false);
     // Keep the shared context in sync after connect/disconnect/subdomain edits.
     refreshPmsContext();
@@ -38,13 +45,15 @@ export function IntegrationsSettingsShell() {
 
   const loadMappings = useCallback(async () => {
     if (!locationId) return;
-    const res = await fetch(`/api/pms/mappings?locationId=${locationId}`);
-    if (res.ok) {
-      setMappings((await res.json()) as MappingDataDTO);
+    const result = await getJson<MappingDataDTO>(
+      `/api/pms/mappings?locationId=${locationId}`,
+      "Couldn't load mappings from the PMS."
+    );
+    if (result.ok) {
+      setMappings(result.data);
       setMappingError(null);
     } else {
-      const err = (await res.json().catch(() => ({}))) as { error?: string };
-      setMappingError(err.error ?? "Couldn't load mappings from the PMS.");
+      setMappingError(result.error);
       setMappings(null);
     }
   }, [locationId]);
@@ -56,10 +65,11 @@ export function IntegrationsSettingsShell() {
     let cancelled = false;
     if (!locationId) return;
     (async () => {
-      const res = await fetch(`/api/pms/connection?locationId=${locationId}`);
-      const data = res.ok ? ((await res.json()) as IntegrationStatusDTO) : null;
+      const result = await getJson<IntegrationStatusDTO>(
+        `/api/pms/connection?locationId=${locationId}`
+      );
       if (cancelled) return;
-      setStatus(data);
+      setStatus(result.ok ? result.data : null);
       setLoading(false);
     })();
     return () => {
@@ -71,15 +81,16 @@ export function IntegrationsSettingsShell() {
     let cancelled = false;
     if (!status?.syncActive) return;
     (async () => {
-      const res = await fetch(`/api/pms/mappings?locationId=${locationId}`);
+      const result = await getJson<MappingDataDTO>(
+        `/api/pms/mappings?locationId=${locationId}`,
+        "Couldn't load mappings from the PMS."
+      );
       if (cancelled) return;
-      if (res.ok) {
-        setMappings((await res.json()) as MappingDataDTO);
+      if (result.ok) {
+        setMappings(result.data);
         setMappingError(null);
       } else {
-        const err = (await res.json().catch(() => ({}))) as { error?: string };
-        if (cancelled) return;
-        setMappingError(err.error ?? "Couldn't load mappings from the PMS.");
+        setMappingError(result.error);
         setMappings(null);
       }
     })();
@@ -88,36 +99,23 @@ export function IntegrationsSettingsShell() {
     };
   }, [status?.syncActive, locationId]);
 
-  const handleSyncNow = useCallback(async () => {
-    if (!locationId) return;
-    setSyncing(true);
-    setSyncMessage(null);
-    const res = await fetch("/api/pms/sync", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ locationId }),
-    });
-    const data = (await res.json().catch(() => ({}))) as {
-      ok?: boolean;
-      appointmentsUpserted?: number;
-      sessionsScheduled?: number;
-      skippedNonTelehealth?: number;
-      error?: string;
-    };
-    if (res.ok && data.ok) {
-      setSyncMessage(
-        `Synced. ${data.appointmentsUpserted ?? 0} appointment(s) updated, ${data.sessionsScheduled ?? 0} scheduled to the run sheet, ${data.skippedNonTelehealth ?? 0} skipped.`
-      );
-    } else {
-      setSyncMessage(data.error ?? "Sync failed.");
-    }
-    setSyncing(false);
-    void loadStatus();
-  }, [locationId, loadStatus]);
+  // Sync state + request via the shared hook; this shell refreshes the
+  // connection status (last-synced timestamp / error) after every attempt.
+  const {
+    isSyncing: syncing,
+    syncMsg: syncMessage,
+    syncNow: handleSyncNow,
+  } = usePmsSync({
+    locationId,
+    successMessage: syncSuccessMessage,
+    onSettled: loadStatus,
+  });
+
+  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
 
   const handleDisconnect = useCallback(async () => {
     if (!locationId) return;
-    if (!confirm("Disconnect this PMS? Mappings are kept; syncing stops.")) return;
+    setConfirmingDisconnect(false);
     await fetch(`/api/pms/connection?locationId=${locationId}`, {
       method: "DELETE",
     });
@@ -185,7 +183,10 @@ export function IntegrationsSettingsShell() {
                 <Button onClick={handleSyncNow} disabled={syncing}>
                   {syncing ? "Syncing…" : "Sync now"}
                 </Button>
-                <Button variant="secondary" onClick={handleDisconnect}>
+                <Button
+                  variant="secondary"
+                  onClick={() => setConfirmingDisconnect(true)}
+                >
                   Disconnect
                 </Button>
               </div>
@@ -235,6 +236,16 @@ export function IntegrationsSettingsShell() {
           )}
         </>
       )}
+
+      <ConfirmModal
+        open={confirmingDisconnect}
+        title="Disconnect this PMS?"
+        message="Mappings are kept; syncing stops."
+        confirmLabel="Disconnect"
+        destructive
+        onConfirm={handleDisconnect}
+        onCancel={() => setConfirmingDisconnect(false)}
+      />
     </div>
   );
 }

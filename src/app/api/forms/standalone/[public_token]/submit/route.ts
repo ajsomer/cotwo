@@ -8,6 +8,7 @@ import {
   formSubmissions,
 } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { createPatientWithPhone } from "@/lib/patient/create-patient";
 import { broadcastOrgSubmissionChange } from "@/lib/realtime/broadcast";
 import {
   IDENTITY_QUESTION_NAME,
@@ -242,35 +243,23 @@ export async function POST(
       };
     }
 
-    let newPatient;
-    try {
-      [newPatient] = await db
-        .insert(patientsT)
-        .values({
-          orgId: form.org_id,
-          firstName: v.value.first_name,
-          lastName: v.value.last_name,
-          dateOfBirth: v.value.date_of_birth,
-        })
-        .returning({ id: patientsT.id });
-    } catch (insertErr) {
-      console.error(
-        "[standalone-forms] someone_else patient insert failed:",
-        insertErr,
-      );
+    const created = await createPatientWithPhone({
+      orgId: form.org_id,
+      firstName: v.value.first_name,
+      lastName: v.value.last_name,
+      dateOfBirth: v.value.date_of_birth,
+      phoneNumber: verifiedPhone,
+      phoneVerified: true,
+      logTag: "standalone-forms someone_else",
+    });
+    if (!created.ok || !created.phoneLinked) {
       return NextResponse.json(
         { error: "Failed to create patient" },
         { status: 500 },
       );
     }
-    resolvedPatientId = newPatient.id;
+    resolvedPatientId = created.patientId;
     resolutionKind = "someone_else";
-
-    await db.insert(patientPhoneNumbers).values({
-      patientId: resolvedPatientId,
-      phoneNumber: verifiedPhone,
-      verifiedAt: new Date().toISOString(),
-    });
   } else if (patient_selection.kind === "new") {
     if (matchSet.length > 0) {
       return NextResponse.json(
@@ -287,35 +276,23 @@ export async function POST(
     }
     snapshotIdentity = v.value;
 
-    let newPatient;
-    try {
-      [newPatient] = await db
-        .insert(patientsT)
-        .values({
-          orgId: form.org_id,
-          firstName: v.value.first_name,
-          lastName: v.value.last_name,
-          dateOfBirth: v.value.date_of_birth,
-        })
-        .returning({ id: patientsT.id });
-    } catch (insertErr) {
-      console.error(
-        "[standalone-forms] new patient insert failed:",
-        insertErr,
-      );
+    const created = await createPatientWithPhone({
+      orgId: form.org_id,
+      firstName: v.value.first_name,
+      lastName: v.value.last_name,
+      dateOfBirth: v.value.date_of_birth,
+      phoneNumber: verifiedPhone,
+      phoneVerified: true,
+      logTag: "standalone-forms new",
+    });
+    if (!created.ok || !created.phoneLinked) {
       return NextResponse.json(
         { error: "Failed to create patient" },
         { status: 500 },
       );
     }
-    resolvedPatientId = newPatient.id;
+    resolvedPatientId = created.patientId;
     resolutionKind = "new";
-
-    await db.insert(patientPhoneNumbers).values({
-      patientId: resolvedPatientId,
-      phoneNumber: verifiedPhone,
-      verifiedAt: new Date().toISOString(),
-    });
   } else {
     return NextResponse.json(
       { error: "Invalid patient_selection.kind" },

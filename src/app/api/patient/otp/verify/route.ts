@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { phoneVerifications, patientPhoneNumbers, patients } from '@/lib/db/schema';
 import { and, eq } from 'drizzle-orm';
+import { parseJsonBody } from '@/lib/api/route-helpers';
 
 /**
  * POST /api/patient/otp/verify
@@ -9,7 +10,13 @@ import { and, eq } from 'drizzle-orm';
  * Returns existing patient contacts at the org for identity resolution.
  */
 export async function POST(request: NextRequest) {
-  const { verification_id, code, org_id } = await request.json();
+  const parsed = await parseJsonBody<{
+    verification_id?: string;
+    code?: string;
+    org_id: string;
+  }>(request);
+  if (!parsed.ok) return parsed.response;
+  const { verification_id, code, org_id } = parsed.body;
 
   if (!verification_id || !code) {
     return NextResponse.json({ error: 'Verification ID and code are required' }, { status: 400 });

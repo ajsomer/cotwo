@@ -11,6 +11,7 @@ import {
   assertStaffCanAccessPatient,
   requireAuthenticatedUser,
 } from "@/lib/auth/staff-access";
+import { unauthenticatedResponse } from "@/lib/api/route-helpers";
 
 // GET /api/forms/submissions/[id]
 // Staff-only; org-scoped via the submission's patient.
@@ -24,7 +25,7 @@ export async function GET(
   // unauthenticated caller can't tell valid IDs from invalid ones.
   const auth = await requireAuthenticatedUser();
   if (!auth.ok) {
-    return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
+    return unauthenticatedResponse();
   }
 
   try {

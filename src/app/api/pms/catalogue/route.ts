@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { requireStaffLocationAccess } from "@/lib/auth/staff-access";
 import { getConnectionForLocation } from "@/lib/pms/connection";
 import { getStaticMetadata } from "@/lib/pms/registry";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 /**
  * GET ?locationId= → the active provider's field catalogue + capabilities,
@@ -15,7 +16,7 @@ export async function GET(request: NextRequest) {
   }
   const access = await requireStaffLocationAccess(locationId);
   if (!access.ok) {
-    return NextResponse.json({ error: "Forbidden" }, { status: access.status });
+    return denyResponse(access);
   }
 
   const connection = await getConnectionForLocation(locationId);

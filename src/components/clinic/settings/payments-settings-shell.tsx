@@ -1,13 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useLocation } from "@/hooks/useLocation";
 import { useRole } from "@/hooks/useRole";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
+import { Toggle } from "@/components/ui/toggle";
+import { ConfirmModal } from "@/components/ui/modal";
+import { useClinicStore, getClinicStore, selectPaymentRooms } from "@/stores/clinic-store";
 import type { PaymentsData, RoomPayment } from "@/stores/clinic-store";
-import type { RoomType } from "@/lib/supabase/types";
+import type { RoomType } from "@/lib/types/domain";
+import { useEnsureSlices } from "@/hooks/useEnsureSlices";
 
 type RoutingMode = "location" | "clinician";
 type Tab = "configuration" | "rooms";
@@ -27,23 +30,20 @@ export function PaymentsSettingsShell() {
   const { role, userId } = useRole();
   const [tab, setTab] = useState<Tab>("configuration");
   const data = useClinicStore((s) => s.paymentConfig);
-  const rooms = useClinicStore((s) => s.paymentRooms);
+  const rooms = useClinicStore(selectPaymentRooms);
   const loading = !useClinicStore((s) => s.paymentConfigLoaded);
 
-  // Fetch-if-empty. paymentRooms is now derived in refreshRooms, so ensure
-  // rooms are loaded too (covers a direct/cold landing on this page where the
+  // paymentRooms is derived from roomsWithClinicians, so ensure rooms are
+  // loaded too (covers a direct/cold landing on this page where the
   // location-switch bootstrap hasn't run).
-  useEffect(() => {
-    if (!selectedLocation) return;
-    const store = getClinicStore();
-    if (!store.paymentConfigLoaded) {
-      void store.refreshPaymentConfig(selectedLocation.id);
-    }
-    if (!store.roomsLoaded) {
-      void store.refreshRooms(selectedLocation.id);
-    }
-  }, [selectedLocation]);
+  useEnsureSlices(["paymentConfig", "rooms"]);
   const [saving, setSaving] = useState(false);
+  const [pendingConfirm, setPendingConfirm] = useState<
+    | { kind: "routing"; mode: RoutingMode; label: string }
+    | { kind: "connect"; target: "location" | "clinician"; staffAssignmentId?: string }
+    | { kind: "disconnect"; target: "location" | "clinician"; staffAssignmentId?: string }
+    | null
+  >(null);
 
   const isAdmin =
     role === "clinic_owner" || role === "practice_manager";
@@ -54,16 +54,14 @@ export function PaymentsSettingsShell() {
   };
 
   // Routing mode change
-  const handleRoutingChange = async (mode: RoutingMode) => {
+  const handleRoutingChange = (mode: RoutingMode) => {
     if (!selectedLocation || !data || mode === data.routing_mode) return;
-
     const label = mode === "location" ? "Clinic" : "Per clinician";
-    if (
-      !confirm(
-        `Change payment routing to "${label}"? This affects where payments are directed for all locations.`
-      )
-    )
-      return;
+    setPendingConfirm({ kind: "routing", mode, label });
+  };
+
+  const performRoutingChange = async (mode: RoutingMode) => {
+    if (!selectedLocation || !data) return;
 
     setSaving(true);
     try {
@@ -85,13 +83,19 @@ export function PaymentsSettingsShell() {
   };
 
   // Connect Stripe account (stubbed)
-  const handleConnect = async (
+  const handleConnect = (
     target: "location" | "clinician",
     staffAssignmentId?: string
   ) => {
     if (!selectedLocation) return;
+    setPendingConfirm({ kind: "connect", target, staffAssignmentId });
+  };
 
-    if (!confirm("Connect test Stripe account?")) return;
+  const performConnect = async (
+    target: "location" | "clinician",
+    staffAssignmentId?: string
+  ) => {
+    if (!selectedLocation) return;
 
     setSaving(true);
     try {
@@ -114,14 +118,19 @@ export function PaymentsSettingsShell() {
   };
 
   // Disconnect Stripe account
-  const handleDisconnect = async (
+  const handleDisconnect = (
     target: "location" | "clinician",
     staffAssignmentId?: string
   ) => {
     if (!selectedLocation) return;
+    setPendingConfirm({ kind: "disconnect", target, staffAssignmentId });
+  };
 
-    if (!confirm("Disconnect Stripe account? Payments will be disabled."))
-      return;
+  const performDisconnect = async (
+    target: "location" | "clinician",
+    staffAssignmentId?: string
+  ) => {
+    if (!selectedLocation) return;
 
     setSaving(true);
     try {
@@ -143,26 +152,17 @@ export function PaymentsSettingsShell() {
     }
   };
 
-  // Room payment toggle — updates paymentRooms, rooms, and roomsWithClinicians
+  // Room payment toggle — rooms/paymentRooms are derived projections, so the
+  // optimistic update (and revert) only touches roomsWithClinicians.
   const handleRoomToggle = async (roomId: string, enabled: boolean) => {
-    const store = getClinicStore();
+    const setEnabled = (value: boolean) =>
+      getClinicStore().setRoomsWithClinicians(
+        getClinicStore().roomsWithClinicians.map((r) =>
+          r.id === roomId ? { ...r, payments_enabled: value } : r
+        )
+      );
 
-    // Optimistic update across all room slices
-    store.setPaymentRooms(
-      store.paymentRooms.map((r) =>
-        r.id === roomId ? { ...r, payments_enabled: enabled } : r
-      )
-    );
-    store.setRooms(
-      store.rooms.map((r) =>
-        r.id === roomId ? { ...r, payments_enabled: enabled } : r
-      )
-    );
-    store.setRoomsWithClinicians(
-      store.roomsWithClinicians.map((r) =>
-        r.id === roomId ? { ...r, payments_enabled: enabled } : r
-      )
-    );
+    setEnabled(enabled);
 
     const res = await fetch("/api/settings/rooms", {
       method: "PATCH",
@@ -171,22 +171,7 @@ export function PaymentsSettingsShell() {
     });
 
     if (!res.ok) {
-      // Revert across all room slices
-      store.setPaymentRooms(
-        store.paymentRooms.map((r) =>
-          r.id === roomId ? { ...r, payments_enabled: !enabled } : r
-        )
-      );
-      store.setRooms(
-        store.rooms.map((r) =>
-          r.id === roomId ? { ...r, payments_enabled: !enabled } : r
-        )
-      );
-      store.setRoomsWithClinicians(
-        store.roomsWithClinicians.map((r) =>
-          r.id === roomId ? { ...r, payments_enabled: !enabled } : r
-        )
-      );
+      setEnabled(!enabled);
     }
   };
 
@@ -284,6 +269,43 @@ export function PaymentsSettingsShell() {
           onToggle={handleRoomToggle}
         />
       )}
+
+      <ConfirmModal
+        open={!!pendingConfirm}
+        title={
+          pendingConfirm?.kind === "routing"
+            ? `Change payment routing to "${pendingConfirm.label}"?`
+            : pendingConfirm?.kind === "connect"
+              ? "Connect test Stripe account?"
+              : "Disconnect Stripe account?"
+        }
+        message={
+          pendingConfirm?.kind === "routing"
+            ? "This affects where payments are directed for all locations."
+            : pendingConfirm?.kind === "disconnect"
+              ? "Payments will be disabled."
+              : undefined
+        }
+        confirmLabel={
+          pendingConfirm?.kind === "routing"
+            ? "Change routing"
+            : pendingConfirm?.kind === "connect"
+              ? "Connect"
+              : "Disconnect"
+        }
+        destructive={pendingConfirm?.kind === "disconnect"}
+        busy={saving}
+        onConfirm={() => {
+          if (!pendingConfirm) return;
+          const action = pendingConfirm;
+          setPendingConfirm(null);
+          if (action.kind === "routing") void performRoutingChange(action.mode);
+          else if (action.kind === "connect")
+            void performConnect(action.target, action.staffAssignmentId);
+          else void performDisconnect(action.target, action.staffAssignmentId);
+        }}
+        onCancel={() => setPendingConfirm(null)}
+      />
     </div>
   );
 }
@@ -567,16 +589,12 @@ function RoomsTab({
                   </span>
                   <Badge variant={typeConfig.variant}>{typeConfig.label}</Badge>
                 </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    className="sr-only peer"
-                    checked={room.payments_enabled}
-                    disabled={!hasStripeConnected}
-                    onChange={(e) => onToggle(room.id, e.target.checked)}
-                  />
-                  <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-teal-500/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-teal-500 peer-disabled:opacity-50 peer-disabled:cursor-not-allowed" />
-                </label>
+                <Toggle
+                  checked={room.payments_enabled}
+                  disabled={!hasStripeConnected}
+                  onChange={(checked) => onToggle(room.id, checked)}
+                  aria-label={`Payments for ${room.name}`}
+                />
               </div>
             );
           })}

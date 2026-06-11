@@ -3,9 +3,12 @@
 import { useState, useMemo, useRef } from "react";
 import { SlideOver } from "@/components/ui/slide-over";
 import { Button } from "@/components/ui/button";
+import { CloseButton } from "@/components/ui/close-button";
+import { ConfirmModal } from "@/components/ui/modal";
 import { useOrg } from "@/hooks/useOrg";
 import { createSessions, updateSession, deleteSession } from "@/lib/runsheet/mutations";
-import type { Room, EnrichedSession } from "@/lib/supabase/types";
+import type { Room, EnrichedSession } from "@/lib/types/domain";
+import { formatWeekdayDayMonth, formatTime24h } from "@/lib/runsheet/format";
 
 interface AddSessionPanelProps {
   locationId: string;
@@ -40,24 +43,18 @@ export function AddSessionPanel({
   const { org } = useOrg();
   const [planningTomorrow, setPlanningTomorrow] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [deletingSession, setDeletingSession] = useState<{
+    sessionId: string;
+    roomId: string;
+  } | null>(null);
 
   const today = new Date();
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
   const targetDate = planningTomorrow ? tomorrow : today;
 
-  const todayShort = today.toLocaleDateString("en-AU", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    timeZone: timezone,
-  });
-  const tomorrowShort = tomorrow.toLocaleDateString("en-AU", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    timeZone: timezone,
-  });
+  const todayShort = formatWeekdayDayMonth(today, timezone);
+  const tomorrowShort = formatWeekdayDayMonth(tomorrow, timezone);
 
   // Track which rows are existing sessions vs newly added
   const [existingSessionIds] = useState<Set<string>>(() => {
@@ -75,14 +72,7 @@ export function AddSessionPanel({
       if (s.derived_state === "done") continue;
       map.set(s.session_id, {
         phone: s.phone_number ?? "",
-        time: s.scheduled_at
-          ? new Date(s.scheduled_at).toLocaleTimeString("en-AU", {
-              hour: "2-digit",
-              minute: "2-digit",
-              hour12: false,
-              timeZone: timezone,
-            })
-          : "",
+        time: s.scheduled_at ? formatTime24h(s.scheduled_at, timezone) : "",
       });
     }
     return map;
@@ -101,14 +91,7 @@ export function AddSessionPanel({
         patients: roomSessions.map((s) => ({
           id: s.session_id,
           phone: s.phone_number ?? "",
-          time: s.scheduled_at
-            ? new Date(s.scheduled_at).toLocaleTimeString("en-AU", {
-                hour: "2-digit",
-                minute: "2-digit",
-                hour12: false,
-                timeZone: timezone,
-              })
-            : "",
+          time: s.scheduled_at ? formatTime24h(s.scheduled_at, timezone) : "",
         })),
       };
     }
@@ -246,9 +229,7 @@ export function AddSessionPanel({
   }
 
   async function handleDeleteSession(sessionId: string, roomId: string) {
-    if (!confirm("Delete this session? If the patient has been notified, a cancellation SMS will be sent.")) {
-      return;
-    }
+    setDeletingSession(null);
     await deleteSession(sessionId);
     removePatientRow(roomId, sessionId);
     await onRefetch?.();
@@ -269,15 +250,10 @@ export function AddSessionPanel({
                 Select rooms and add patients to build {dayLabel} schedule.
               </p>
             </div>
-            <button
+            <CloseButton
               onClick={onClose}
               className="p-1 text-gray-500 hover:text-gray-800 transition-colors rounded flex-shrink-0 -mr-1 -mt-0.5"
-              aria-label="Close"
-            >
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+            />
           </div>
         </div>
 
@@ -413,7 +389,10 @@ export function AddSessionPanel({
                               onClick={() =>
                                 editingSessionId &&
                                 sessions.find((s) => s.session_id === patient.id)
-                                  ? handleDeleteSession(patient.id, room.id)
+                                  ? setDeletingSession({
+                                      sessionId: patient.id,
+                                      roomId: room.id,
+                                    })
                                   : removePatientRow(room.id, patient.id)
                               }
                               className="p-1 text-gray-400 hover:text-red-500 transition-colors flex-shrink-0"
@@ -457,6 +436,19 @@ export function AddSessionPanel({
           </Button>
         </div>
       </div>
+
+      <ConfirmModal
+        open={!!deletingSession}
+        title="Delete this session?"
+        message="If the patient has been notified, a cancellation SMS will be sent."
+        confirmLabel="Delete"
+        destructive
+        onConfirm={() =>
+          deletingSession &&
+          handleDeleteSession(deletingSession.sessionId, deletingSession.roomId)
+        }
+        onCancel={() => setDeletingSession(null)}
+      />
     </SlideOver>
   );
 }

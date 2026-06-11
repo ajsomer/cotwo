@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useTransition } from "react";
 import dynamic from "next/dynamic";
+import { getJson, postJson } from "@/lib/api-client";
 import { RunsheetHeader } from "./runsheet-header";
 import { RoomContainer } from "./room-container";
 import { enrichSessions } from "@/lib/runsheet/derived-state";
@@ -11,10 +12,13 @@ import { useFaviconBadge } from "@/hooks/useFaviconBadge";
 import { seedDemoData, nukeSessions } from "@/lib/runsheet/seed";
 import { PatientContactCard } from "@/components/clinic/patient/patient-contact-card";
 import { PatientSlideOverProvider } from "@/components/clinic/patient/patient-slide-over-context";
-import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
+import { useClinicStore, getClinicStore, selectRooms } from "@/stores/clinic-store";
+import type { OnboardingState } from "@/stores/clinic-store";
 import { useLocation } from "@/hooks/useLocation";
 import { useRole } from "@/hooks/useRole";
 import { usePmsConnection } from "@/hooks/usePmsConnection";
+import { usePmsSync } from "@/hooks/usePmsSync";
+import { useNow } from "@/hooks/useNow";
 // ONBOARDING DISABLED — the first-login walkthrough is currently turned off.
 // To re-enable: uncomment the two mounts in the JSX below (search "ONBOARDING DISABLED")
 // and remove the eslint-disable comments on these two imports.
@@ -24,6 +28,7 @@ import { OnboardingOverlay } from "@/components/clinic/onboarding/onboarding-ove
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { OnboardingCoachMark } from "@/components/clinic/onboarding/onboarding-coach-mark";
 import { RoomContainerSkeleton } from "./room-container-skeleton";
+import { Button } from "@/components/ui/button";
 
 const EMPTY_SUMMARY = {
   total: 0,
@@ -53,7 +58,7 @@ export function RunsheetShell() {
   // Read from Zustand store. If a slice isn't loaded yet, the effect below
   // fetches it once per tab via the store's refresh* action.
   const sessions = useClinicStore((s) => s.sessions);
-  const rooms = useClinicStore((s) => s.rooms);
+  const rooms = useClinicStore(selectRooms);
   const clinicianRoomIds = useClinicStore((s) => s.clinicianRoomIds);
   const connectedSessions = useClinicStore((s) => s.connectedSessions);
   const sessionsLoaded = useClinicStore((s) => s.sessionsLoaded);
@@ -133,14 +138,10 @@ export function RunsheetShell() {
     if (onboardingLoaded) return;
     let cancelled = false;
     void (async () => {
-      try {
-        const res = await fetch("/api/onboarding/state");
-        if (!res.ok || cancelled) return;
-        const state = await res.json();
-        getClinicStore().setOnboarding(state);
-      } catch {
-        // Swallow — onboarding is non-critical for the run sheet itself.
-      }
+      // Failures swallowed — onboarding is non-critical for the run sheet itself.
+      const result = await getJson<Partial<OnboardingState>>("/api/onboarding/state");
+      if (!result.ok || cancelled) return;
+      getClinicStore().setOnboarding(result.data);
     })();
     return () => {
       cancelled = true;
@@ -148,11 +149,7 @@ export function RunsheetShell() {
   }, [onboardingLoaded]);
 
   // Tick `now` every 30s for derived state recalculation
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const interval = setInterval(() => setNow(new Date()), 30_000);
-    return () => clearInterval(interval);
-  }, []);
+  const now = useNow();
 
   // Filter rooms for clinician view. The skeleton gate above guarantees
   // clinicianRoomIdsLoaded === true by the time this runs, so an empty array
@@ -210,40 +207,11 @@ export function RunsheetShell() {
   // PMS connection — shared from context (fetched once), no per-component poll.
   // The "Sync now" button only appears when the location is sync-active.
   const pms = usePmsConnection();
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncMsg, setSyncMsg] = useState<string | null>(null);
-
-  const handleSyncNow = useCallback(async () => {
-    if (!locationId) return;
-    setIsSyncing(true);
-    setSyncMsg(null);
-    try {
-      const res = await fetch("/api/pms/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ locationId }),
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        ok?: boolean;
-        appointmentsUpserted?: number;
-        sessionsScheduled?: number;
-        skippedNonTelehealth?: number;
-        error?: string;
-      };
-      if (res.ok && data.ok) {
-        setSyncMsg(
-          `Synced — ${data.sessionsScheduled ?? 0} new session(s), ${data.appointmentsUpserted ?? 0} appointment(s) updated.`
-        );
-        await refetch();
-      } else {
-        setSyncMsg(data.error ?? "Sync failed.");
-      }
-    } catch {
-      setSyncMsg("Couldn't reach the server.");
-    } finally {
-      setIsSyncing(false);
-    }
-  }, [locationId, refetch]);
+  const {
+    isSyncing,
+    syncMsg,
+    syncNow: handleSyncNow,
+  } = usePmsSync({ locationId, onSynced: refetch });
 
   // Add session panel state
   const [addSessionOpen, setAddSessionOpen] = useState(false);
@@ -287,11 +255,7 @@ export function RunsheetShell() {
   const onboarding = useClinicStore((s) => s.onboarding);
 
   async function advanceOnboardingStage(to: "call_active" | "call_completed") {
-    await fetch("/api/onboarding/advance-stage", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ to }),
-    });
+    await postJson("/api/onboarding/advance-stage", { to });
     getClinicStore().setOnboarding({ stage: to });
   }
 
@@ -403,12 +367,7 @@ export function RunsheetShell() {
               <p className="text-sm text-gray-500">
                 Check your connection and try again.
               </p>
-              <button
-                onClick={() => setRetryKey((k) => k + 1)}
-                className="inline-flex items-center gap-2 rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 transition-colors"
-              >
-                Retry
-              </button>
+              <Button onClick={() => setRetryKey((k) => k + 1)}>Retry</Button>
             </div>
           </div>
         </PatientSlideOverProvider>
@@ -506,13 +465,9 @@ export function RunsheetShell() {
         {groups.length === 0 && (
           <div className="bg-white rounded-xl border border-gray-200 p-12 text-center space-y-4">
             <p className="text-gray-500">No rooms configured for this location</p>
-            <button
-              onClick={handleSeed}
-              disabled={isSeeding}
-              className="inline-flex items-center gap-2 rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 disabled:opacity-50 transition-colors"
-            >
+            <Button onClick={handleSeed} disabled={isSeeding}>
               {isSeeding ? "Seeding..." : "Seed demo data"}
-            </button>
+            </Button>
           </div>
         )}
 

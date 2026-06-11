@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
-import type { RunsheetSession, Room } from "@/lib/supabase/types";
+import { getJson } from "@/lib/api-client";
+import type { RunsheetSession, Room } from "@/lib/types/domain";
 import type { DbWorkflowTemplate, DbWorkflowActionBlock } from "@/lib/workflows/types";
 import type {
   AppointmentTypeRow,
@@ -54,7 +55,8 @@ export type {
 
 export interface ClinicStore {
   // Tier 1: Stable
-  rooms: Room[];
+  // `rooms` and `paymentRooms` are projections of roomsWithClinicians —
+  // derive them with selectRooms / selectPaymentRooms below.
   roomsWithClinicians: RoomWithClinicians[];
   appointmentTypes: AppointmentTypeRow[];
   clinicianRoomIds: string[];
@@ -67,7 +69,6 @@ export interface ClinicStore {
   postWorkflowBlocks: Record<string, DbWorkflowActionBlock[]>;
   outcomePathways: OutcomePathwayRow[];
   paymentConfig: PaymentsData | null;
-  paymentRooms: RoomPayment[];
 
   // Tier 2: Volatile
   sessions: RunsheetSession[];
@@ -120,7 +121,6 @@ export interface ClinicStore {
   refreshClinicianRoomIds: (locationId: string) => Promise<void>;
 
   // Direct setters (for optimistic updates and Realtime handlers)
-  setRooms: (rooms: Room[]) => void;
   setRoomsWithClinicians: (rooms: RoomWithClinicians[]) => void;
   setSessions: (sessions: RunsheetSession[]) => void;
   setReadinessAppointments: (appointments: ReadinessAppointment[]) => void;
@@ -136,7 +136,6 @@ export interface ClinicStore {
   setPostWorkflowTemplates: (templates: Record<string, DbWorkflowTemplate>) => void;
   setPostWorkflowBlocks: (blocks: Record<string, DbWorkflowActionBlock[]>) => void;
   setPaymentConfig: (config: PaymentsData | null) => void;
-  setPaymentRooms: (rooms: RoomPayment[]) => void;
   setClinicianRoomIds: (ids: string[]) => void;
   setConnectedSessions: (sessions: Set<string>) => void;
   setOnboarding: (state: Partial<OnboardingState>) => void;
@@ -151,24 +150,37 @@ export interface ClinicStore {
 }
 
 // ---------------------------------------------------------------------------
-// Fetch helpers
-// ---------------------------------------------------------------------------
-
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
-  return res.json();
-}
-
-// ---------------------------------------------------------------------------
 // Store creation
 // ---------------------------------------------------------------------------
 
 export const useClinicStore = create<ClinicStore>()(
   devtools(
-    (set, get) => ({
+    (set, get) => {
+      /**
+       * Build a refresh action: fetch a slice, bail (with a console error)
+       * on failure, drop stale responses when the user has switched
+       * locations mid-flight, then apply the payload as a state patch.
+       */
+      function makeRefresh<T>(spec: {
+        name: string;
+        action: string;
+        locationScoped?: boolean;
+        fetcher: (id: string) => Promise<{ ok: true; data: T } | { ok: false; error: string }>;
+        apply: (data: T) => Partial<ClinicStore>;
+      }) {
+        return async (id: string) => {
+          const result = await spec.fetcher(id);
+          if (!result.ok) {
+            console.error(`Failed to refresh ${spec.name}:`, result.error);
+            return;
+          }
+          if (spec.locationScoped && get().locationId !== id) return;
+          set(spec.apply(result.data), false, spec.action);
+        };
+      }
+
+      return {
       // Initial state
-      rooms: [],
       roomsWithClinicians: [],
       appointmentTypes: [],
       clinicianRoomIds: [],
@@ -181,7 +193,6 @@ export const useClinicStore = create<ClinicStore>()(
       postWorkflowBlocks: {},
       outcomePathways: [],
       paymentConfig: null,
-      paymentRooms: [],
       sessions: [],
       readinessAppointmentsPre: [],
       readinessAppointmentsPost: [],
@@ -211,137 +222,106 @@ export const useClinicStore = create<ClinicStore>()(
       readinessFetchedAt: null,
       roomsFetchedAt: null,
 
-      // Individual refresh actions
-      refreshSessions: async (locationId) => {
-        try {
-          const data = await fetchJson<{ sessions: RunsheetSession[] }>(
+      // Individual refresh actions — all share the makeRefresh shape:
+      // fetch → log-and-bail on error → (optionally) drop stale responses
+      // after a location switch → apply the payload as a state patch.
+      refreshSessions: makeRefresh({
+        name: "sessions",
+        action: "refreshSessions",
+        locationScoped: true,
+        fetcher: (locationId: string) =>
+          getJson<{ sessions: RunsheetSession[] }>(
             `/api/runsheet?locationId=${locationId}`
-          );
-          // Stale-response guard: if the user switched locations mid-fetch,
-          // drop this response so we don't paint location A's data over B's.
-          if (get().locationId !== locationId) return;
-          set(
-            { sessions: data.sessions, sessionsLoaded: true, sessionsFetchedAt: Date.now() },
-            false,
-            "refreshSessions"
-          );
-        } catch (e) {
-          console.error("Failed to refresh sessions:", e);
-        }
-      },
+          ),
+        apply: (data) => ({
+          sessions: data.sessions,
+          sessionsLoaded: true,
+          sessionsFetchedAt: Date.now(),
+        }),
+      }),
 
-      refreshRooms: async (locationId) => {
-        try {
-          const data = await fetchJson<{ rooms: RoomWithClinicians[] }>(
+      refreshRooms: makeRefresh({
+        name: "rooms",
+        action: "refreshRooms",
+        locationScoped: true,
+        fetcher: (locationId: string) =>
+          getJson<{ rooms: RoomWithClinicians[] }>(
             `/api/settings/rooms?location_id=${locationId}`
-          );
-          if (get().locationId !== locationId) return;
-          const roomsWithClinicians = data.rooms ?? [];
-          // Derive basic Room[] from the settings response
-          const rooms: Room[] = roomsWithClinicians.map((r) => ({
-            id: r.id,
-            location_id: r.location_id,
-            name: r.name,
-            room_type: r.room_type,
-            link_token: r.link_token,
-            sort_order: r.sort_order,
-            payments_enabled: r.payments_enabled ?? false,
-          }));
-          // paymentRooms is a projection of the same rooms — derive it here so
-          // refreshPaymentConfig doesn't re-fetch /api/settings/rooms.
-          const paymentRooms: RoomPayment[] = roomsWithClinicians.map((r) => ({
-            id: r.id,
-            name: r.name,
-            room_type: r.room_type,
-            payments_enabled: r.payments_enabled ?? false,
-          }));
-          set(
-            { rooms, roomsWithClinicians, paymentRooms, roomsLoaded: true, roomsFetchedAt: Date.now() },
-            false,
-            "refreshRooms"
-          );
-        } catch (e) {
-          console.error("Failed to refresh rooms:", e);
-        }
-      },
+          ),
+        apply: (data) => ({
+          roomsWithClinicians: data.rooms ?? [],
+          roomsLoaded: true,
+          roomsFetchedAt: Date.now(),
+        }),
+      }),
 
-      refreshReadiness: async (locationId) => {
-        try {
-          const [preData, postData] = await Promise.all([
-            fetchJson<{
+      refreshReadiness: makeRefresh({
+        name: "readiness",
+        action: "refreshReadiness",
+        locationScoped: true,
+        fetcher: async (locationId: string) => {
+          const [preResult, postResult] = await Promise.all([
+            getJson<{
               appointments: ReadinessAppointment[];
               counts?: ReadinessCounts;
             }>(`/api/tasks?location_id=${locationId}&direction=pre_appointment`),
-            fetchJson<{
+            getJson<{
               appointments: ReadinessAppointment[];
               counts?: ReadinessCounts;
             }>(`/api/tasks?location_id=${locationId}&direction=post_appointment`),
           ]);
-          if (get().locationId !== locationId) return;
-          set(
-            {
-              readinessAppointmentsPre: preData.appointments ?? [],
-              readinessAppointmentsPost: postData.appointments ?? [],
-              readinessCounts: {
-                pre: preData.counts?.pre ?? preData.appointments?.length ?? 0,
-                post: postData.counts?.post ?? postData.appointments?.length ?? 0,
-              },
-              readinessLoadedPre: true,
-              readinessLoadedPost: true,
-              readinessFetchedAt: Date.now(),
-            },
-            false,
-            "refreshReadiness"
-          );
-        } catch (e) {
-          console.error("Failed to refresh readiness:", e);
-        }
-      },
+          if (!preResult.ok) return preResult;
+          if (!postResult.ok) return postResult;
+          return { ok: true as const, data: { pre: preResult.data, post: postResult.data } };
+        },
+        apply: ({ pre, post }) => ({
+          readinessAppointmentsPre: pre.appointments ?? [],
+          readinessAppointmentsPost: post.appointments ?? [],
+          readinessCounts: {
+            pre: pre.counts?.pre ?? pre.appointments?.length ?? 0,
+            post: post.counts?.post ?? post.appointments?.length ?? 0,
+          },
+          readinessLoadedPre: true,
+          readinessLoadedPost: true,
+          readinessFetchedAt: Date.now(),
+        }),
+      }),
 
-      refreshForms: async (orgId) => {
-        try {
-          const data = await fetchJson<{ forms: FormRow[] }>(
-            `/api/forms?org_id=${orgId}`
-          );
-          set({ forms: data.forms ?? [], formsLoaded: true }, false, "refreshForms");
-        } catch (e) {
-          console.error("Failed to refresh forms:", e);
-        }
-      },
+      refreshForms: makeRefresh({
+        name: "forms",
+        action: "refreshForms",
+        fetcher: (orgId: string) =>
+          getJson<{ forms: FormRow[] }>(`/api/forms?org_id=${orgId}`),
+        apply: (data) => ({ forms: data.forms ?? [], formsLoaded: true }),
+      }),
 
-      refreshFiles: async (orgId) => {
-        try {
-          const data = await fetchJson<{ files: FileRow[] }>(
-            `/api/files?org_id=${orgId}`
-          );
-          set({ files: data.files ?? [], filesLoaded: true }, false, "refreshFiles");
-        } catch (e) {
-          console.error("Failed to refresh files:", e);
-        }
-      },
+      refreshFiles: makeRefresh({
+        name: "files",
+        action: "refreshFiles",
+        fetcher: (orgId: string) =>
+          getJson<{ files: FileRow[] }>(`/api/files?org_id=${orgId}`),
+        apply: (data) => ({ files: data.files ?? [], filesLoaded: true }),
+      }),
 
-      refreshStandaloneSubmissions: async (orgId) => {
-        try {
-          const data = await fetchJson<{
-            submissions: StandaloneSubmissionRow[];
-          }>(`/api/forms/standalone/submissions?org_id=${orgId}&status=pending`);
-          set(
-            {
-              standaloneSubmissions: data.submissions ?? [],
-              standaloneSubmissionsLoaded: true,
-            },
-            false,
-            "refreshStandaloneSubmissions"
-          );
-        } catch (e) {
-          console.error("Failed to refresh standalone submissions:", e);
-        }
-      },
+      refreshStandaloneSubmissions: makeRefresh({
+        name: "standalone submissions",
+        action: "refreshStandaloneSubmissions",
+        fetcher: (orgId: string) =>
+          getJson<{ submissions: StandaloneSubmissionRow[] }>(
+            `/api/forms/standalone/submissions?org_id=${orgId}&status=pending`
+          ),
+        apply: (data) => ({
+          standaloneSubmissions: data.submissions ?? [],
+          standaloneSubmissionsLoaded: true,
+        }),
+      }),
 
-      refreshWorkflows: async (orgId) => {
-        try {
-          // One request: the init route returns both directions + forms.
-          const data = await fetchJson<{
+      refreshWorkflows: makeRefresh({
+        name: "workflows",
+        action: "refreshWorkflows",
+        // One request: the init route returns both directions + forms.
+        fetcher: (orgId: string) =>
+          getJson<{
             appointment_types: AppointmentTypeRow[];
             outcome_pathways: OutcomePathwayRow[];
             forms: { id: string; name: string }[];
@@ -349,61 +329,44 @@ export const useClinicStore = create<ClinicStore>()(
             pre_blocks: Record<string, DbWorkflowActionBlock[]>;
             post_templates: Record<string, DbWorkflowTemplate>;
             post_blocks: Record<string, DbWorkflowActionBlock[]>;
-          }>(`/api/workflows/init?org_id=${orgId}`);
-          set(
-            {
-              appointmentTypes: data.appointment_types,
-              outcomePathways: data.outcome_pathways ?? [],
-              preWorkflowTemplates: data.pre_templates,
-              preWorkflowBlocks: data.pre_blocks,
-              postWorkflowTemplates: data.post_templates,
-              postWorkflowBlocks: data.post_blocks,
-              workflowsLoaded: true,
-            },
-            false,
-            "refreshWorkflows"
-          );
-        } catch (e) {
-          console.error("Failed to refresh workflows:", e);
-        }
-      },
+          }>(`/api/workflows/init?org_id=${orgId}`),
+        apply: (data) => ({
+          appointmentTypes: data.appointment_types,
+          outcomePathways: data.outcome_pathways ?? [],
+          preWorkflowTemplates: data.pre_templates,
+          preWorkflowBlocks: data.pre_blocks,
+          postWorkflowTemplates: data.post_templates,
+          postWorkflowBlocks: data.post_blocks,
+          workflowsLoaded: true,
+        }),
+      }),
 
-      refreshPaymentConfig: async (locationId) => {
-        try {
-          // paymentRooms is derived in refreshRooms (same /api/settings/rooms
-          // payload); here we only need the payment config itself.
-          const config = await fetchJson<PaymentsData>(
-            `/api/settings/payments?location_id=${locationId}`
-          );
-          if (get().locationId !== locationId) return;
-          set(
-            { paymentConfig: config, paymentConfigLoaded: true },
-            false,
-            "refreshPaymentConfig"
-          );
-        } catch (e) {
-          console.error("Failed to refresh payment config:", e);
-        }
-      },
+      refreshPaymentConfig: makeRefresh({
+        name: "payment config",
+        action: "refreshPaymentConfig",
+        locationScoped: true,
+        // paymentRooms is derived from roomsWithClinicians (same
+        // /api/settings/rooms payload); here we only need the config itself.
+        fetcher: (locationId: string) =>
+          getJson<PaymentsData>(`/api/settings/payments?location_id=${locationId}`),
+        apply: (data) => ({ paymentConfig: data, paymentConfigLoaded: true }),
+      }),
 
-      refreshClinicianRoomIds: async (locationId) => {
-        try {
-          const data = await fetchJson<{ roomIds: string[] }>(
+      refreshClinicianRoomIds: makeRefresh({
+        name: "clinician room IDs",
+        action: "refreshClinicianRoomIds",
+        locationScoped: true,
+        fetcher: (locationId: string) =>
+          getJson<{ roomIds: string[] }>(
             `/api/runsheet/clinician-rooms?location_id=${locationId}`
-          );
-          if (get().locationId !== locationId) return;
-          set(
-            { clinicianRoomIds: data.roomIds ?? [], clinicianRoomIdsLoaded: true },
-            false,
-            "refreshClinicianRoomIds"
-          );
-        } catch (e) {
-          console.error("Failed to refresh clinician room IDs:", e);
-        }
-      },
+          ),
+        apply: (data) => ({
+          clinicianRoomIds: data.roomIds ?? [],
+          clinicianRoomIdsLoaded: true,
+        }),
+      }),
 
       // Direct setters
-      setRooms: (rooms) => set({ rooms, roomsLoaded: true }, false, "setRooms"),
       setRoomsWithClinicians: (rooms) =>
         set({ roomsWithClinicians: rooms }, false, "setRoomsWithClinicians"),
       setSessions: (sessions) =>
@@ -444,8 +407,6 @@ export const useClinicStore = create<ClinicStore>()(
         set({ postWorkflowBlocks: blocks }, false, "setPostWorkflowBlocks"),
       setPaymentConfig: (config) =>
         set({ paymentConfig: config }, false, "setPaymentConfig"),
-      setPaymentRooms: (rooms) =>
-        set({ paymentRooms: rooms }, false, "setPaymentRooms"),
       setClinicianRoomIds: (ids) =>
         set(
           { clinicianRoomIds: ids, clinicianRoomIdsLoaded: true },
@@ -483,7 +444,6 @@ export const useClinicStore = create<ClinicStore>()(
       resetLocationData: () => {
         set(
           {
-            rooms: [],
             roomsWithClinicians: [],
             sessions: [],
             readinessAppointmentsPre: [],
@@ -492,7 +452,6 @@ export const useClinicStore = create<ClinicStore>()(
             readinessCounts: { pre: 0, post: 0 },
             clinicianRoomIds: [],
             paymentConfig: null,
-            paymentRooms: [],
             connectedSessions: new Set(),
             roomsLoaded: false,
             sessionsLoaded: false,
@@ -508,7 +467,8 @@ export const useClinicStore = create<ClinicStore>()(
           "resetLocationData"
         );
       },
-    }),
+      };
+    },
     { name: "clinic-store" }
   )
 );
@@ -516,3 +476,44 @@ export const useClinicStore = create<ClinicStore>()(
 // Helper: access store outside of React components (e.g., in Realtime callbacks)
 // Usage: getClinicStore().mergeSessionUpdate(payload)
 export const getClinicStore = () => useClinicStore.getState();
+
+// ---------------------------------------------------------------------------
+// Derived projections of roomsWithClinicians. Memoized on the source array's
+// identity so useClinicStore(selectRooms) keeps a stable reference between
+// store updates that don't touch rooms.
+// ---------------------------------------------------------------------------
+
+let roomsSource: RoomWithClinicians[] | null = null;
+let roomsProjection: Room[] = [];
+
+export function selectRooms(s: ClinicStore): Room[] {
+  if (s.roomsWithClinicians !== roomsSource) {
+    roomsSource = s.roomsWithClinicians;
+    roomsProjection = s.roomsWithClinicians.map((r) => ({
+      id: r.id,
+      location_id: r.location_id,
+      name: r.name,
+      room_type: r.room_type,
+      link_token: r.link_token,
+      sort_order: r.sort_order,
+      payments_enabled: r.payments_enabled ?? false,
+    }));
+  }
+  return roomsProjection;
+}
+
+let paymentRoomsSource: RoomWithClinicians[] | null = null;
+let paymentRoomsProjection: RoomPayment[] = [];
+
+export function selectPaymentRooms(s: ClinicStore): RoomPayment[] {
+  if (s.roomsWithClinicians !== paymentRoomsSource) {
+    paymentRoomsSource = s.roomsWithClinicians;
+    paymentRoomsProjection = s.roomsWithClinicians.map((r) => ({
+      id: r.id,
+      name: r.name,
+      room_type: r.room_type,
+      payments_enabled: r.payments_enabled ?? false,
+    }));
+  }
+  return paymentRoomsProjection;
+}

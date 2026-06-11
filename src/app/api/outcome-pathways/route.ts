@@ -10,6 +10,7 @@ import {
   requireStaffOrgAccess,
   requireStaffCanAccessOutcomePathway,
 } from "@/lib/auth/staff-access";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 const pathwayColumns = {
   id: outcomePathways.id,
@@ -63,10 +64,7 @@ export async function GET(request: NextRequest) {
 
   const access = await requireStaffOrgAccess(orgId);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Not found" },
-      { status: access.status }
-    );
+    return denyResponse(access);
   }
 
   try {
@@ -155,10 +153,7 @@ export async function POST(request: NextRequest) {
 
     const access = await requireStaffOrgAccess(org_id);
     if (!access.ok) {
-      return NextResponse.json(
-        { error: access.status === 401 ? "Unauthorized" : "Not found" },
-        { status: access.status }
-      );
+      return denyResponse(access);
     }
 
     let workflowTemplateId: string | null = null;
@@ -232,10 +227,7 @@ export async function PATCH(request: NextRequest) {
 
     const access = await requireStaffCanAccessOutcomePathway(id);
     if (!access.ok) {
-      return NextResponse.json(
-        { error: access.status === 401 ? "Unauthorized" : "Not found" },
-        { status: access.status }
-      );
+      return denyResponse(access);
     }
 
     const updates: Partial<typeof outcomePathways.$inferInsert> = {};
@@ -273,10 +265,7 @@ export async function DELETE(request: NextRequest) {
 
   const access = await requireStaffCanAccessOutcomePathway(id);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Not found" },
-      { status: access.status }
-    );
+    return denyResponse(access);
   }
 
   try {

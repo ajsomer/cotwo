@@ -4,12 +4,13 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { SurveyCreatorComponent, SurveyCreator } from "survey-creator-react";
+import { getJson } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { FormFillClient } from "@/components/patient/form-fill-client";
 import { useOrg } from "@/hooks/useOrg";
 import { useLocation } from "@/hooks/useLocation";
-import type { FormStatus } from "@/lib/supabase/types";
+import type { FormStatus } from "@/lib/types/domain";
 import { coviuTheme } from "@/lib/survey/theme";
 import {
   IDENTITY_PAGE_NAME,
@@ -85,24 +86,18 @@ export function FormBuilderShell({ formId }: FormBuilderShellProps) {
         // dropdown just offers "(Don't send to PMS)".
         registerPmsTargetProperty();
         if (selectedLocation?.id) {
-          try {
-            const catRes = await fetch(
-              `/api/pms/catalogue?locationId=${selectedLocation.id}`
+          // Failures are non-fatal: dropdown falls back to "don't send" only.
+          const catResult = await getJson<{
+            fieldCatalogue: Array<{ key: string; label: string; group: string }>;
+          }>(`/api/pms/catalogue?locationId=${selectedLocation.id}`);
+          if (catResult.ok) {
+            setPmsTargetChoices(
+              catResult.data.fieldCatalogue.map((e) => ({
+                key: e.key,
+                label: e.label,
+                group: e.group,
+              }))
             );
-            if (catRes.ok) {
-              const cat = (await catRes.json()) as {
-                fieldCatalogue: Array<{ key: string; label: string; group: string }>;
-              };
-              setPmsTargetChoices(
-                cat.fieldCatalogue.map((e) => ({
-                  key: e.key,
-                  label: e.label,
-                  group: e.group,
-                }))
-              );
-            }
-          } catch {
-            // Non-fatal: dropdown falls back to "don't send" only.
           }
         }
 

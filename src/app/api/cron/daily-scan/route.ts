@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { executeScheduledActions } from "@/lib/workflows/engine";
+import { unauthenticatedResponse } from "@/lib/api/route-helpers";
 
 export async function GET(request: Request) {
   const authHeader = request.headers.get("authorization");
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return unauthenticatedResponse();
   }
 
   try {

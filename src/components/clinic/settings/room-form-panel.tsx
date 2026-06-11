@@ -1,10 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { getJson } from "@/lib/api-client";
 import { SlideOver } from "@/components/ui/slide-over";
 import { Button } from "@/components/ui/button";
-import type { RoomType } from "@/lib/supabase/types";
+import type { RoomType } from "@/lib/types/domain";
 import type { RoomWithClinicians } from "@/stores/clinic-store";
+import { TextInput } from "@/components/ui/input";
 
 interface Clinician {
   staff_assignment_id: string;
@@ -61,12 +63,11 @@ export function RoomFormPanel({
 
   // Fetch clinicians for the location
   const fetchClinicians = useCallback(async () => {
-    const res = await fetch(
+    const result = await getJson<{ clinicians: Clinician[] }>(
       `/api/settings/rooms?location_id=${locationId}&type=clinicians`
     );
-    if (res.ok) {
-      const data = await res.json();
-      setClinicians(data.clinicians);
+    if (result.ok) {
+      setClinicians(result.data.clinicians);
     }
   }, [locationId]);
 
@@ -151,12 +152,11 @@ export function RoomFormPanel({
             <label className="block text-xs font-medium text-gray-500 mb-1.5">
               Room name
             </label>
-            <input
+            <TextInput
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Dr Smith's Room"
-              className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 focus:outline-none"
               autoFocus
             />
           </div>

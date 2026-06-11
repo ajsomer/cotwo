@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { outcomePathways, workflowActionBlocks } from "@/lib/db/schema";
 import { eq, asc } from "drizzle-orm";
 import { requireStaffCanAccessOutcomePathway } from "@/lib/auth/staff-access";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 // GET /api/outcome-pathways/[id]
 // Returns a pathway's name/description + its workflow action blocks, for the
@@ -16,10 +17,7 @@ export async function GET(
 
   const access = await requireStaffCanAccessOutcomePathway(id);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Not found" },
-      { status: access.status },
-    );
+    return denyResponse(access);
   }
 
   const [pathway] = await db

@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { IntakeJourney, IntakeJourneyContext } from './intake-journey';
-import type { PatientContact } from '@/lib/supabase/types';
+import type { PatientContact } from '@/lib/types/domain';
+import { Spinner } from '@/components/ui/spinner';
 
 interface EmbeddedIntakeJourneyProps {
   token: string;
@@ -78,7 +79,7 @@ export function EmbeddedIntakeJourney({
   if (!context) {
     return (
       <div className="flex h-32 w-full items-center justify-center">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-teal-500 border-t-transparent" />
+        <Spinner />
       </div>
     );
   }

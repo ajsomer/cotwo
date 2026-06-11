@@ -12,6 +12,7 @@ import {
   assertPatientInOrg,
   assertAppointmentInOrg,
 } from "@/lib/auth/staff-access";
+import { denyResponse, parseJsonBody } from "@/lib/api/route-helpers";
 
 // GET /api/forms/assignments?form_id=xxx
 export async function GET(request: NextRequest) {
@@ -23,10 +24,7 @@ export async function GET(request: NextRequest) {
 
   const access = await requireStaffCanAccessForm(formId);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Not found" },
-      { status: access.status }
-    );
+    return denyResponse(access);
   }
 
   try {
@@ -104,8 +102,13 @@ export async function GET(request: NextRequest) {
 
 // POST /api/forms/assignments
 export async function POST(request: NextRequest) {
-  const body = await request.json();
-  const { form_id, patient_id, appointment_id } = body;
+  const parsed = await parseJsonBody<{
+    form_id?: string;
+    patient_id?: string;
+    appointment_id?: string | null;
+  }>(request);
+  if (!parsed.ok) return parsed.response;
+  const { form_id, patient_id, appointment_id } = parsed.body;
 
   if (!form_id || !patient_id) {
     return NextResponse.json(
@@ -116,10 +119,7 @@ export async function POST(request: NextRequest) {
 
   const access = await requireStaffCanAccessForm(form_id);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Not found" },
-      { status: access.status }
-    );
+    return denyResponse(access);
   }
 
   // The form is org-gated above, but patient_id / appointment_id are

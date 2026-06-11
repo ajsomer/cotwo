@@ -20,12 +20,7 @@ import {
   recordSyncResult,
 } from "../connection";
 import { getCursor, setCursor } from "./cursor";
-import {
-  getPatientIdByExternal,
-  getRoomByPractitionerExternal,
-  getTypeLinkByExternal,
-  linkPatient,
-} from "./mapping";
+import { linkPatient, loadMappingCache, type MappingCache } from "./mapping";
 
 export interface PullResult {
   ok: boolean;
@@ -62,11 +57,15 @@ export async function pullConnection(
   const result: PullResult = emptyResult({ ok: true });
 
   try {
+    // Preload the connection's link tables once — every record in the batch
+    // resolves against these Maps instead of re-querying per record.
+    const cache = await loadMappingCache(connection.id);
+
     // 1. Patients (changed since cursor) → upsert + link.
-    result.patients = await pullPatients(adapter, connection, orgId);
+    result.patients = await pullPatients(adapter, connection, orgId, cache);
 
     // 2. Appointments (changed since cursor) → upsert + schedule workflow.
-    const apptResult = await pullAppointments(adapter, connection, orgId);
+    const apptResult = await pullAppointments(adapter, connection, orgId, cache);
     result.appointmentsUpserted = apptResult.upserted;
     result.sessionsScheduled = apptResult.scheduled;
     result.cancelled = apptResult.cancelled;
@@ -75,7 +74,7 @@ export async function pullConnection(
     // 3. Reconcile: re-pull any synced appointment whose patient went missing
     //    in Coviu (e.g. deleted locally). The incremental cursor would never
     //    re-surface them on its own, so we heal them here. Cliniko wins.
-    result.reconciled = await reconcileMissingPatients(adapter, connection, orgId);
+    result.reconciled = await reconcileMissingPatients(adapter, connection, orgId, cache);
 
     await recordSyncResult(connection.id, null);
   } catch (e) {
@@ -92,14 +91,15 @@ export async function pullConnection(
 async function pullPatients(
   adapter: PmsAdapter,
   connection: PmsConnectionRow,
-  orgId: string
+  orgId: string,
+  cache: MappingCache
 ): Promise<number> {
   const since = (await getCursor(connection.id, "patients")) ?? undefined;
   let count = 0;
   let maxUpdated: Date | null = null;
 
   for await (const p of adapter.listPatients({ since })) {
-    await upsertPatient(connection.id, orgId, p);
+    await upsertPatient(connection.id, orgId, p, cache);
     count++;
     // We don't get updated_at on the canonical PmsPatient; advance to now after.
   }
@@ -113,10 +113,11 @@ async function pullPatients(
 async function upsertPatient(
   connectionId: string,
   orgId: string,
-  p: PmsPatient
+  p: PmsPatient,
+  cache: MappingCache
 ): Promise<void> {
   // Already linked? Update the existing Coviu patient.
-  const existingId = await getPatientIdByExternal(connectionId, p.externalId);
+  const existingId = cache.patientIdByExternal.get(p.externalId) ?? null;
 
   let patientId: string;
   if (existingId) {
@@ -131,17 +132,23 @@ async function upsertPatient(
       .where(eq(patients.id, existingId));
     patientId = existingId;
   } else {
-    const [created] = await db
-      .insert(patients)
-      .values({
-        orgId,
-        firstName: p.firstName || "Unknown",
-        lastName: p.lastName || "",
-        dateOfBirth: p.dateOfBirth,
-      })
-      .returning({ id: patients.id });
-    patientId = created.id;
-    await linkPatient(connectionId, patientId, p.externalId);
+    // Create + link atomically. The link table is the only dedupe key — a
+    // failure between the two would leave an unlinked patient that the next
+    // sync duplicates.
+    patientId = await db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(patients)
+        .values({
+          orgId,
+          firstName: p.firstName || "Unknown",
+          lastName: p.lastName || "",
+          dateOfBirth: p.dateOfBirth,
+        })
+        .returning({ id: patients.id });
+      await linkPatient(connectionId, created.id, p.externalId, tx);
+      return created.id;
+    });
+    cache.patientIdByExternal.set(p.externalId, patientId);
   }
 
   // Phone numbers — upsert each (unique on patient_id + phone_number). The
@@ -181,7 +188,8 @@ async function upsertPatient(
 async function pullAppointments(
   adapter: PmsAdapter,
   connection: PmsConnectionRow,
-  orgId: string
+  orgId: string,
+  cache: MappingCache
 ): Promise<{ upserted: number; scheduled: number; cancelled: number; skipped: number }> {
   const since = (await getCursor(connection.id, "appointments")) ?? undefined;
   let upserted = 0;
@@ -208,7 +216,7 @@ async function pullAppointments(
     const updated = a.updatedAt ? new Date(a.updatedAt) : null;
     if (updated && (!maxUpdated || updated > maxUpdated)) maxUpdated = updated;
 
-    const outcome = await upsertAppointment(adapter, connection, orgId, a);
+    const outcome = await upsertAppointment(adapter, connection, orgId, a, cache);
     if (outcome === "skipped") skipped++;
     else {
       upserted++;
@@ -227,17 +235,15 @@ async function upsertAppointment(
   adapter: PmsAdapter,
   connection: PmsConnectionRow,
   orgId: string,
-  a: PmsAppointment
+  a: PmsAppointment,
+  cache: MappingCache
 ): Promise<ApptOutcome> {
   if (!a.appointmentTypeExternalId) return "skipped";
 
   // Resolve the type link — only CONFIRMED telehealth + sync_enabled types
   // reach the run sheet (plan §5). The type link is the source of truth for
   // import state (§8.E/H); room comes from the practitioner mapping (§025).
-  const typeLink = await getTypeLinkByExternal(
-    connection.id,
-    a.appointmentTypeExternalId
-  );
+  const typeLink = cache.typeLinkByExternal.get(a.appointmentTypeExternalId);
   // Type gate: confirmed telehealth + sync enabled (§5). Modality/sync are
   // confirmed on the type in Workflows; the type no longer carries a room.
   if (
@@ -252,7 +258,7 @@ async function upsertAppointment(
   // column decides which room the patient lands in. No practitioner mapped to a
   // room → we can't place the appointment, so skip it.
   const roomId = a.practitionerExternalId
-    ? await getRoomByPractitionerExternal(connection.id, a.practitionerExternalId)
+    ? cache.roomByPractitionerExternal.get(a.practitionerExternalId) ?? null
     : null;
   if (!roomId) {
     return "skipped";
@@ -263,13 +269,13 @@ async function upsertAppointment(
   // them, or the patient was deleted), fetch + upsert + link on demand so the
   // appointment never lands patient-less (which would fail add_to_runsheet).
   let patientId = a.patientExternalId
-    ? await getPatientIdByExternal(connection.id, a.patientExternalId)
+    ? cache.patientIdByExternal.get(a.patientExternalId) ?? null
     : null;
   if (!patientId && a.patientExternalId) {
     const pmsPatient = await adapter.getPatient(a.patientExternalId);
     if (pmsPatient) {
-      await upsertPatient(connection.id, orgId, pmsPatient);
-      patientId = await getPatientIdByExternal(connection.id, a.patientExternalId);
+      await upsertPatient(connection.id, orgId, pmsPatient, cache);
+      patientId = cache.patientIdByExternal.get(a.patientExternalId) ?? null;
     }
   }
 
@@ -359,7 +365,8 @@ async function upsertAppointment(
 async function reconcileMissingPatients(
   adapter: PmsAdapter,
   connection: PmsConnectionRow,
-  orgId: string
+  orgId: string,
+  cache: MappingCache
 ): Promise<number> {
   // Synced appointments at this location with no linked patient.
   const orphans = await db
@@ -387,11 +394,9 @@ async function reconcileMissingPatients(
     // Re-create + link the patient from Cliniko.
     const pmsPatient = await adapter.getPatient(pmsAppt.patientExternalId);
     if (!pmsPatient) continue;
-    await upsertPatient(connection.id, orgId, pmsPatient);
-    const patientId = await getPatientIdByExternal(
-      connection.id,
-      pmsAppt.patientExternalId
-    );
+    await upsertPatient(connection.id, orgId, pmsPatient, cache);
+    const patientId =
+      cache.patientIdByExternal.get(pmsAppt.patientExternalId) ?? null;
     if (!patientId) continue;
 
     await db

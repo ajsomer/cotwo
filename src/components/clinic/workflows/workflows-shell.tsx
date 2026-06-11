@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { getJson, postJson } from "@/lib/api-client";
+import { ConfirmModal } from "@/components/ui/modal";
 import { useOrg } from "@/hooks/useOrg";
 import type {
   DbWorkflowTemplate,
@@ -14,6 +16,7 @@ import type {
 import { AppointmentTypesSettingsShell } from "@/components/clinic/settings/appointment-types-settings-shell";
 import { OutcomePathwaysPanel } from "./outcome-pathways-panel";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
+import { useEnsureSlices } from "@/hooks/useEnsureSlices";
 import type {
   AppointmentTypeRow,
   OutcomePathwayRow,
@@ -29,12 +32,7 @@ export function WorkflowsShell() {
   const orgId = org?.id ?? "";
 
   // Fetch-if-empty
-  useEffect(() => {
-    if (!orgId) return;
-    const store = getClinicStore();
-    if (!store.workflowsLoaded) void store.refreshWorkflows(orgId);
-    if (!store.formsLoaded) void store.refreshForms(orgId);
-  }, [orgId]);
+  useEnsureSlices(["workflows", "forms"]);
 
   const [direction, setDirection] = useState<WorkflowDirection>("pre_appointment");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -71,6 +69,11 @@ export function WorkflowsShell() {
   // Mid-flight warning
   const [showWarning, setShowWarning] = useState(false);
   const [inFlightCount, setInFlightCount] = useState(0);
+  const [pendingDiscard, setPendingDiscard] = useState<
+    | { kind: "direction"; value: WorkflowDirection }
+    | { kind: "select"; value: string }
+    | null
+  >(null);
 
   // Dirty tracking
   const isDirty =
@@ -146,8 +149,13 @@ export function WorkflowsShell() {
   const handleDirectionChange = (newDir: WorkflowDirection) => {
     if (newDir === direction) return;
     if (dirtyRef.current) {
-      if (!window.confirm("You have unsaved changes. Discard them?")) return;
+      setPendingDiscard({ kind: "direction", value: newDir });
+      return;
     }
+    applyDirectionChange(newDir);
+  };
+
+  const applyDirectionChange = (newDir: WorkflowDirection) => {
     // Reset state — useEffect will handle the fetch via direction dep
     setSelectedId(null);
     setTemplate(null);
@@ -160,8 +168,13 @@ export function WorkflowsShell() {
   const handleSelect = (id: string) => {
     if (id === selectedId) return;
     if (dirtyRef.current) {
-      if (!window.confirm("You have unsaved changes. Discard them?")) return;
+      setPendingDiscard({ kind: "select", value: id });
+      return;
     }
+    applySelect(id);
+  };
+
+  const applySelect = (id: string) => {
     setSelectedId(id);
     const store = getClinicStore();
     const currentTplMap = isPre ? store.preWorkflowTemplates : store.postWorkflowTemplates;
@@ -187,55 +200,59 @@ export function WorkflowsShell() {
   }
 
   const handleCreateType = async () => {
-    try {
-      const res = await fetch("/api/appointment-types", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ org_id: orgId, name: "New appointment type" }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      await refreshAll(data.appointment_type.id);
-    } catch (err) {
-      setError((err as Error).message);
+    const result = await postJson<{
+      error?: string;
+      appointment_type: { id: string };
+    }>("/api/appointment-types", { org_id: orgId, name: "New appointment type" });
+    // The route can also report an error in a 200 body.
+    const error = result.ok ? result.data?.error : result.error;
+    if (error) {
+      setError(error);
+      return;
     }
+    if (result.ok) await refreshAll(result.data.appointment_type.id);
   };
 
   const handleCreatePathway = async () => {
-    try {
-      const res = await fetch("/api/outcome-pathways", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ org_id: orgId, name: "New post-workflow", create_workflow: true }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      await refreshAll(data.outcome_pathway.id);
-    } catch (err) {
-      setError((err as Error).message);
+    const result = await postJson<{
+      error?: string;
+      outcome_pathway: { id: string };
+    }>("/api/outcome-pathways", {
+      org_id: orgId,
+      name: "New post-workflow",
+      create_workflow: true,
+    });
+    // The route can also report an error in a 200 body.
+    const error = result.ok ? result.data?.error : result.error;
+    if (error) {
+      setError(error);
+      return;
     }
+    if (result.ok) await refreshAll(result.data.outcome_pathway.id);
   };
 
   const handleCreateWorkflow = async () => {
     if (!selectedId) return;
-    try {
-      const res = await fetch(`/api/appointment-types/${selectedId}/workflow`, { method: "POST" });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-
-      // Update store maps locally with the new template
-      const store = getClinicStore();
-      store.setPreWorkflowTemplates({ ...store.preWorkflowTemplates, [data.template.id]: data.template });
-      store.setPreWorkflowBlocks({ ...store.preWorkflowBlocks, [data.template.id]: [] });
-      setTemplate(data.template);
-      setOriginalBlocks([]);
-      setWorkingBlocks([]);
-
-      // Refresh workflows to update sidebar counts
-      await store.refreshWorkflows(orgId);
-    } catch (err) {
-      setError((err as Error).message);
+    const result = await postJson<{ error?: string; template: DbWorkflowTemplate }>(
+      `/api/appointment-types/${selectedId}/workflow`
+    );
+    // The route can also report an error in a 200 body.
+    const error = result.ok ? result.data?.error : result.error;
+    if (error || !result.ok) {
+      setError(error ?? "Failed to create workflow");
+      return;
     }
+
+    // Update store maps locally with the new template
+    const store = getClinicStore();
+    store.setPreWorkflowTemplates({ ...store.preWorkflowTemplates, [result.data.template.id]: result.data.template });
+    store.setPreWorkflowBlocks({ ...store.preWorkflowBlocks, [result.data.template.id]: [] });
+    setTemplate(result.data.template);
+    setOriginalBlocks([]);
+    setWorkingBlocks([]);
+
+    // Refresh workflows to update sidebar counts
+    await store.refreshWorkflows(orgId);
   };
 
   // ---------------------------------------------------------------------------
@@ -258,16 +275,14 @@ export function WorkflowsShell() {
 
   const handleSave = async () => {
     if (!template) return;
-    try {
-      const res = await fetch(`/api/workflows/in-flight?template_id=${template.id}`);
-      const data = await res.json();
-      if ((data.in_flight_count ?? 0) > 0) {
-        setInFlightCount(data.in_flight_count);
-        setShowWarning(true);
-        return;
-      }
-    } catch {
-      // Continue with save
+    const result = await getJson<{ in_flight_count?: number }>(
+      `/api/workflows/in-flight?template_id=${template.id}`
+    );
+    // On a failed check, continue with save.
+    if (result.ok && (result.data?.in_flight_count ?? 0) > 0) {
+      setInFlightCount(result.data.in_flight_count ?? 0);
+      setShowWarning(true);
+      return;
     }
     await executeSave();
   };
@@ -448,6 +463,21 @@ export function WorkflowsShell() {
           <OutcomePathwaysPanel />
         </div>
       )}
+
+      <ConfirmModal
+        open={!!pendingDiscard}
+        title="You have unsaved changes. Discard them?"
+        confirmLabel="Discard"
+        destructive
+        onConfirm={() => {
+          if (!pendingDiscard) return;
+          const action = pendingDiscard;
+          setPendingDiscard(null);
+          if (action.kind === "direction") applyDirectionChange(action.value);
+          else applySelect(action.value);
+        }}
+        onCancel={() => setPendingDiscard(null)}
+      />
     </div>
   );
 }

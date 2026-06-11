@@ -8,6 +8,7 @@ import {
 } from "@/lib/db/schema";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { requireStaffCanAccessWorkflowTemplate } from "@/lib/auth/staff-access";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 // Column projections that alias Drizzle's camelCase fields back to the
 // snake_case shape the UI consumes (byte-identical to the old supabase `*`).
@@ -51,10 +52,7 @@ export async function GET(
 
   const access = await requireStaffCanAccessWorkflowTemplate(id);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Not found" },
-      { status: access.status },
-    );
+    return denyResponse(access);
   }
 
   try {
@@ -117,10 +115,7 @@ export async function PATCH(
 
     const access = await requireStaffCanAccessWorkflowTemplate(id);
     if (!access.ok) {
-      return NextResponse.json(
-        { error: access.status === 401 ? "Unauthorized" : "Not found" },
-        { status: access.status },
-      );
+      return denyResponse(access);
     }
 
     await db
@@ -153,10 +148,7 @@ export async function DELETE(
 
   const access = await requireStaffCanAccessWorkflowTemplate(id);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Not found" },
-      { status: access.status },
-    );
+    return denyResponse(access);
   }
 
   try {

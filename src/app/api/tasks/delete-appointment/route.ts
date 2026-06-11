@@ -10,6 +10,7 @@ import {
 } from "@/lib/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import { requireStaffCanAccessAppointment } from "@/lib/auth/staff-access";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 /**
  * POST /api/tasks/delete-appointment
@@ -27,10 +28,7 @@ export async function POST(request: NextRequest) {
 
     const access = await requireStaffCanAccessAppointment(appointment_id);
     if (!access.ok) {
-      return NextResponse.json(
-        { error: access.status === 401 ? "Unauthorized" : "Not found" },
-        { status: access.status },
-      );
+      return denyResponse(access);
     }
 
     // Delete intake_package_journeys for this appointment

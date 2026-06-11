@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchRunsheetSessions } from "@/lib/runsheet/queries";
 import { requireStaffLocationAccess } from "@/lib/auth/staff-access";
+import { denyResponse } from "@/lib/api/route-helpers";
 
 export async function GET(request: NextRequest) {
   const locationId = request.nextUrl.searchParams.get("locationId");
@@ -11,10 +12,7 @@ export async function GET(request: NextRequest) {
 
   const access = await requireStaffLocationAccess(locationId);
   if (!access.ok) {
-    return NextResponse.json(
-      { error: access.status === 401 ? "Unauthorized" : "Forbidden" },
-      { status: access.status },
-    );
+    return denyResponse(access);
   }
 
   const sessions = await fetchRunsheetSessions(locationId);

@@ -1,10 +1,8 @@
 "use client";
 
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { Model } from "survey-core";
-import { Survey } from "survey-react-ui";
-import "survey-core/survey-core.min.css";
-import { coviuTheme } from "@/lib/survey/theme";
+import { useSurveyModel } from "@/hooks/useSurveyModel";
+import { SurveyStepShell, SurveyThanks } from "./survey-shell";
 import { IDENTITY_QUESTION_NAME } from "@/lib/survey/identity-field";
 import {
   IDENTITY_PAGE_NAME,
@@ -396,29 +394,18 @@ function ShareableFlow({
     [otp, token],
   );
 
-  // Build the augmented SurveyJS Model once we've reached the survey stage.
-  // useMemo binds it to the otp state so a re-OTP rebuilds the survey with
-  // the new match set / phone.
-  const surveyModel = useMemo(() => {
+  // Build the augmented schema once we've reached the survey stage. useMemo
+  // binds it to the otp state so a re-OTP rebuilds the survey with the new
+  // match set / phone. (Keeping `stage` in the deps preserves the existing
+  // behaviour of rebuilding the Model — and dropping its data — when a failed
+  // submit returns to the survey stage.)
+  const patchedSchema = useMemo(() => {
     if (stage !== "survey" && stage !== "submitting") return null;
     if (!otp) return null;
-    const schema = patchIdentityPageForOtp(form.schema, otp.matches, otp.phone);
-    const m = new Model(schema);
-    m.applyTheme(coviuTheme);
-    m.showTitle = false;
-    m.showProgressBar = "off";
-    return m;
+    return patchIdentityPageForOtp(form.schema, otp.matches, otp.phone);
   }, [stage, otp, form.schema]);
 
-  useEffect(() => {
-    if (!surveyModel) return;
-    const handler = (sender: Model) =>
-      handleSubmit(sender.data as Record<string, unknown>);
-    surveyModel.onComplete.add(handler);
-    return () => {
-      surveyModel.onComplete.remove(handler);
-    };
-  }, [surveyModel, handleSubmit]);
+  const surveyModel = useSurveyModel(patchedSchema, handleSubmit);
 
   const headerProps = {
     clinicName: org?.name ?? "",
@@ -471,24 +458,14 @@ function ShareableFlow({
   }
 
   if (stage === "survey" && surveyModel) {
-    // Render to match the intake-journey FormStep: no outer card/border,
-    // form name as an h1 above the survey, no SurveyJS progress bar (the
-    // PersistentHeader's stepper carries that signal). Mirrors
-    // src/components/patient/intake-journey.tsx FormStep render.
     return (
       <PageShell>
         <PersistentHeader {...headerProps} currentStep={2} totalSteps={2} />
-        <div className="w-full">
-          <h1 className="mb-3 text-xl font-semibold text-gray-800">
-            {form.name}
-          </h1>
-          {submitError && (
-            <p className="mb-2 text-sm text-red-500" role="alert">
-              {submitError}
-            </p>
-          )}
-          <Survey model={surveyModel} />
-        </div>
+        <SurveyStepShell
+          title={form.name}
+          error={submitError}
+          model={surveyModel}
+        />
       </PageShell>
     );
   }
@@ -509,25 +486,10 @@ function ShareableFlow({
     <PageShell>
       <PersistentHeader {...headerProps} />
       <div className="rounded-2xl border border-gray-200 bg-white p-6 text-center">
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-teal-50">
-          <svg
-            className="h-6 w-6 text-teal-500"
-            fill="none"
-            viewBox="0 0 24 24"
-            strokeWidth={2}
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M4.5 12.75l6 6 9-13.5"
-            />
-          </svg>
-        </div>
-        <h1 className="text-xl font-semibold text-gray-800">Thanks</h1>
-        <p className="mt-2 text-sm text-gray-500">
-          We&apos;ve received your submission. You can close this page.
-        </p>
+        <SurveyThanks
+          title="Thanks"
+          message="We've received your submission. You can close this page."
+        />
       </div>
     </PageShell>
   );

@@ -1,8 +1,24 @@
 'use client';
 
 import { useState } from 'react';
+import { postJson } from '@/lib/api-client';
 import { PersistentHeader } from './persistent-header';
-import { PatientContact } from '@/lib/supabase/types';
+import { FormField, TextInput } from '@/components/ui/input';
+import { PatientContact } from '@/lib/types/domain';
+
+/** A patient's choice on the identity screen. */
+export type IdentitySelection =
+  | { kind: 'existing'; patientId: string }
+  | {
+      kind: 'new';
+      firstName: string;
+      lastName: string;
+      dateOfBirth: string | null;
+    };
+
+export type IdentityResolveResult =
+  | { ok: true; patient: PatientContact }
+  | { ok: false; error: string };
 
 interface IdentityConfirmationProps {
   clinicName: string;
@@ -13,6 +29,18 @@ interface IdentityConfirmationProps {
   existingPatients: PatientContact[];
   token: string;
   phoneNumber: string;
+  /** Heading above the contact list. */
+  title?: string;
+  /** Optional sub-copy under the heading (the intake journey explains the
+      multi-contact match). */
+  subtitle?: string;
+  /** Offer the "Someone else" / new-patient capture path. The intake journey
+      is bound to known contacts, so it turns this off. */
+  allowNewPatient?: boolean;
+  /** How a selection becomes a confirmed patient. Defaults to the entry
+      flow's /api/patient/identity; the intake journey resolves against its
+      journey token instead. */
+  resolve?: (selection: IdentitySelection) => Promise<IdentityResolveResult>;
   onConfirmed: (patient: PatientContact) => void;
 }
 
@@ -27,6 +55,10 @@ export function IdentityConfirmation({
   existingPatients,
   token,
   phoneNumber,
+  title = 'Who is this appointment for?',
+  subtitle,
+  allowNewPatient = true,
+  resolve,
   onConfirmed,
 }: IdentityConfirmationProps) {
   const initialMode: Mode =
@@ -41,69 +73,59 @@ export function IdentityConfirmation({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const confirmExisting = async (patientId: string) => {
+  const defaultResolve = async (
+    selection: IdentitySelection
+  ): Promise<IdentityResolveResult> => {
+    const body =
+      selection.kind === 'existing'
+        ? { token, existing_patient_id: selection.patientId, phone_number: phoneNumber }
+        : {
+            token,
+            first_name: selection.firstName,
+            last_name: selection.lastName,
+            date_of_birth: selection.dateOfBirth,
+            phone_number: phoneNumber,
+          };
+    const result = await postJson<{ patient: PatientContact }>(
+      '/api/patient/identity',
+      body,
+      selection.kind === 'existing'
+        ? 'Failed to confirm identity'
+        : 'Failed to create patient'
+    );
+    if (!result.ok) return { ok: false, error: result.error };
+    return { ok: true, patient: result.data.patient };
+  };
+
+  const submitSelection = async (selection: IdentitySelection) => {
     setLoading(true);
     setError(null);
 
-    try {
-      const res = await fetch('/api/patient/identity', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token,
-          existing_patient_id: patientId,
-          phone_number: phoneNumber,
-        }),
-      });
+    const result = await (resolve ?? defaultResolve)(selection);
+    setLoading(false);
 
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || 'Failed to confirm identity');
-        return;
-      }
-
-      onConfirmed(data.patient);
-    } catch {
-      setError('Something went wrong. Please try again.');
-    } finally {
-      setLoading(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
     }
+
+    onConfirmed(result.patient);
   };
+
+  const confirmExisting = (patientId: string) =>
+    submitSelection({ kind: 'existing', patientId });
 
   const createNew = async () => {
     if (!firstName.trim() || !lastName.trim()) {
       setError('First name and last name are required');
       return;
     }
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const res = await fetch('/api/patient/identity', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token,
-          first_name: firstName.trim(),
-          last_name: lastName.trim(),
-          date_of_birth: dob || null,
-          phone_number: phoneNumber,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || 'Failed to create patient');
-        return;
-      }
-
-      onConfirmed(data.patient);
-    } catch {
-      setError('Something went wrong. Please try again.');
-    } finally {
-      setLoading(false);
-    }
+    await submitSelection({
+      kind: 'new',
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
+      dateOfBirth: dob || null,
+    });
   };
 
   return (
@@ -120,9 +142,8 @@ export function IdentityConfirmation({
         {/* Patient list: always a list of cards + "Someone else" */}
         {mode === 'select_multiple' && (
           <>
-            <h1 className="text-xl font-semibold text-gray-800">
-              Who is this appointment for?
-            </h1>
+            <h1 className="text-xl font-semibold text-gray-800">{title}</h1>
+            {subtitle && <p className="text-sm text-gray-500">{subtitle}</p>}
 
             <div className="space-y-2">
               {existingPatients.map((patient) => (
@@ -143,15 +164,17 @@ export function IdentityConfirmation({
                 </button>
               ))}
 
-              <button
-                onClick={() => setMode('new_patient')}
-                disabled={loading}
-                className="w-full rounded-xl border border-dashed border-gray-300 bg-white px-4 py-3 text-left transition-colors hover:border-teal-500 hover:bg-teal-50 disabled:opacity-50"
-              >
-                <span className="text-base font-medium text-teal-500">
-                  Someone else
-                </span>
-              </button>
+              {allowNewPatient && (
+                <button
+                  onClick={() => setMode('new_patient')}
+                  disabled={loading}
+                  className="w-full rounded-xl border border-dashed border-gray-300 bg-white px-4 py-3 text-left transition-colors hover:border-teal-500 hover:bg-teal-50 disabled:opacity-50"
+                >
+                  <span className="text-base font-medium text-teal-500">
+                    Someone else
+                  </span>
+                </button>
+              )}
             </div>
           </>
         )}
@@ -163,45 +186,36 @@ export function IdentityConfirmation({
               Your details
             </h1>
 
-            <div>
-              <label htmlFor="firstName" className="mb-1 block text-xs font-medium text-gray-500">
-                First name
-              </label>
-              <input
+            <FormField label="First name" htmlFor="firstName">
+              <TextInput
                 id="firstName"
                 type="text"
+                inputSize="lg"
                 autoFocus
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
-                className="h-12 w-full rounded-lg border border-gray-200 px-3 text-base text-gray-800 outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500"
               />
-            </div>
+            </FormField>
 
-            <div>
-              <label htmlFor="lastName" className="mb-1 block text-xs font-medium text-gray-500">
-                Last name
-              </label>
-              <input
+            <FormField label="Last name" htmlFor="lastName">
+              <TextInput
                 id="lastName"
                 type="text"
+                inputSize="lg"
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
-                className="h-12 w-full rounded-lg border border-gray-200 px-3 text-base text-gray-800 outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500"
               />
-            </div>
+            </FormField>
 
-            <div>
-              <label htmlFor="dob" className="mb-1 block text-xs font-medium text-gray-500">
-                Date of birth
-              </label>
-              <input
+            <FormField label="Date of birth" htmlFor="dob">
+              <TextInput
                 id="dob"
                 type="date"
+                inputSize="lg"
                 value={dob}
                 onChange={(e) => setDob(e.target.value)}
-                className="h-12 w-full rounded-lg border border-gray-200 px-3 text-base text-gray-800 outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500"
               />
-            </div>
+            </FormField>
 
             <button
               onClick={createNew}

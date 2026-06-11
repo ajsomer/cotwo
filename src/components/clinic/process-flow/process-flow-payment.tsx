@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { formatCurrency, formatSessionTime, formatPatientName } from "@/lib/runsheet/format";
 import { chargePayment } from "@/lib/runsheet/actions";
-import type { EnrichedSession } from "@/lib/supabase/types";
+import type { EnrichedSession } from "@/lib/types/domain";
 
 interface ProcessFlowPaymentProps {
   session: EnrichedSession;

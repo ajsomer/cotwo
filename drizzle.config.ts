@@ -1,9 +1,15 @@
 import { defineConfig } from "drizzle-kit";
 
 // Drizzle config for the Neon (Sydney) Postgres database.
-// `schema` is the generated TypeScript schema; `out` holds drizzle-kit
-// migration artifacts. We introspect the live DB with `drizzle-kit pull`
-// rather than authoring the schema by hand, so it matches exactly.
+//
+// Migration workflow (read before reaching for drizzle-kit generate/migrate):
+// - The TypeScript schema is INTROSPECTED from the live DB with
+//   `drizzle-kit pull`, not authored by hand, so it matches exactly.
+// - Schema changes are applied as hand-written SQL via the Neon MCP
+//   (see memory/project_neon_migrations.md), then re-introspected.
+// - `drizzle-kit generate`/`migrate` are NOT part of the workflow; there is
+//   no drizzle-kit journal. SQL files under `out` are a historical record of
+//   what was applied, not a replayable migration chain.
 export default defineConfig({
   dialect: "postgresql",
   schema: "./src/lib/db/schema.ts",
