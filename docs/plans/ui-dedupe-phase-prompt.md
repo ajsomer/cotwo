@@ -35,8 +35,10 @@ facts for your work:
 ## Hard constraints
 
 - Work ONE sub-item at a time. Commit after each sub-item with a message referencing
-  the plan section (e.g. `refactor: 5.4a merge card-capture twins`). End every commit
-  message with: `Co-Authored-By: Claude <noreply@anthropic.com>`.
+  the plan section (e.g. `refactor: 5.4a merge card-capture twins`). Where a sub-item
+  below specifies staged commits, each stage is its own commit. End commit messages
+  with whatever attribution trailer your harness uses (Claude Code:
+  `Co-Authored-By: Claude <noreply@anthropic.com>`); omit if none.
 - Verification gate per commit: `npm run typecheck` clean, `npm run lint` 0 errors
   (baseline: 49 pre-existing warnings — do not add new ones), `npm test` 19/19.
 - The ESLint react-hooks rules are strict (React Compiler). `set-state-in-effect`
@@ -56,8 +58,12 @@ facts for your work:
 
 These items touch live interactive surfaces; typecheck is NOT sufficient. After each
 UI sub-item, run the app (`npm run dev` — note it's a custom server: `tsx server.ts`
-with Socket.io) and verify the affected flow with Playwright, or use the /verify
-skill if available. The runsheet has dev seed helpers (`seedDemoData` in
+with Socket.io) and drive the affected flow in a real browser using the Playwright
+browser MCP tools (`browser_navigate` / `browser_click` / `browser_snapshot` /
+`browser_take_screenshot` — available in Claude Code via the playwright plugin;
+load them with ToolSearch). Do NOT add `@playwright/test` or any other dependency
+for this. The /verify skill, if present in your session, is an acceptable
+alternative. The runsheet has dev seed helpers (`seedDemoData` in
 `src/lib/runsheet/seed.ts`, surfaced in the runsheet shell) to create test sessions;
 patient flows are reachable via the entry links the seed/add-session flow produces.
 If you cannot complete a flow end-to-end (auth, data, or environment blocks you),
@@ -90,21 +96,30 @@ c. **New `src/components/ui/` primitives:** `Toggle` (5 hand-rolled switches exi
    none with the Escape/focus handling `SlideOver` already has — give Modal the
    same Escape + focus behaviour as `ui/slide-over.tsx`), `Spinner`, `CheckCircle`,
    `CopyButton`, `CloseButton`. Adopt them at the existing sites.
-   Then (separate commit): replace the 11 `window.confirm`/`alert` destructive
-   confirmations with the new Modal (minor-list item). Keep the exact confirmation
-   copy.
+   Then (separate commit): replace the ~11 `confirm()`/`window.confirm()`
+   DESTRUCTIVE CONFIRMATIONS with the new Modal, keeping the exact copy
+   (sites: rooms/forms/files/appointment-type deletes, PMS + Stripe disconnects,
+   workflows unsaved-changes ×2, add-session-panel delete, payments connect).
+   The ~9 `alert()` calls are a DIFFERENT population — error notifications
+   ("Failed to delete room", send failures in form-assignments-panel, etc.), NOT
+   confirmations. Do not turn them into confirmation modals. Convert an alert to
+   inline error display only where the component already has an error-display
+   pattern to reuse; otherwise leave it as-is and list it in the report.
 
 d. **Review-panel shared parts.** Extract `CopyButton`/`FieldRow`/skeleton/footer
    shared by `form-handoff-panel`, `intake-package-handoff-panel`, and
    `standalone-submission-panel` (under `src/components/clinic/forms/`).
    Verify: open each of the three panels from the readiness dashboard.
 
-e. **Adoption sweep (own commit, mechanical, wide).** The long input className is
-   hand-rolled ~61× with drifting focus rings/radii while `ui/input.tsx` has 3
-   importers. Extend `ui/input.tsx` with `Textarea`/`Select`/`FormField`, then
-   sweep. Same for raw footer buttons vs `ui/button.tsx`. Do NOT change any
-   focus/disabled behaviour — where a hand-rolled input genuinely differs (e.g.
-   monospace, error state), parameterise rather than flatten.
+e. **Adoption sweep (staged — four commits, mechanical but wide).** The long input
+   className is hand-rolled ~61× with drifting focus rings/radii while
+   `ui/input.tsx` has 3 importers. Pixel-equivalence matters, so stage it:
+   (1) extend `ui/input.tsx` with `Textarea`/`Select`/`FormField` — primitives
+   only, no adoption; (2) adopt across patient-flow components; (3) adopt across
+   clinic settings/forms/workflows surfaces; (4) raw footer buttons → `ui/button.tsx`.
+   One commit per stage, each behind its own visual check of the touched surfaces.
+   Do NOT change any focus/disabled behaviour — where a hand-rolled input genuinely
+   differs (e.g. monospace, error state), parameterise rather than flatten.
 
 f. **Shared date/time formatters (minor-list item).** 17 inline `en-AU`
    `toLocale*String` calls across ~11 component files → shared formatters in
@@ -134,14 +149,17 @@ every per-action-type field editor round-trip their config correctly.
 
 ### 5.6 — Component/store decomposition
 
-a. **Split `intake-journey.tsx` (~950 lines).** Phase reducer (~150 lines) extracted;
-   `IdentityResolution` should REUSE `identity-confirmation.tsx` with a pluggable
-   `resolve(selection)` callback (the journey currently re-implements its contact
-   picker character-for-character — diff them first; if they've drifted, reconcile
-   consciously); `IntakeChecklist`, `ConsentStep`, `FormStep` become files (the
-   latter two are already embedded components; FormStep should now sit on 5.4b's
-   `useSurveyModel`). Preserve: the completion-fired ref effect, the
-   onboarding-demo redirect effect, and resume-via-reminder-link semantics.
+a. **Split `intake-journey.tsx` (~950 lines) — staged, four commits, verify the
+   full journey after each.** The risks are distinct; don't bundle them:
+   (1) extract the phase reducer (~150 lines) — pure state-machine move, no JSX
+   changes; (2) move `IntakeChecklist`, `ConsentStep`, `FormStep` into their own
+   files as-is (the latter two are already embedded components); (3) re-point
+   `FormStep` onto 5.4b's `useSurveyModel`; (4) `IdentityResolution` reusing
+   `identity-confirmation.tsx` with a pluggable `resolve(selection)` callback —
+   the journey currently re-implements its contact picker character-for-character;
+   diff them FIRST and reconcile any drift consciously.
+   Preserve throughout: the completion-fired ref effect, the onboarding-demo
+   redirect effect, and resume-via-reminder-link semantics.
    Verify: complete a full intake journey (identity → card → consent → form → done),
    plus a resume from a reminder link.
 
@@ -165,9 +183,14 @@ c. **Store cleanup.** In `src/stores/clinic-store.ts`: a `makeRefresh(...)` fact
 d. **`useEnsureSlices([...])` hook** replacing the fetch-if-empty effect repeated in
    ~8 shells, and **`useSocketRoom(...)`** centralising join-on-connect (3 copies in
    `clinic-data-provider.tsx`, 2 in `waiting-room.tsx` — remember the waiting room's
-   join handler also does the resolve-resync; keep that, parameterised). Move the
-   provider's render-body `useClinicStore.setState` into an effect — mind the
-   `set-state-in-effect` lint rule; restructure rather than suppress if possible.
+   join handler also does the resolve-resync; keep that, parameterised).
+   The provider's render-body `useClinicStore.setState` seed (ref-guarded, ~line 22)
+   is DELIBERATE: children must see `locationId`/`orgId` on first paint, so do NOT
+   move it into an effect — that un-seeds the first render. Acceptable structural
+   fixes only: seed the store before first render (store-initializer / provider-props
+   pattern) IF it's lint-clean and first-paint-equivalent; otherwise leave it exactly
+   as-is and note that in the report. (This supersedes the original plan's
+   "move into an effect" instruction.)
    Verify: cold-load each clinic page directly by URL; kill and restart the dev
    server while a waiting-room tab is open and confirm it resyncs.
 
