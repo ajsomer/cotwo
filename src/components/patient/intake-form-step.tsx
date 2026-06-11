@@ -1,11 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Model } from 'survey-core';
-import { Survey } from 'survey-react-ui';
-import 'survey-core/survey-core.min.css';
+import { useState, useEffect, useCallback } from 'react';
 import { postJson } from '@/lib/api-client';
-import { coviuTheme } from '@/lib/survey/theme';
+import { useSurveyModel } from '@/hooks/useSurveyModel';
+import { SurveyStepShell } from './survey-shell';
 import { PersistentHeader } from './persistent-header';
 import { Spinner } from '@/components/ui/spinner';
 
@@ -31,7 +29,6 @@ export function FormStep({
   onComplete,
 }: FormStepProps) {
   const [schema, setSchema] = useState<Record<string, unknown> | null>(null);
-  const [survey, setSurvey] = useState<Model | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -47,15 +44,6 @@ export function FormStep({
         const formSchema = data.form?.schema;
         if (!formSchema) throw new Error('Form has no schema');
         setSchema(formSchema);
-        const model = new Model(formSchema);
-        model.applyTheme(coviuTheme);
-        model.showProgressBar = 'off';
-        model.showTitle = false;
-        // Don't show SurveyJS's built-in "Thank you for completing the survey"
-        // page — the intake journey advances to the next step itself, and we
-        // render our own loading screen in the gap (see `submitting` below).
-        model.showCompletedPage = false;
-        setSurvey(model);
       } catch {
         if (!cancelled) setError('Could not load form. Please try again.');
       } finally {
@@ -67,9 +55,8 @@ export function FormStep({
     };
   }, [formId]);
 
-  useEffect(() => {
-    if (!survey) return;
-    const handler = async (sender: Model) => {
+  const handleSubmit = useCallback(
+    async (responses: Record<string, unknown>) => {
       setSubmitting(true);
       setError(null);
       const result = await postJson(
@@ -77,7 +64,7 @@ export function FormStep({
         {
           item_type: 'form',
           form_id: formId,
-          data: sender.data,
+          data: responses,
         },
         'Failed to submit form'
       );
@@ -87,12 +74,16 @@ export function FormStep({
         return;
       }
       onComplete();
-    };
-    survey.onComplete.add(handler);
-    return () => {
-      survey.onComplete.remove(handler);
-    };
-  }, [survey, token, formId, onComplete]);
+    },
+    [token, formId, onComplete]
+  );
+
+  // Don't show SurveyJS's built-in "Thank you for completing the survey"
+  // page — the intake journey advances to the next step itself, and we
+  // render our own loading screen in the gap (see `submitting` below).
+  const survey = useSurveyModel(schema, handleSubmit, {
+    showCompletedPage: false,
+  });
 
   if (loading) {
     return (
@@ -150,15 +141,7 @@ export function FormStep({
         currentStep={currentStep}
         totalSteps={totalSteps}
       />
-      <div className="w-full">
-        <h1 className="mb-3 text-xl font-semibold text-gray-800">{formName}</h1>
-        {error && (
-          <p className="mb-2 text-sm text-red-500" role="alert">
-            {error}
-          </p>
-        )}
-        {survey && <Survey model={survey} />}
-      </div>
+      <SurveyStepShell title={formName} error={error} model={survey} />
     </div>
   );
 }
