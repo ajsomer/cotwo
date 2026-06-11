@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useCallback, useEffect, useMemo } from 'react';
-import { Model } from 'survey-core';
+import { useState, useCallback, useEffect } from 'react';
 import { Survey } from 'survey-react-ui';
 import 'survey-core/survey-core.min.css';
 import { postJson } from '@/lib/api-client';
-import { coviuTheme } from '@/lib/survey/theme';
+import { useSurveyModel } from '@/hooks/useSurveyModel';
+import { SurveyThanks } from './survey-shell';
 
 interface FormFillClientProps {
   token: string;
@@ -28,18 +28,11 @@ export function FormFillClient({
   const [currentPage, setCurrentPage] = useState(0);
   const [pageCount, setPageCount] = useState(1);
   const [nextPageName, setNextPageName] = useState('');
-  const [survey] = useState(() => {
-    const s = new Model(schema);
-    s.applyTheme(coviuTheme);
-    s.showProgressBar = 'off';
-    s.showTitle = false;
-    return s;
-  });
 
   const isPreview = token === '__preview__';
 
   const handleComplete = useCallback(
-    async (sender: Model) => {
+    async (responses: Record<string, unknown>) => {
       if (isPreview) {
         setSubmitted(true);
         return;
@@ -50,7 +43,7 @@ export function FormFillClient({
 
       const result = await postJson(
         `/api/forms/fill/${token}`,
-        { responses: sender.data },
+        { responses },
         'Failed to submit'
       );
       if (!result.ok) {
@@ -64,8 +57,10 @@ export function FormFillClient({
     [token, isPreview]
   );
 
+  const survey = useSurveyModel(schema, handleComplete);
+
   useEffect(() => {
-    survey.onComplete.add(handleComplete);
+    if (!survey) return;
 
     const updatePage = () => {
       setCurrentPage(survey.currentPageNo);
@@ -84,37 +79,17 @@ export function FormFillClient({
     updatePage();
 
     return () => {
-      survey.onComplete.remove(handleComplete);
       survey.onCurrentPageChanged.remove(updatePage);
     };
-  }, [survey, handleComplete]);
-
-  const styleOverrides = useMemo(() => `
-  `, []);
+  }, [survey]);
 
   if (submitted) {
     return (
-      <div className="flex flex-col items-center py-12 text-center">
-        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-teal-50">
-          <svg
-            className="h-6 w-6 text-teal-500"
-            fill="none"
-            viewBox="0 0 24 24"
-            strokeWidth={2}
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M4.5 12.75l6 6 9-13.5"
-            />
-          </svg>
-        </div>
-        <h1 className="text-xl font-semibold text-gray-800">Thank you</h1>
-        <p className="mt-2 text-sm text-gray-500">
-          Your responses have been submitted. You can close this page.
-        </p>
-      </div>
+      <SurveyThanks
+        className="flex flex-col items-center py-12 text-center"
+        title="Thank you"
+        message="Your responses have been submitted. You can close this page."
+      />
     );
   }
 
@@ -123,7 +98,6 @@ export function FormFillClient({
 
   return (
     <>
-      <style>{styleOverrides}</style>
       <div
         className={submitting ? 'pointer-events-none opacity-60' : ''}
         style={{
@@ -310,7 +284,7 @@ export function FormFillClient({
           )}
 
           {/* SurveyJS form body */}
-          <Survey model={survey} />
+          {survey && <Survey model={survey} />}
         </div>
       </div>
     </>
