@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { FormAssignmentStatus } from "@/lib/types/domain";
 import { Select } from "@/components/ui/input";
+import { formatDayMonthTime } from "@/lib/runsheet/format";
 
 interface AssignmentRow {
   id: string;
@@ -142,12 +143,7 @@ export function FormAssignmentsPanel({
 
   const formatTime = (dateStr: string | null) => {
     if (!dateStr) return null;
-    return new Date(dateStr).toLocaleString("en-AU", {
-      day: "numeric",
-      month: "short",
-      hour: "numeric",
-      minute: "2-digit",
-    });
+    return formatDayMonthTime(dateStr);
   };
 
   return (

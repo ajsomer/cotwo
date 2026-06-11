@@ -12,6 +12,7 @@ import { FilesPanel } from "./files-panel";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import type { FormRow } from "@/stores/clinic-store";
 import type { FormStatus } from "@/lib/types/domain";
+import { formatDayMonthYear } from "@/lib/runsheet/format";
 
 type TabKey = "forms" | "files";
 
@@ -88,11 +89,7 @@ export function FormsShell() {
   };
 
   const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString("en-AU", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    });
+    return formatDayMonthYear(dateStr);
   };
 
   if (!org) {

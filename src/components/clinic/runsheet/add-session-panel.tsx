@@ -8,6 +8,7 @@ import { ConfirmModal } from "@/components/ui/modal";
 import { useOrg } from "@/hooks/useOrg";
 import { createSessions, updateSession, deleteSession } from "@/lib/runsheet/mutations";
 import type { Room, EnrichedSession } from "@/lib/types/domain";
+import { formatWeekdayDayMonth, formatTime24h } from "@/lib/runsheet/format";
 
 interface AddSessionPanelProps {
   locationId: string;
@@ -52,18 +53,8 @@ export function AddSessionPanel({
   tomorrow.setDate(tomorrow.getDate() + 1);
   const targetDate = planningTomorrow ? tomorrow : today;
 
-  const todayShort = today.toLocaleDateString("en-AU", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    timeZone: timezone,
-  });
-  const tomorrowShort = tomorrow.toLocaleDateString("en-AU", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    timeZone: timezone,
-  });
+  const todayShort = formatWeekdayDayMonth(today, timezone);
+  const tomorrowShort = formatWeekdayDayMonth(tomorrow, timezone);
 
   // Track which rows are existing sessions vs newly added
   const [existingSessionIds] = useState<Set<string>>(() => {
@@ -81,14 +72,7 @@ export function AddSessionPanel({
       if (s.derived_state === "done") continue;
       map.set(s.session_id, {
         phone: s.phone_number ?? "",
-        time: s.scheduled_at
-          ? new Date(s.scheduled_at).toLocaleTimeString("en-AU", {
-              hour: "2-digit",
-              minute: "2-digit",
-              hour12: false,
-              timeZone: timezone,
-            })
-          : "",
+        time: s.scheduled_at ? formatTime24h(s.scheduled_at, timezone) : "",
       });
     }
     return map;
@@ -107,14 +91,7 @@ export function AddSessionPanel({
         patients: roomSessions.map((s) => ({
           id: s.session_id,
           phone: s.phone_number ?? "",
-          time: s.scheduled_at
-            ? new Date(s.scheduled_at).toLocaleTimeString("en-AU", {
-                hour: "2-digit",
-                minute: "2-digit",
-                hour12: false,
-                timeZone: timezone,
-              })
-            : "",
+          time: s.scheduled_at ? formatTime24h(s.scheduled_at, timezone) : "",
         })),
       };
     }

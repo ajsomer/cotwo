@@ -8,6 +8,7 @@ import { Modal, ConfirmModal } from "@/components/ui/modal";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import type { FileRow } from "@/stores/clinic-store";
 import { TextInput } from "@/components/ui/input";
+import { formatDayMonthYear } from "@/lib/runsheet/format";
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -25,11 +26,7 @@ function formatDate(dateStr: string): string {
   if (diffDays === 1) return "Yesterday";
   if (diffDays < 7) return `${diffDays} days ago`;
 
-  return date.toLocaleDateString("en-AU", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  return formatDayMonthYear(date.toISOString());
 }
 
 // ---------------------------------------------------------------------------

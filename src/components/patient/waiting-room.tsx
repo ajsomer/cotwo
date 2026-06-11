@@ -5,6 +5,7 @@ import { postJson } from '@/lib/api-client';
 import { getSocket } from '@/lib/socket-client';
 import { PersistentHeader } from './persistent-header';
 import { PatientVideoCall } from './patient-video-call';
+import { formatSessionTime } from '@/lib/runsheet/format';
 
 interface WaitingRoomProps {
   sessionId: string;
@@ -184,11 +185,7 @@ export function WaitingRoom({
           <div className="rounded-lg bg-gray-50 px-4 py-3">
             <p className="text-xs font-medium text-gray-400">Appointment time</p>
             <p className="text-sm font-medium text-gray-800">
-              {new Date(scheduledAt).toLocaleTimeString('en-AU', {
-                hour: 'numeric',
-                minute: '2-digit',
-                hour12: true,
-              })}
+              {formatSessionTime(scheduledAt)}
             </p>
           </div>
         )}
