@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { postJson } from '@/lib/api-client';
 import { PersistentHeader } from './persistent-header';
+import { FormField, TextInput } from '@/components/ui/input';
 
 interface PhoneVerificationProps {
   clinicName: string;
@@ -204,17 +205,15 @@ export function PhoneVerification({
             We&apos;ll send you a code to confirm your identity.
           </p>
 
-          <div>
-            <label htmlFor="phone" className="mb-1 block text-xs font-medium text-gray-500">
-              Phone number
-            </label>
+          <FormField label="Phone number" htmlFor="phone">
             <div className="flex gap-2">
               <div className="flex h-12 items-center rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm text-gray-500">
                 +61
               </div>
-              <input
+              <TextInput
                 id="phone"
                 type="tel"
+                inputSize="lg"
                 inputMode="numeric"
                 autoFocus
                 value={phoneNumber.replace(/^\+61/, '')}
@@ -226,10 +225,10 @@ export function PhoneVerification({
                   setPhoneNumber('+61' + digits);
                 }}
                 placeholder="450 336 880"
-                className="h-12 flex-1 rounded-lg border border-gray-200 px-3 text-base text-gray-800 outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500"
+                className="flex-1"
               />
             </div>
-          </div>
+          </FormField>
 
           {error && (
             <p className="text-sm text-red-500" role="alert" aria-live="assertive">{error}</p>

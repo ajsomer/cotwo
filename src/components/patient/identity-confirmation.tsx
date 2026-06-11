@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { postJson } from '@/lib/api-client';
 import { PersistentHeader } from './persistent-header';
+import { FormField, TextInput } from '@/components/ui/input';
 import { PatientContact } from '@/lib/types/domain';
 
 interface IdentityConfirmationProps {
@@ -152,45 +153,36 @@ export function IdentityConfirmation({
               Your details
             </h1>
 
-            <div>
-              <label htmlFor="firstName" className="mb-1 block text-xs font-medium text-gray-500">
-                First name
-              </label>
-              <input
+            <FormField label="First name" htmlFor="firstName">
+              <TextInput
                 id="firstName"
                 type="text"
+                inputSize="lg"
                 autoFocus
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
-                className="h-12 w-full rounded-lg border border-gray-200 px-3 text-base text-gray-800 outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500"
               />
-            </div>
+            </FormField>
 
-            <div>
-              <label htmlFor="lastName" className="mb-1 block text-xs font-medium text-gray-500">
-                Last name
-              </label>
-              <input
+            <FormField label="Last name" htmlFor="lastName">
+              <TextInput
                 id="lastName"
                 type="text"
+                inputSize="lg"
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
-                className="h-12 w-full rounded-lg border border-gray-200 px-3 text-base text-gray-800 outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500"
               />
-            </div>
+            </FormField>
 
-            <div>
-              <label htmlFor="dob" className="mb-1 block text-xs font-medium text-gray-500">
-                Date of birth
-              </label>
-              <input
+            <FormField label="Date of birth" htmlFor="dob">
+              <TextInput
                 id="dob"
                 type="date"
+                inputSize="lg"
                 value={dob}
                 onChange={(e) => setDob(e.target.value)}
-                className="h-12 w-full rounded-lg border border-gray-200 px-3 text-base text-gray-800 outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500"
               />
-            </div>
+            </FormField>
 
             <button
               onClick={createNew}

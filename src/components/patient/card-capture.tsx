@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { getJson, postJson } from '@/lib/api-client';
 import { PersistentHeader } from './persistent-header';
+import { FormField, TextInput } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
 
 interface CardCaptureProps {
@@ -207,13 +208,11 @@ export function CardCapture({
         {/* New card form */}
         {(!existingCard || showNewCard) && (
           <>
-            <div>
-              <label htmlFor="cardNumber" className="mb-1 block text-xs font-medium text-gray-500">
-                Card number
-              </label>
-              <input
+            <FormField label="Card number" htmlFor="cardNumber">
+              <TextInput
                 id="cardNumber"
                 type="text"
+                inputSize="lg"
                 inputMode="numeric"
                 autoFocus
                 placeholder="4242 4242 4242 4242"
@@ -222,18 +221,15 @@ export function CardCapture({
                   const v = e.target.value.replace(/\D/g, '').slice(0, 16);
                   setCardNumber(v.replace(/(\d{4})/g, '$1 ').trim());
                 }}
-                className="h-12 w-full rounded-lg border border-gray-200 px-3 text-base text-gray-800 outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500"
               />
-            </div>
+            </FormField>
 
             <div className="flex gap-3">
-              <div className="flex-1">
-                <label htmlFor="expiry" className="mb-1 block text-xs font-medium text-gray-500">
-                  Expiry
-                </label>
-                <input
+              <FormField label="Expiry" htmlFor="expiry" className="flex-1">
+                <TextInput
                   id="expiry"
                   type="text"
+                  inputSize="lg"
                   inputMode="numeric"
                   placeholder="MM/YY"
                   value={expiry}
@@ -242,23 +238,19 @@ export function CardCapture({
                     if (v.length >= 3) v = v.slice(0, 2) + '/' + v.slice(2);
                     setExpiry(v);
                   }}
-                  className="h-12 w-full rounded-lg border border-gray-200 px-3 text-base text-gray-800 outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500"
                 />
-              </div>
-              <div className="flex-1">
-                <label htmlFor="cvc" className="mb-1 block text-xs font-medium text-gray-500">
-                  CVC
-                </label>
-                <input
+              </FormField>
+              <FormField label="CVC" htmlFor="cvc" className="flex-1">
+                <TextInput
                   id="cvc"
                   type="text"
+                  inputSize="lg"
                   inputMode="numeric"
                   placeholder="123"
                   value={cvc}
                   onChange={(e) => setCvc(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                  className="h-12 w-full rounded-lg border border-gray-200 px-3 text-base text-gray-800 outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500"
                 />
-              </div>
+              </FormField>
             </div>
 
             {error && (
