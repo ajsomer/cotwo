@@ -5,6 +5,7 @@ import {
   isSyncActive,
 } from "@/lib/pms/connection";
 import { pullConnection } from "@/lib/pms/sync/pull";
+import { executeScheduledActions } from "@/lib/workflows/engine";
 import { denyResponse } from "@/lib/api/route-helpers";
 
 /**
@@ -33,5 +34,19 @@ export async function POST(request: NextRequest) {
   }
 
   const result = await pullConnection(connection);
+
+  // A manual sync doubles as an engine tick: fire anything already due (e.g.
+  // the morning-of add_to_runsheet for an appointment synced on an earlier
+  // day) so the run sheet reflects today without waiting for the daily-scan
+  // cron. New appointments pulled above already fired their due actions
+  // synchronously inside scheduleWorkflowForAppointment.
+  if (result.ok) {
+    try {
+      await executeScheduledActions();
+    } catch (err) {
+      console.error("[PMS SYNC] Catch-up action pass failed:", err);
+    }
+  }
+
   return NextResponse.json(result, { status: result.ok ? 200 : 502 });
 }

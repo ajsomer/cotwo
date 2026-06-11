@@ -14,6 +14,7 @@ import { and, eq } from "drizzle-orm";
 import { getSmsProvider } from "@/lib/sms";
 import { getBaseUrl } from "@/lib/utils/url";
 import { renderTemplate, smsTemplateVars, intakeTemplateVars } from "./template";
+import { findAppointmentActionsByType } from "./queries";
 import type { ActionHandlerResult, ActionType } from "./types";
 
 export interface HandlerContext {
@@ -364,8 +365,12 @@ async function handleAddToRunsheet(ctx: HandlerContext): Promise<ActionHandlerRe
   // Skip the "join here" SMS when the patient is already in-app (early-fire
   // from the intake flow). Sending it there is pointless and, with a real SMS
   // provider, makes the patient wait on the provider round-trip before they're
-  // routed onward. The scheduled/cron path still sends it (patient absent).
-  if (!ctx.suppressNotification) {
+  // routed onward. The scheduled/cron path still sends it (patient absent) —
+  // unless an intake package is still in flight: the intake SMS already
+  // carries the patient's link and finishing intake routes them straight to
+  // the session, so a second text would just double up (a same-day sync fires
+  // intake_package and add_to_runsheet in the same pass).
+  if (!ctx.suppressNotification && !(await hasIntakeInFlight(appointment.id))) {
     const sessionLink = `${getBaseUrl()}/entry/${entryToken}`;
     const sms = getSmsProvider();
     const phoneNumber = appointment.phone_number ?? ctx.phoneNumber;
@@ -386,6 +391,23 @@ async function handleAddToRunsheet(ctx: HandlerContext): Promise<ActionHandlerRe
     status: "sent",
     resultData: { session_id: session.id, entry_token: entryToken },
   };
+}
+
+/**
+ * True while the appointment has a non-terminal intake_package action
+ * (scheduled/firing/sent): the patient's entry path is the intake link, not a
+ * separate "join here" SMS. Completed/failed/dropped intake means the join SMS
+ * is the patient's only way in, so it still goes out.
+ */
+async function hasIntakeInFlight(appointmentId: string): Promise<boolean> {
+  const actions = await findAppointmentActionsByType(
+    appointmentId,
+    "intake_package"
+  );
+  return actions.some(
+    (a) =>
+      a.status === "scheduled" || a.status === "firing" || a.status === "sent"
+  );
 }
 
 /** Send the contact verification flow link to the patient. */

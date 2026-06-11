@@ -4,8 +4,11 @@ import {
   workflowActionBlocks,
   appointmentWorkflowRuns,
   appointmentActions,
+  appointments as appointmentsT,
+  locations as locationsT,
 } from "@/lib/db/schema";
 import { and, asc, eq } from "drizzle-orm";
+import { dayBoundsInTimeZone } from "@/lib/runsheet/format";
 import { executeScheduledActions } from "./engine";
 
 /**
@@ -22,7 +25,9 @@ import { executeScheduledActions } from "./engine";
  *    - intake_package: fires immediately (now)
  *    - intake_reminder: parent intake_package's scheduled_for + offset_days
  *      (deterministic at instantiation, not based on fired_at)
- *    - add_to_runsheet: appointment.scheduled_at (offset 0)
+ *    - add_to_runsheet: start of the appointment's day (location timezone) —
+ *      future appointments land on the run sheet morning-of via the cron;
+ *      same-day creates/syncs fire immediately via the synchronous pass below
  *    - legacy blocks: appointment.scheduled_at - offset_minutes (or now if null)
  * 5. For run_sheet workflows: drop any action whose scheduled_for falls
  *    after appointment.scheduled_at (mark as 'dropped')
@@ -101,6 +106,17 @@ export async function scheduleWorkflowForAppointment(
   // Find the intake_package block's scheduled_for (it's always "now")
   const intakePackageScheduledFor = now;
 
+  // add_to_runsheet fires at the START of the appointment's local day, not at
+  // appointment time: the run sheet is built morning-of (daily-scan cron), and
+  // a same-day create/sync must land the session immediately via the
+  // synchronous executeScheduledActions pass at the end of this function —
+  // not sit invisible until the appointment hour arrives.
+  const runsheetFireAt =
+    apptTime !== null &&
+    blocks.some((b) => b.action_type === "add_to_runsheet")
+      ? await startOfAppointmentDay(appointmentId, apptTime)
+      : null;
+
   const actionRows: Array<{
     appointmentId: string;
     actionBlockId: string;
@@ -121,7 +137,7 @@ export async function scheduleWorkflowForAppointment(
       const offsetDays = config?.offset_days ?? (block.offset_minutes / (60 * 24));
       scheduledFor = intakePackageScheduledFor + offsetDays * 24 * 60 * 60 * 1000;
     } else if (block.action_type === "add_to_runsheet") {
-      // Fires at appointment time
+      // Fires at the start of the appointment's day (see runsheetFireAt above)
       if (!apptTime) {
         // collection_only workflow shouldn't have add_to_runsheet, but guard anyway
         console.warn(
@@ -136,7 +152,7 @@ export async function scheduleWorkflowForAppointment(
         });
         continue;
       }
-      scheduledFor = apptTime;
+      scheduledFor = runsheetFireAt ?? apptTime;
     } else {
       // Legacy action types: offset from appointment time (or now if no appointment time)
       const anchor = apptTime ?? now;
@@ -144,7 +160,7 @@ export async function scheduleWorkflowForAppointment(
     }
 
     // 5. Drop actions that fall after appointment time (for run_sheet workflows).
-    //    Exempt add_to_runsheet (fires AT appointment time) and intake_package
+    //    Exempt add_to_runsheet (fires morning-of) and intake_package
     //    (fires "now" — sending intake is always valid even for an imminent or
     //    just-synced appointment; only future-dated reminders are dropped late).
     if (
@@ -185,10 +201,12 @@ export async function scheduleWorkflowForAppointment(
     }
   }
 
-  // Fire immediately-due actions (e.g. intake_package) synchronously so the
-  // patient gets their SMS the moment the clinic adds them, without waiting
-  // for the daily-scan cron. Future-dated actions (reminders, add_to_runsheet
-  // the morning of the appointment) remain queued for the cron.
+  // Fire immediately-due actions (e.g. intake_package, and add_to_runsheet
+  // for a same-day appointment) synchronously so the patient gets their SMS —
+  // and the session reaches the run sheet — the moment the clinic adds or
+  // syncs them, without waiting for the daily-scan cron. Future-dated actions
+  // (reminders, add_to_runsheet the morning of the appointment) remain queued
+  // for the cron.
   try {
     await executeScheduledActions({ appointmentId });
   } catch (err) {
@@ -196,5 +214,28 @@ export async function scheduleWorkflowForAppointment(
       `[WORKFLOW SCANNER] Immediate execution failed for appointment ${appointmentId}:`,
       err
     );
+  }
+}
+
+/**
+ * Start of the appointment's calendar day in its location's timezone, as epoch
+ * ms. Falls back to the appointment time itself if the location can't be
+ * resolved — scheduling must never fail on a lookup.
+ */
+async function startOfAppointmentDay(
+  appointmentId: string,
+  apptTime: number
+): Promise<number> {
+  try {
+    const [row] = await db
+      .select({ timezone: locationsT.timezone })
+      .from(appointmentsT)
+      .innerJoin(locationsT, eq(locationsT.id, appointmentsT.locationId))
+      .where(eq(appointmentsT.id, appointmentId))
+      .limit(1);
+    const timezone = row?.timezone ?? "Australia/Sydney";
+    return dayBoundsInTimeZone(new Date(apptTime), timezone).startOfDay.getTime();
+  } catch {
+    return apptTime;
   }
 }
