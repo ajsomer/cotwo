@@ -6,6 +6,9 @@ import {
   payments,
   sessions as sessionsT,
   appointments as appointmentsT,
+  appointmentActions,
+  fileDeliveries,
+  intakePackageJourneys,
   paymentMethods,
   patientPhoneNumbers,
   patients as patientsT,
@@ -35,19 +38,33 @@ import { getAuthenticatedUserId } from "@/lib/auth/staff-access";
  */
 export async function nukeSessions() {
   try {
-    await db.delete(sessionParticipants);
-    await db.delete(payments);
-    await db.delete(sessionsT);
-    await db.delete(appointmentsT);
-    await db.delete(paymentMethods);
-    await db.delete(patientPhoneNumbers);
-    await db.delete(patientsT);
-    await db.delete(phoneVerifications);
+    await deleteSessionData();
     return { success: true };
   } catch (err) {
     console.error("[NUKE] Failed:", err);
     return { success: false, error: String(err) };
   }
+}
+
+/**
+ * The shared delete pass for nuke + re-seed. Order matters: several tables
+ * reference sessions/patients with NO ACTION (no cascade), so they must go
+ * before the rows they point at — file_deliveries and appointment_actions
+ * before sessions, intake_package_journeys before patients (the appointment
+ * cascade catches journeys with an appointment, this catches the rest).
+ */
+async function deleteSessionData() {
+  await db.delete(fileDeliveries);
+  await db.delete(appointmentActions);
+  await db.delete(sessionParticipants);
+  await db.delete(payments);
+  await db.delete(sessionsT);
+  await db.delete(appointmentsT); // cascades workflow runs + linked journeys
+  await db.delete(intakePackageJourneys);
+  await db.delete(paymentMethods);
+  await db.delete(patientPhoneNumbers);
+  await db.delete(patientsT);
+  await db.delete(phoneVerifications);
 }
 
 export async function seedDemoData() {
@@ -82,13 +99,7 @@ export async function seedDemoData() {
 
   try {
     // Clean existing session data (preserves rooms, org, location, staff)
-    await db.delete(sessionParticipants);
-    await db.delete(payments);
-    await db.delete(sessionsT);
-    await db.delete(appointmentsT);
-    await db.delete(paymentMethods);
-    await db.delete(patientPhoneNumbers);
-    await db.delete(patientsT);
+    await deleteSessionData();
 
     // Appointment types are owned by org/clinic setup, NOT the demo seed — the
     // seed only creates patient/session data. Read the org's existing types to

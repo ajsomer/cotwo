@@ -6,12 +6,14 @@ import {
   appointmentActions,
   appointmentTypes as appointmentTypesT,
   appointmentWorkflowRuns,
+  fileDeliveries,
   forms as formsT,
   formSubmissions,
   intakePackageJourneys,
   patients as patientsT,
   patientPhoneNumbers,
   paymentMethods,
+  sessions as sessionsT,
   staffAssignments,
   typeWorkflowLinks,
   workflowActionBlocks,
@@ -639,7 +641,15 @@ async function clearTasksDataInternal(orgId: string) {
   await db.delete(paymentMethods).where(inArray(paymentMethods.patientId, patientIds));
   // Journeys (cascade from appointment, but explicit for ordering safety).
   await db.delete(intakePackageJourneys).where(inArray(intakePackageJourneys.appointmentId, apptIds));
-  // Appointments — cascades to appointment_workflow_runs + appointment_actions.
+  // File deliveries reference patients with NO ACTION — must go before patients.
+  await db.delete(fileDeliveries).where(inArray(fileDeliveries.patientId, patientIds));
+  // Actions reference sessions with NO ACTION — delete them explicitly (rather
+  // than via the appointment cascade) so the sessions delete below can't trip,
+  // and delete sessions before appointments (the FK is SET NULL, so deleting
+  // appointments first would orphan them and lose the link we filter on).
+  await db.delete(appointmentActions).where(inArray(appointmentActions.appointmentId, apptIds));
+  await db.delete(sessionsT).where(inArray(sessionsT.appointmentId, apptIds));
+  // Appointments — cascades to appointment_workflow_runs.
   await db.delete(appointmentsT).where(inArray(appointmentsT.id, apptIds));
   // Phones, then patients.
   await db.delete(patientPhoneNumbers).where(inArray(patientPhoneNumbers.patientId, patientIds));
