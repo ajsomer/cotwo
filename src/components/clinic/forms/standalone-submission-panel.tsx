@@ -3,10 +3,18 @@
 import { useState, useEffect, useCallback } from "react";
 import { postJson } from "@/lib/api-client";
 import { SlideOver } from "@/components/ui/slide-over";
+import { CloseButton } from "@/components/ui/close-button";
+import { formatDayMonthTime } from "@/lib/runsheet/format";
 import {
   fetchReviewData,
   standaloneSubmissionUrl,
 } from "./review-prefetch-cache";
+import {
+  FieldRow,
+  ReviewFooter,
+  ReviewFooterButton,
+  ReviewSkeleton,
+} from "./review-panel-parts";
 
 interface StandaloneSubmissionPanelProps {
   submissionId: string;
@@ -59,27 +67,6 @@ const RESOLUTION_LABEL: Record<string, string> = {
   someone_else: "new patient on a shared phone",
   new: "new patient",
 };
-
-function CopyButton({ text, small }: { text: string; small?: boolean }) {
-  const [copied, setCopied] = useState(false);
-  const handleCopy = async () => {
-    await navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-  return (
-    <button
-      onClick={handleCopy}
-      className={`shrink-0 ${
-        small
-          ? "text-[10px] text-gray-400 hover:text-teal-600"
-          : "rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
-      }`}
-    >
-      {copied ? (small ? "✓" : "Copied!") : small ? "Copy" : "Copy all fields"}
-    </button>
-  );
-}
 
 /**
  * Slide-over detail panel for a standalone form submission. Mirrors
@@ -151,41 +138,17 @@ export function StandaloneSubmissionPanel({
         <h2 className="text-sm font-semibold text-gray-800 min-w-0">
           Form completed: {detail?.form_name ?? seedFormName ?? "—"}
         </h2>
-        <button
+        <CloseButton
           onClick={onClose}
           className="p-1 text-gray-500 hover:text-gray-800 transition-colors rounded flex-shrink-0"
-          aria-label="Close"
-        >
-          <svg
-            className="h-5 w-5"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={2}
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M6 18L18 6M6 6l12 12"
-            />
-          </svg>
-        </button>
+        />
       </div>
       <p className="text-xs text-gray-500 mt-0.5">
         {detail?.patient.name ?? seedPatientName ?? "Unknown patient"}
         {(detail?.created_at ?? seedCreatedAt) && (
           <>
             {" "}
-            · Submitted{" "}
-            {new Date(detail?.created_at ?? seedCreatedAt!).toLocaleString(
-              "en-AU",
-              {
-                day: "numeric",
-                month: "short",
-                hour: "numeric",
-                minute: "2-digit",
-              }
-            )}
+            · Submitted {formatDayMonthTime(detail?.created_at ?? seedCreatedAt!)}
           </>
         )}
       </p>
@@ -211,31 +174,11 @@ export function StandaloneSubmissionPanel({
         {/* Field list */}
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {loading ? (
-            <div className="space-y-3">
-              {[1, 2, 3, 4].map((i) => (
-                <div key={i} className="animate-pulse">
-                  <div className="h-3 bg-gray-100 rounded w-1/3 mb-1" />
-                  <div className="h-4 bg-gray-100 rounded w-2/3" />
-                </div>
-              ))}
-            </div>
+            <ReviewSkeleton />
           ) : detail && detail.fields.length > 0 ? (
             <div className="space-y-3">
               {detail.fields.map((field, i) => (
-                <div
-                  key={i}
-                  className="flex items-start justify-between gap-2 rounded-lg border border-gray-100 px-3 py-2"
-                >
-                  <div className="min-w-0">
-                    <p className="text-[10px] font-medium text-gray-400 uppercase tracking-wide">
-                      {field.label}
-                    </p>
-                    <p className="text-sm text-gray-800 break-words">
-                      {field.value || "—"}
-                    </p>
-                  </div>
-                  <CopyButton text={field.value} small />
-                </div>
+                <FieldRow key={i} label={field.label} value={field.value} />
               ))}
             </div>
           ) : (
@@ -252,30 +195,29 @@ export function StandaloneSubmissionPanel({
         </div>
 
         {/* Footer */}
-        <div className="border-t border-gray-200 px-5 py-3 flex gap-2 justify-end">
+        <ReviewFooter>
           {detail && (
-            <button
+            <ReviewFooterButton
               onClick={() =>
                 window.open(
                   `/api/forms/submissions/${detail.id}/pdf`,
                   "_blank",
                 )
               }
-              className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"
             >
               Download form
-            </button>
+            </ReviewFooterButton>
           )}
           {showReview && (
-            <button
+            <ReviewFooterButton
+              variant="primary"
               onClick={() => act("review")}
               disabled={acting !== null}
-              className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 disabled:opacity-50"
             >
               {acting === "review" ? "Marking…" : "Mark reviewed"}
-            </button>
+            </ReviewFooterButton>
           )}
-        </div>
+        </ReviewFooter>
       </div>
     </SlideOver>
   );

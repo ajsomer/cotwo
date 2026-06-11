@@ -3,10 +3,18 @@
 import { useCallback, useEffect, useState } from "react";
 import { postJson } from "@/lib/api-client";
 import { SlideOver } from "@/components/ui/slide-over";
+import { formatDayMonthTime } from "@/lib/runsheet/format";
 import {
   fetchReviewData,
   formSubmissionUrl,
 } from "./review-prefetch-cache";
+import {
+  FieldRow,
+  ReviewCopyButton,
+  ReviewFooter,
+  ReviewFooterButton,
+  ReviewSkeleton,
+} from "./review-panel-parts";
 
 interface FormHandoffPanelProps {
   actionId: string;
@@ -23,29 +31,6 @@ interface FormHandoffPanelProps {
 interface FormField {
   label: string;
   value: string;
-}
-
-function CopyButton({ text, small }: { text: string; small?: boolean }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = async () => {
-    await navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  return (
-    <button
-      onClick={handleCopy}
-      className={`shrink-0 ${
-        small
-          ? "text-[10px] text-gray-400 hover:text-teal-600"
-          : "rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
-      }`}
-    >
-      {copied ? (small ? "\u2713" : "Copied!") : small ? "Copy" : "Copy all fields"}
-    </button>
-  );
 }
 
 export function FormHandoffPanel({
@@ -138,13 +123,7 @@ export function FormHandoffPanel({
             {submittedAt && (
               <>
                 {" "}
-                &middot; Submitted{" "}
-                {new Date(submittedAt).toLocaleString("en-AU", {
-                  day: "numeric",
-                  month: "short",
-                  hour: "numeric",
-                  minute: "2-digit",
-                })}
+                &middot; Submitted {formatDayMonthTime(submittedAt)}
               </>
             )}
           </p>
@@ -153,37 +132,17 @@ export function FormHandoffPanel({
         {/* Field list */}
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {loading ? (
-            <div className="space-y-3">
-              {[1, 2, 3, 4].map((i) => (
-                <div key={i} className="animate-pulse">
-                  <div className="h-3 bg-gray-100 rounded w-1/3 mb-1" />
-                  <div className="h-4 bg-gray-100 rounded w-2/3" />
-                </div>
-              ))}
-            </div>
+            <ReviewSkeleton />
           ) : fields.length > 0 ? (
             <>
               {/* Bulk copy */}
               <div className="mb-4">
-                <CopyButton text={allFieldsText} />
+                <ReviewCopyButton text={allFieldsText} />
               </div>
 
               <div className="space-y-3">
                 {fields.map((field, i) => (
-                  <div
-                    key={i}
-                    className="flex items-start justify-between gap-2 rounded-lg border border-gray-100 px-3 py-2"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-[10px] font-medium text-gray-400 uppercase tracking-wide">
-                        {field.label}
-                      </p>
-                      <p className="text-sm text-gray-800 break-words">
-                        {field.value || "—"}
-                      </p>
-                    </div>
-                    <CopyButton text={field.value} small />
-                  </div>
+                  <FieldRow key={i} label={field.label} value={field.value} />
                 ))}
               </div>
             </>
@@ -205,34 +164,28 @@ export function FormHandoffPanel({
         </div>
 
         {/* Footer */}
-        <div className="border-t border-gray-200 px-5 py-3 flex gap-2 justify-end">
-          <button
-            onClick={onClose}
-            className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"
-          >
-            Back
-          </button>
+        <ReviewFooter>
+          <ReviewFooterButton onClick={onClose}>Back</ReviewFooterButton>
           {loadedSubmissionId && (
-            <button
+            <ReviewFooterButton
               onClick={() =>
                 window.open(
                   `/api/forms/submissions/${loadedSubmissionId}/pdf`,
                   "_blank",
                 )
               }
-              className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"
             >
               Download form
-            </button>
+            </ReviewFooterButton>
           )}
-          <button
+          <ReviewFooterButton
+            variant="primary"
             onClick={handleMarkTranscribed}
             disabled={marking}
-            className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600 disabled:opacity-50"
           >
             {marking ? "Marking..." : "Mark as transcribed"}
-          </button>
-        </div>
+          </ReviewFooterButton>
+        </ReviewFooter>
       </div>
     </SlideOver>
   );

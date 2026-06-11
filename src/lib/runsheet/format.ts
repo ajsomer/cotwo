@@ -158,6 +158,16 @@ export function dayBoundsInTimeZone(
   };
 }
 
+/** Format a timestamp as day, short month and time. e.g. "11 Jun, 2:05 pm" */
+export function formatDayMonthTime(iso: string): string {
+  return new Date(iso).toLocaleString('en-AU', {
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 /** Format today's date. e.g. "Monday 30 March 2026" */
 export function formatRunsheetDate(date: Date): string {
   return date.toLocaleDateString('en-AU', {
