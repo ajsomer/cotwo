@@ -4,6 +4,7 @@ import { useState, useMemo, useRef } from "react";
 import { SlideOver } from "@/components/ui/slide-over";
 import { Button } from "@/components/ui/button";
 import { CloseButton } from "@/components/ui/close-button";
+import { ConfirmModal } from "@/components/ui/modal";
 import { useOrg } from "@/hooks/useOrg";
 import { createSessions, updateSession, deleteSession } from "@/lib/runsheet/mutations";
 import type { Room, EnrichedSession } from "@/lib/types/domain";
@@ -41,6 +42,10 @@ export function AddSessionPanel({
   const { org } = useOrg();
   const [planningTomorrow, setPlanningTomorrow] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [deletingSession, setDeletingSession] = useState<{
+    sessionId: string;
+    roomId: string;
+  } | null>(null);
 
   const today = new Date();
   const tomorrow = new Date(today);
@@ -247,9 +252,7 @@ export function AddSessionPanel({
   }
 
   async function handleDeleteSession(sessionId: string, roomId: string) {
-    if (!confirm("Delete this session? If the patient has been notified, a cancellation SMS will be sent.")) {
-      return;
-    }
+    setDeletingSession(null);
     await deleteSession(sessionId);
     removePatientRow(roomId, sessionId);
     await onRefetch?.();
@@ -409,7 +412,10 @@ export function AddSessionPanel({
                               onClick={() =>
                                 editingSessionId &&
                                 sessions.find((s) => s.session_id === patient.id)
-                                  ? handleDeleteSession(patient.id, room.id)
+                                  ? setDeletingSession({
+                                      sessionId: patient.id,
+                                      roomId: room.id,
+                                    })
                                   : removePatientRow(room.id, patient.id)
                               }
                               className="p-1 text-gray-400 hover:text-red-500 transition-colors flex-shrink-0"
@@ -453,6 +459,19 @@ export function AddSessionPanel({
           </Button>
         </div>
       </div>
+
+      <ConfirmModal
+        open={!!deletingSession}
+        title="Delete this session?"
+        message="If the patient has been notified, a cancellation SMS will be sent."
+        confirmLabel="Delete"
+        destructive
+        onConfirm={() =>
+          deletingSession &&
+          handleDeleteSession(deletingSession.sessionId, deletingSession.roomId)
+        }
+        onCancel={() => setDeletingSession(null)}
+      />
     </SlideOver>
   );
 }

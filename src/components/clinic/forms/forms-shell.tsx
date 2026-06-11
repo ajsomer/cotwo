@@ -6,6 +6,7 @@ import { postJson } from "@/lib/api-client";
 import { useOrg } from "@/hooks/useOrg";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { ConfirmModal } from "@/components/ui/modal";
 import { FormAssignmentsPanel } from "./form-assignments-panel";
 import { FilesPanel } from "./files-panel";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
@@ -39,6 +40,10 @@ export function FormsShell() {
   const [sendingForm, setSendingForm] = useState<FormRow | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("forms");
   const [copiedFormId, setCopiedFormId] = useState<string | null>(null);
+  const [deletingForm, setDeletingForm] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
 
   const copyStandaloneLink = async (form: FormRow) => {
     const url = `${window.location.origin}/f/${form.public_token}`;
@@ -55,8 +60,8 @@ export function FormsShell() {
     if (org) getClinicStore().refreshForms(org.id);
   };
 
-  const handleDelete = async (formId: string, formName: string) => {
-    if (!confirm(`Delete "${formName}"? This cannot be undone.`)) return;
+  const handleDelete = async (formId: string) => {
+    setDeletingForm(null);
 
     const res = await fetch(`/api/forms?id=${formId}`, { method: "DELETE" });
 
@@ -240,7 +245,9 @@ export function FormsShell() {
                               </button>
                             )}
                             <button
-                              onClick={() => handleDelete(form.id, form.name)}
+                              onClick={() =>
+                                setDeletingForm({ id: form.id, name: form.name })
+                              }
                               className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50"
                             >
                               Delete
@@ -267,6 +274,16 @@ export function FormsShell() {
               formName={sendingForm.name}
             />
           )}
+
+          <ConfirmModal
+            open={!!deletingForm}
+            title={`Delete "${deletingForm?.name}"?`}
+            message="This cannot be undone."
+            confirmLabel="Delete"
+            destructive
+            onConfirm={() => deletingForm && handleDelete(deletingForm.id)}
+            onCancel={() => setDeletingForm(null)}
+          />
         </>
       )}
     </div>

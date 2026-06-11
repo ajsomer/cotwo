@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { getJson, postJson } from "@/lib/api-client";
+import { ConfirmModal } from "@/components/ui/modal";
 import { useOrg } from "@/hooks/useOrg";
 import type {
   DbWorkflowTemplate,
@@ -72,6 +73,11 @@ export function WorkflowsShell() {
   // Mid-flight warning
   const [showWarning, setShowWarning] = useState(false);
   const [inFlightCount, setInFlightCount] = useState(0);
+  const [pendingDiscard, setPendingDiscard] = useState<
+    | { kind: "direction"; value: WorkflowDirection }
+    | { kind: "select"; value: string }
+    | null
+  >(null);
 
   // Dirty tracking
   const isDirty =
@@ -147,8 +153,13 @@ export function WorkflowsShell() {
   const handleDirectionChange = (newDir: WorkflowDirection) => {
     if (newDir === direction) return;
     if (dirtyRef.current) {
-      if (!window.confirm("You have unsaved changes. Discard them?")) return;
+      setPendingDiscard({ kind: "direction", value: newDir });
+      return;
     }
+    applyDirectionChange(newDir);
+  };
+
+  const applyDirectionChange = (newDir: WorkflowDirection) => {
     // Reset state — useEffect will handle the fetch via direction dep
     setSelectedId(null);
     setTemplate(null);
@@ -161,8 +172,13 @@ export function WorkflowsShell() {
   const handleSelect = (id: string) => {
     if (id === selectedId) return;
     if (dirtyRef.current) {
-      if (!window.confirm("You have unsaved changes. Discard them?")) return;
+      setPendingDiscard({ kind: "select", value: id });
+      return;
     }
+    applySelect(id);
+  };
+
+  const applySelect = (id: string) => {
     setSelectedId(id);
     const store = getClinicStore();
     const currentTplMap = isPre ? store.preWorkflowTemplates : store.postWorkflowTemplates;
@@ -451,6 +467,21 @@ export function WorkflowsShell() {
           <OutcomePathwaysPanel />
         </div>
       )}
+
+      <ConfirmModal
+        open={!!pendingDiscard}
+        title="You have unsaved changes. Discard them?"
+        confirmLabel="Discard"
+        destructive
+        onConfirm={() => {
+          if (!pendingDiscard) return;
+          const action = pendingDiscard;
+          setPendingDiscard(null);
+          if (action.kind === "direction") applyDirectionChange(action.value);
+          else applySelect(action.value);
+        }}
+        onCancel={() => setPendingDiscard(null)}
+      />
     </div>
   );
 }

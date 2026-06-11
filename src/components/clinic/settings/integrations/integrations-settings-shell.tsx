@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { getJson } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { ConfirmModal } from "@/components/ui/modal";
 import { useLocation } from "@/hooks/useLocation";
 import { usePmsConnection } from "@/hooks/usePmsConnection";
 import { usePmsSync, type PmsSyncResponse } from "@/hooks/usePmsSync";
@@ -110,9 +111,11 @@ export function IntegrationsSettingsShell() {
     onSettled: loadStatus,
   });
 
+  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
+
   const handleDisconnect = useCallback(async () => {
     if (!locationId) return;
-    if (!confirm("Disconnect this PMS? Mappings are kept; syncing stops.")) return;
+    setConfirmingDisconnect(false);
     await fetch(`/api/pms/connection?locationId=${locationId}`, {
       method: "DELETE",
     });
@@ -180,7 +183,10 @@ export function IntegrationsSettingsShell() {
                 <Button onClick={handleSyncNow} disabled={syncing}>
                   {syncing ? "Syncing…" : "Sync now"}
                 </Button>
-                <Button variant="secondary" onClick={handleDisconnect}>
+                <Button
+                  variant="secondary"
+                  onClick={() => setConfirmingDisconnect(true)}
+                >
                   Disconnect
                 </Button>
               </div>
@@ -230,6 +236,16 @@ export function IntegrationsSettingsShell() {
           )}
         </>
       )}
+
+      <ConfirmModal
+        open={confirmingDisconnect}
+        title="Disconnect this PMS?"
+        message="Mappings are kept; syncing stops."
+        confirmLabel="Disconnect"
+        destructive
+        onConfirm={handleDisconnect}
+        onCancel={() => setConfirmingDisconnect(false)}
+      />
     </div>
   );
 }

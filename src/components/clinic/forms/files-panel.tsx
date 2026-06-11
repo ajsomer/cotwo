@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { getJson } from "@/lib/api-client";
 import { useOrg } from "@/hooks/useOrg";
 import { Button } from "@/components/ui/button";
-import { Modal } from "@/components/ui/modal";
+import { Modal, ConfirmModal } from "@/components/ui/modal";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import type { FileRow } from "@/stores/clinic-store";
 
@@ -253,6 +253,7 @@ export function FilesPanel() {
   const files = useClinicStore((s) => s.files);
   const loading = !useClinicStore((s) => s.filesLoaded);
   const [showUpload, setShowUpload] = useState(false);
+  const [archivingFile, setArchivingFile] = useState<FileRow | null>(null);
 
   const refetchFiles = () => {
     if (org) getClinicStore().refreshFiles(org.id);
@@ -277,8 +278,7 @@ export function FilesPanel() {
   };
 
   const handleArchive = async (file: FileRow) => {
-    if (!confirm(`Archive "${file.name}"? Existing patient links will still work.`))
-      return;
+    setArchivingFile(null);
 
     const res = await fetch(`/api/files?id=${file.id}`, { method: "DELETE" });
 
@@ -395,7 +395,7 @@ export function FilesPanel() {
                         </svg>
                       </button>
                       <button
-                        onClick={() => handleArchive(file)}
+                        onClick={() => setArchivingFile(file)}
                         className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50"
                         title="Archive file"
                       >
@@ -430,6 +430,16 @@ export function FilesPanel() {
           onUploaded={refetchFiles}
         />
       )}
+
+      <ConfirmModal
+        open={!!archivingFile}
+        title={`Archive "${archivingFile?.name}"?`}
+        message="Existing patient links will still work."
+        confirmLabel="Archive"
+        destructive
+        onConfirm={() => archivingFile && handleArchive(archivingFile)}
+        onCancel={() => setArchivingFile(null)}
+      />
     </div>
   );
 }

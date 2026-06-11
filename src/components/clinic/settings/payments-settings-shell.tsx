@@ -6,6 +6,7 @@ import { useRole } from "@/hooks/useRole";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Toggle } from "@/components/ui/toggle";
+import { ConfirmModal } from "@/components/ui/modal";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import type { PaymentsData, RoomPayment } from "@/stores/clinic-store";
 import type { RoomType } from "@/lib/types/domain";
@@ -45,6 +46,12 @@ export function PaymentsSettingsShell() {
     }
   }, [selectedLocation]);
   const [saving, setSaving] = useState(false);
+  const [pendingConfirm, setPendingConfirm] = useState<
+    | { kind: "routing"; mode: RoutingMode; label: string }
+    | { kind: "connect"; target: "location" | "clinician"; staffAssignmentId?: string }
+    | { kind: "disconnect"; target: "location" | "clinician"; staffAssignmentId?: string }
+    | null
+  >(null);
 
   const isAdmin =
     role === "clinic_owner" || role === "practice_manager";
@@ -55,16 +62,14 @@ export function PaymentsSettingsShell() {
   };
 
   // Routing mode change
-  const handleRoutingChange = async (mode: RoutingMode) => {
+  const handleRoutingChange = (mode: RoutingMode) => {
     if (!selectedLocation || !data || mode === data.routing_mode) return;
-
     const label = mode === "location" ? "Clinic" : "Per clinician";
-    if (
-      !confirm(
-        `Change payment routing to "${label}"? This affects where payments are directed for all locations.`
-      )
-    )
-      return;
+    setPendingConfirm({ kind: "routing", mode, label });
+  };
+
+  const performRoutingChange = async (mode: RoutingMode) => {
+    if (!selectedLocation || !data) return;
 
     setSaving(true);
     try {
@@ -86,13 +91,19 @@ export function PaymentsSettingsShell() {
   };
 
   // Connect Stripe account (stubbed)
-  const handleConnect = async (
+  const handleConnect = (
     target: "location" | "clinician",
     staffAssignmentId?: string
   ) => {
     if (!selectedLocation) return;
+    setPendingConfirm({ kind: "connect", target, staffAssignmentId });
+  };
 
-    if (!confirm("Connect test Stripe account?")) return;
+  const performConnect = async (
+    target: "location" | "clinician",
+    staffAssignmentId?: string
+  ) => {
+    if (!selectedLocation) return;
 
     setSaving(true);
     try {
@@ -115,14 +126,19 @@ export function PaymentsSettingsShell() {
   };
 
   // Disconnect Stripe account
-  const handleDisconnect = async (
+  const handleDisconnect = (
     target: "location" | "clinician",
     staffAssignmentId?: string
   ) => {
     if (!selectedLocation) return;
+    setPendingConfirm({ kind: "disconnect", target, staffAssignmentId });
+  };
 
-    if (!confirm("Disconnect Stripe account? Payments will be disabled."))
-      return;
+  const performDisconnect = async (
+    target: "location" | "clinician",
+    staffAssignmentId?: string
+  ) => {
+    if (!selectedLocation) return;
 
     setSaving(true);
     try {
@@ -285,6 +301,43 @@ export function PaymentsSettingsShell() {
           onToggle={handleRoomToggle}
         />
       )}
+
+      <ConfirmModal
+        open={!!pendingConfirm}
+        title={
+          pendingConfirm?.kind === "routing"
+            ? `Change payment routing to "${pendingConfirm.label}"?`
+            : pendingConfirm?.kind === "connect"
+              ? "Connect test Stripe account?"
+              : "Disconnect Stripe account?"
+        }
+        message={
+          pendingConfirm?.kind === "routing"
+            ? "This affects where payments are directed for all locations."
+            : pendingConfirm?.kind === "disconnect"
+              ? "Payments will be disabled."
+              : undefined
+        }
+        confirmLabel={
+          pendingConfirm?.kind === "routing"
+            ? "Change routing"
+            : pendingConfirm?.kind === "connect"
+              ? "Connect"
+              : "Disconnect"
+        }
+        destructive={pendingConfirm?.kind === "disconnect"}
+        busy={saving}
+        onConfirm={() => {
+          if (!pendingConfirm) return;
+          const action = pendingConfirm;
+          setPendingConfirm(null);
+          if (action.kind === "routing") void performRoutingChange(action.mode);
+          else if (action.kind === "connect")
+            void performConnect(action.target, action.staffAssignmentId);
+          else void performDisconnect(action.target, action.staffAssignmentId);
+        }}
+        onCancel={() => setPendingConfirm(null)}
+      />
     </div>
   );
 }

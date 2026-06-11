@@ -6,6 +6,7 @@ import { SlideOver } from "@/components/ui/slide-over";
 import { CollapsibleSection } from "@/components/ui/collapsible-section";
 import { Toggle } from "@/components/ui/toggle";
 import { CloseButton } from "@/components/ui/close-button";
+import { ConfirmModal } from "@/components/ui/modal";
 import { useClinicStore } from "@/stores/clinic-store";
 import { useOrg } from "@/hooks/useOrg";
 import type { AppointmentTypeRow } from "@/stores/clinic-store";
@@ -114,6 +115,7 @@ export function AppointmentTypeEditor({
 
   // Save state
   const [saving, setSaving] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showDiscardBanner, setShowDiscardBanner] = useState(false);
 
@@ -658,26 +660,12 @@ export function AppointmentTypeEditor({
         <div className="border-t border-gray-200 px-5 py-3 flex items-center justify-between">
           <button
             type="button"
-            onClick={async () => {
+            onClick={() => {
               if (isNew) {
                 onClose();
                 return;
               }
-              if (!confirm("Delete this appointment type? This cannot be undone.")) return;
-              try {
-                const res = await fetch(`/api/appointment-types?id=${appointmentType.id}`, {
-                  method: "DELETE",
-                });
-                if (!res.ok) {
-                  const data = await res.json();
-                  alert(data.error ?? "Failed to delete appointment type");
-                  return;
-                }
-                onSaved();
-              } catch (e) {
-                console.error("Failed to delete:", e);
-                alert("Failed to delete appointment type");
-              }
+              setConfirmingDelete(true);
             }}
             className="text-sm text-red-500 hover:text-red-700"
           >
@@ -702,6 +690,33 @@ export function AppointmentTypeEditor({
           </div>
         </div>
       </div>
+
+      <ConfirmModal
+        open={confirmingDelete}
+        title="Delete this appointment type?"
+        message="This cannot be undone."
+        confirmLabel="Delete"
+        destructive
+        onConfirm={async () => {
+          if (!appointmentType) return;
+          setConfirmingDelete(false);
+          try {
+            const res = await fetch(`/api/appointment-types?id=${appointmentType.id}`, {
+              method: "DELETE",
+            });
+            if (!res.ok) {
+              const data = await res.json();
+              setError(data.error ?? "Failed to delete appointment type");
+              return;
+            }
+            onSaved();
+          } catch (e) {
+            console.error("Failed to delete:", e);
+            setError("Failed to delete appointment type");
+          }
+        }}
+        onCancel={() => setConfirmingDelete(false)}
+      />
     </SlideOver>
   );
 }
