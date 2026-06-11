@@ -5,6 +5,16 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { Textarea, Select } from "@/components/ui/input";
 import { ActionTypeIcon } from "@/components/clinic/shared/action-type-icon";
 import { formatFireTime, type ActionType } from "@/lib/workflows/types";
+import {
+  SMS_TEMPLATE_VARIABLES,
+  FILE_TEMPLATE_VARIABLES,
+} from "@/lib/workflows/template";
+
+// Merge-field hints come from the canonical vocabulary in
+// lib/workflows/template.ts so the editors can't drift from what the
+// engine actually substitutes.
+const SMS_VARIABLES_HINT = SMS_TEMPLATE_VARIABLES.map((v) => v.key).join(", ");
+const FILE_VARIABLES_HINT = FILE_TEMPLATE_VARIABLES.map((v) => v.key).join(", ");
 
 /**
  * Shared timeline editor pieces for post-appointment action blocks, used by
@@ -234,10 +244,7 @@ export function ActionBlockFieldEditor({
             rows={3}
             placeholder={builder ? "Hi {first_name}, ..." : undefined}
           />
-          <p className={hintClass}>
-            Variables: {"{first_name}"}, {"{clinic_name}"},{" "}
-            {"{clinician_name}"}, {"{session_date}"}
-          </p>
+          <p className={hintClass}>Variables: {SMS_VARIABLES_HINT}</p>
         </div>
       )}
 
@@ -345,10 +352,7 @@ export function ActionBlockFieldEditor({
                   : undefined
               }
             />
-            <p className={hintClass}>
-              Variables: {"{first_name}"}, {"{clinic_name}"},{" "}
-              {"{clinician_name}"}, {"{file_link}"}
-            </p>
+            <p className={hintClass}>Variables: {FILE_VARIABLES_HINT}</p>
           </div>
         </>
       )}
