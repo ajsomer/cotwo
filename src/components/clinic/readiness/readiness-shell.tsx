@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo, useCallback, useTransition } from "react";
 import { Zap } from "lucide-react";
-import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
+import { useClinicStore, getClinicStore, selectRooms } from "@/stores/clinic-store";
 import { usePmsConnection } from "@/hooks/usePmsConnection";
 import { usePmsSync } from "@/hooks/usePmsSync";
 import { useNow } from "@/hooks/useNow";
@@ -65,7 +65,7 @@ export function ReadinessShell() {
   const loaded = direction === "pre_appointment" ? loadedPre : loadedPost;
   const counts = useClinicStore((s) => s.readinessCounts);
   const setDirection = useClinicStore((s) => s.setReadinessDirection);
-  const rooms = useClinicStore((s) => s.rooms);
+  const rooms = useClinicStore(selectRooms);
   const appointmentTypes = useClinicStore((s) => s.appointmentTypes);
   const locationId = useClinicStore((s) => s.locationId);
   const orgId = useClinicStore((s) => s.orgId);

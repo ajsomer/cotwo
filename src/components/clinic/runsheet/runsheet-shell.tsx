@@ -12,7 +12,7 @@ import { useFaviconBadge } from "@/hooks/useFaviconBadge";
 import { seedDemoData, nukeSessions } from "@/lib/runsheet/seed";
 import { PatientContactCard } from "@/components/clinic/patient/patient-contact-card";
 import { PatientSlideOverProvider } from "@/components/clinic/patient/patient-slide-over-context";
-import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
+import { useClinicStore, getClinicStore, selectRooms } from "@/stores/clinic-store";
 import type { OnboardingState } from "@/stores/clinic-store";
 import { useLocation } from "@/hooks/useLocation";
 import { useRole } from "@/hooks/useRole";
@@ -58,7 +58,7 @@ export function RunsheetShell() {
   // Read from Zustand store. If a slice isn't loaded yet, the effect below
   // fetches it once per tab via the store's refresh* action.
   const sessions = useClinicStore((s) => s.sessions);
-  const rooms = useClinicStore((s) => s.rooms);
+  const rooms = useClinicStore(selectRooms);
   const clinicianRoomIds = useClinicStore((s) => s.clinicianRoomIds);
   const connectedSessions = useClinicStore((s) => s.connectedSessions);
   const sessionsLoaded = useClinicStore((s) => s.sessionsLoaded);

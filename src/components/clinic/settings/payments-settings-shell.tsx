@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Toggle } from "@/components/ui/toggle";
 import { ConfirmModal } from "@/components/ui/modal";
-import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
+import { useClinicStore, getClinicStore, selectPaymentRooms } from "@/stores/clinic-store";
 import type { PaymentsData, RoomPayment } from "@/stores/clinic-store";
 import type { RoomType } from "@/lib/types/domain";
 
@@ -29,7 +29,7 @@ export function PaymentsSettingsShell() {
   const { role, userId } = useRole();
   const [tab, setTab] = useState<Tab>("configuration");
   const data = useClinicStore((s) => s.paymentConfig);
-  const rooms = useClinicStore((s) => s.paymentRooms);
+  const rooms = useClinicStore(selectPaymentRooms);
   const loading = !useClinicStore((s) => s.paymentConfigLoaded);
 
   // Fetch-if-empty. paymentRooms is now derived in refreshRooms, so ensure
@@ -160,26 +160,17 @@ export function PaymentsSettingsShell() {
     }
   };
 
-  // Room payment toggle — updates paymentRooms, rooms, and roomsWithClinicians
+  // Room payment toggle — rooms/paymentRooms are derived projections, so the
+  // optimistic update (and revert) only touches roomsWithClinicians.
   const handleRoomToggle = async (roomId: string, enabled: boolean) => {
-    const store = getClinicStore();
+    const setEnabled = (value: boolean) =>
+      getClinicStore().setRoomsWithClinicians(
+        getClinicStore().roomsWithClinicians.map((r) =>
+          r.id === roomId ? { ...r, payments_enabled: value } : r
+        )
+      );
 
-    // Optimistic update across all room slices
-    store.setPaymentRooms(
-      store.paymentRooms.map((r) =>
-        r.id === roomId ? { ...r, payments_enabled: enabled } : r
-      )
-    );
-    store.setRooms(
-      store.rooms.map((r) =>
-        r.id === roomId ? { ...r, payments_enabled: enabled } : r
-      )
-    );
-    store.setRoomsWithClinicians(
-      store.roomsWithClinicians.map((r) =>
-        r.id === roomId ? { ...r, payments_enabled: enabled } : r
-      )
-    );
+    setEnabled(enabled);
 
     const res = await fetch("/api/settings/rooms", {
       method: "PATCH",
@@ -188,22 +179,7 @@ export function PaymentsSettingsShell() {
     });
 
     if (!res.ok) {
-      // Revert across all room slices
-      store.setPaymentRooms(
-        store.paymentRooms.map((r) =>
-          r.id === roomId ? { ...r, payments_enabled: !enabled } : r
-        )
-      );
-      store.setRooms(
-        store.rooms.map((r) =>
-          r.id === roomId ? { ...r, payments_enabled: !enabled } : r
-        )
-      );
-      store.setRoomsWithClinicians(
-        store.roomsWithClinicians.map((r) =>
-          r.id === roomId ? { ...r, payments_enabled: !enabled } : r
-        )
-      );
+      setEnabled(!enabled);
     }
   };
 

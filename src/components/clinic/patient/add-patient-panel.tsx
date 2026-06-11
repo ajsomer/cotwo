@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { postJson } from "@/lib/api-client";
 import { SlideOver } from "@/components/ui/slide-over";
-import { useClinicStore } from "@/stores/clinic-store";
+import { useClinicStore, selectRooms } from "@/stores/clinic-store";
 import { Button } from "@/components/ui/button";
 import { TextInput, Select } from "@/components/ui/input";
 
@@ -20,7 +20,7 @@ export function AddPatientPanel({
   onClose,
   onSaved,
 }: AddPatientPanelProps) {
-  const rooms = useClinicStore((s) => s.rooms);
+  const rooms = useClinicStore(selectRooms);
   // Hide legacy collection_only types from creation. The DB enum still
   // permits the value, but new appointments must be run-sheet only.
   const appointmentTypes = useClinicStore((s) => s.appointmentTypes).filter(
