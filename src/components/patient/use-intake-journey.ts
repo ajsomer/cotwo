@@ -4,6 +4,10 @@ import { useState, useCallback, useEffect } from 'react';
 import { postJson } from '@/lib/api-client';
 import type { PatientContact } from '@/lib/types/domain';
 import type { IntakeJourneyContext } from './intake-journey';
+import type {
+  IdentityResolveResult,
+  IdentitySelection,
+} from './identity-confirmation';
 
 export type Phase =
   | 'phone'
@@ -199,36 +203,49 @@ export function useIntakeJourney(
     [resolveIdentity]
   );
 
-  const handlePickerChoice = useCallback(
-    async (contact: ConfirmContact) => {
-      setError(null);
+  // Resolve a contact-picker selection against the journey token. Errors are
+  // returned (not set as state) — the identity screen displays them itself.
+  const resolvePickerSelection = useCallback(
+    async (selection: IdentitySelection): Promise<IdentityResolveResult> => {
+      if (selection.kind !== 'existing') {
+        return { ok: false, error: 'Unable to confirm contact. Please try again.' };
+      }
       try {
         const res = await fetch(`/api/intake/${token}/verify`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             phone_number: phoneNumber,
-            selected_patient_id: contact.id,
+            selected_patient_id: selection.patientId,
           }),
         });
         const data = await res.json();
         if (data.status !== 'matched') {
-          setError('Unable to confirm contact. Please try again.');
-          return;
+          return { ok: false, error: 'Unable to confirm contact. Please try again.' };
         }
-        setPatient({
-          id: data.contact.id,
-          first_name: data.contact.first_name,
-          last_name: data.contact.last_name,
-          date_of_birth: null,
-        });
-        await reloadJourney();
-        setPhase('checklist');
+        return {
+          ok: true,
+          patient: {
+            id: data.contact.id,
+            first_name: data.contact.first_name,
+            last_name: data.contact.last_name,
+            date_of_birth: null,
+          },
+        };
       } catch {
-        setError('Something went wrong. Please try again.');
+        return { ok: false, error: 'Something went wrong. Please try again.' };
       }
     },
-    [token, phoneNumber, reloadJourney]
+    [token, phoneNumber]
+  );
+
+  const handlePickerConfirmed = useCallback(
+    async (contact: PatientContact) => {
+      setPatient(contact);
+      await reloadJourney();
+      setPhase('checklist');
+    },
+    [reloadJourney]
   );
 
   const goToItem = useCallback((item: ItemSlot | undefined) => {
@@ -309,7 +326,8 @@ export function useIntakeJourney(
     totalSteps,
     currentStepNumber,
     handlePhoneVerified,
-    handlePickerChoice,
+    resolvePickerSelection,
+    handlePickerConfirmed,
     advanceFromChecklist,
     handleItemComplete,
   };

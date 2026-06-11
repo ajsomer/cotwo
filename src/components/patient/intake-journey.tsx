@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { postJson } from '@/lib/api-client';
 import { PersistentHeader } from './persistent-header';
 import { PhoneVerification } from './phone-verification';
+import { IdentityConfirmation } from './identity-confirmation';
 import { useIntakeJourney } from './use-intake-journey';
 import { IntakeChecklist } from './intake-checklist';
 import { ConsentStep } from './consent-step';
@@ -95,7 +96,8 @@ export function IntakeJourney({
     totalSteps,
     currentStepNumber,
     handlePhoneVerified,
-    handlePickerChoice,
+    resolvePickerSelection,
+    handlePickerConfirmed,
     advanceFromChecklist,
     handleItemComplete,
   } = useIntakeJourney(context, token, { skipIdentity, preConfirmedPatient });
@@ -203,40 +205,24 @@ export function IntakeJourney({
 
   if (phase === 'identity_picker') {
     return (
-      <div className="flex flex-col items-center">
-        <PersistentHeader
-          clinicName={org.name}
-          logoUrl={org.logo_url}
-          currentStep={2}
-          totalSteps={totalSteps}
-        />
-        <div className="w-full space-y-4">
-          <h1 className="text-xl font-semibold text-gray-800">
-            Please confirm who this appointment is for
-          </h1>
-          <p className="text-sm text-gray-500">
-            We found more than one person on this phone number at {org.name}.
-          </p>
-          <div className="space-y-2">
-            {pickerContacts.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => handlePickerChoice(c)}
-                className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-left transition-colors hover:border-teal-500 hover:bg-teal-50"
-              >
-                <span className="text-base font-medium text-gray-800">
-                  {c.first_name} {c.last_name}
-                </span>
-              </button>
-            ))}
-          </div>
-          {error && (
-            <p className="text-center text-sm text-red-500" role="alert">
-              {error}
-            </p>
-          )}
-        </div>
-      </div>
+      <IdentityConfirmation
+        clinicName={org.name}
+        logoUrl={org.logo_url}
+        roomName={null}
+        currentStep={2}
+        totalSteps={totalSteps}
+        existingPatients={pickerContacts.map((c) => ({
+          ...c,
+          date_of_birth: null,
+        }))}
+        token={token}
+        phoneNumber={phoneNumber ?? ''}
+        title="Please confirm who this appointment is for"
+        subtitle={`We found more than one person on this phone number at ${org.name}.`}
+        allowNewPatient={false}
+        resolve={resolvePickerSelection}
+        onConfirmed={handlePickerConfirmed}
+      />
     );
   }
 
