@@ -1,6 +1,12 @@
 "use client";
 
-import { useState, type InputHTMLAttributes } from "react";
+import {
+  useState,
+  type InputHTMLAttributes,
+  type ReactNode,
+  type SelectHTMLAttributes,
+  type TextareaHTMLAttributes,
+} from "react";
 import { Eye, EyeOff } from "lucide-react";
 
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
@@ -52,6 +58,86 @@ export function Input({ label, error, type, id, className, ...props }: InputProp
           {error}
         </p>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Bare form controls — the canonical input chrome used across clinic and
+// patient surfaces (the labelled Input above keeps its auth-form styling).
+// Sizes: "md" is the clinic default, "lg" the patient-flow 48px control.
+// ---------------------------------------------------------------------------
+
+const CONTROL_SIZES = {
+  md: "px-3 py-2 text-sm",
+  lg: "h-12 px-3 text-base",
+} as const;
+
+type ControlSize = keyof typeof CONTROL_SIZES;
+
+function controlClass(size: ControlSize, extra?: string) {
+  return `w-full rounded-lg border border-gray-200 text-gray-800 outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 ${CONTROL_SIZES[size]}${extra ? ` ${extra}` : ""}`;
+}
+
+interface TextInputProps extends InputHTMLAttributes<HTMLInputElement> {
+  inputSize?: ControlSize;
+}
+
+export function TextInput({ inputSize = "md", className, ...props }: TextInputProps) {
+  return <input className={controlClass(inputSize, className)} {...props} />;
+}
+
+export function Textarea({
+  className,
+  ...props
+}: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return (
+    <textarea
+      className={controlClass("md", `resize-none${className ? ` ${className}` : ""}`)}
+      {...props}
+    />
+  );
+}
+
+export function Select({
+  className,
+  children,
+  ...props
+}: SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <select
+      className={controlClass("md", `bg-white${className ? ` ${className}` : ""}`)}
+      {...props}
+    >
+      {children}
+    </select>
+  );
+}
+
+/** Label + control + optional error, in the clinic form idiom. */
+export function FormField({
+  label,
+  htmlFor,
+  error,
+  className,
+  children,
+}: {
+  label: string;
+  htmlFor?: string;
+  error?: string | null;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className={className}>
+      <label
+        htmlFor={htmlFor}
+        className="mb-1 block text-xs font-medium text-gray-500"
+      >
+        {label}
+      </label>
+      {children}
+      {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
     </div>
   );
 }
