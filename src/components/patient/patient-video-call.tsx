@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { LiveKitRoom, VideoConference } from "@/lib/livekit/client";
+import { Spinner } from "@/components/ui/spinner";
 
 interface PatientVideoCallProps {
   entryToken: string;
@@ -77,7 +78,7 @@ export function PatientVideoCall({ entryToken, clinicianName }: PatientVideoCall
     <div className="fixed inset-0 z-[9999] flex flex-col bg-gray-900">
       {state === "loading" && (
         <div className="flex-1 flex flex-col items-center justify-center text-center text-white px-6">
-          <div className="h-10 w-10 rounded-full border-2 border-teal-500 border-t-transparent animate-spin mb-4" />
+          <Spinner className="h-10 w-10 mb-4" />
           <p className="text-sm text-gray-300">
             {clinicianName ? `Connecting to ${clinicianName}…` : "Connecting…"}
           </p>

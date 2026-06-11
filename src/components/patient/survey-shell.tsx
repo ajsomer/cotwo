@@ -1,6 +1,7 @@
 'use client';
 
 import { Model } from 'survey-core';
+import { CheckCircle } from '@/components/ui/check-circle';
 import { Survey } from 'survey-react-ui';
 import 'survey-core/survey-core.min.css';
 
@@ -47,21 +48,7 @@ export function SurveyThanks({
 }) {
   return (
     <div className={className}>
-      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-teal-50">
-        <svg
-          className="h-6 w-6 text-teal-500"
-          fill="none"
-          viewBox="0 0 24 24"
-          strokeWidth={2}
-          stroke="currentColor"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M4.5 12.75l6 6 9-13.5"
-          />
-        </svg>
-      </div>
+      <CheckCircle className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-teal-50" />
       <h1 className="text-xl font-semibold text-gray-800">{title}</h1>
       <p className="mt-2 text-sm text-gray-500">{message}</p>
     </div>

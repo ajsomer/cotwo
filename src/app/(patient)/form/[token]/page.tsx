@@ -7,6 +7,7 @@ import {
 } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { FormFillClient } from '@/components/patient/form-fill-client';
+import { CheckCircle } from '@/components/ui/check-circle';
 
 export default async function FormFillPage({
   params,
@@ -46,11 +47,7 @@ export default async function FormFillPage({
   if (assignment.status === 'completed') {
     return (
       <div className="flex flex-col items-center py-12 text-center">
-        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-teal-50">
-          <svg className="h-6 w-6 text-teal-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-          </svg>
-        </div>
+        <CheckCircle className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-teal-50" />
         <h1 className="text-xl font-semibold text-gray-800">Already submitted</h1>
         <p className="mt-2 text-sm text-gray-500">
           This form has already been completed. No further action is needed.

@@ -5,6 +5,7 @@ import { useLocation } from "@/hooks/useLocation";
 import { useRole } from "@/hooks/useRole";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Toggle } from "@/components/ui/toggle";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import type { PaymentsData, RoomPayment } from "@/stores/clinic-store";
 import type { RoomType } from "@/lib/types/domain";
@@ -567,16 +568,12 @@ function RoomsTab({
                   </span>
                   <Badge variant={typeConfig.variant}>{typeConfig.label}</Badge>
                 </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    className="sr-only peer"
-                    checked={room.payments_enabled}
-                    disabled={!hasStripeConnected}
-                    onChange={(e) => onToggle(room.id, e.target.checked)}
-                  />
-                  <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-teal-500/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-teal-500 peer-disabled:opacity-50 peer-disabled:cursor-not-allowed" />
-                </label>
+                <Toggle
+                  checked={room.payments_enabled}
+                  disabled={!hasStripeConnected}
+                  onChange={(checked) => onToggle(room.id, checked)}
+                  aria-label={`Payments for ${room.name}`}
+                />
               </div>
             );
           })}

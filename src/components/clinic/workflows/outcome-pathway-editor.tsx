@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { getJson, postJson } from "@/lib/api-client";
 import { SlideOver } from "@/components/ui/slide-over";
 import { Button } from "@/components/ui/button";
+import { Toggle } from "@/components/ui/toggle";
 import { useClinicStore } from "@/stores/clinic-store";
 import {
   getActionTypeMeta,
@@ -365,27 +366,16 @@ export function OutcomePathwayEditor({
                           <label className="text-xs font-medium text-gray-500">
                             Enabled by default at Process
                           </label>
-                          <button
-                            onClick={() =>
+                          <Toggle
+                            checked={block.config.default_enabled !== false}
+                            onChange={() =>
                               updateBlockConfig(block.id, {
                                 default_enabled:
                                   block.config.default_enabled === false,
                               })
                             }
-                            className={`w-8 h-5 rounded-full transition-colors ${
-                              block.config.default_enabled !== false
-                                ? "bg-teal-500"
-                                : "bg-gray-200"
-                            }`}
-                          >
-                            <div
-                              className={`w-3.5 h-3.5 rounded-full bg-white shadow transition-transform ${
-                                block.config.default_enabled !== false
-                                  ? "translate-x-3.5"
-                                  : "translate-x-0.5"
-                              }`}
-                            />
-                          </button>
+                            aria-label="On by default"
+                          />
                         </div>
 
                         {/* SMS fields */}

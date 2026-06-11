@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { getJson } from "@/lib/api-client";
 import { useOrg } from "@/hooks/useOrg";
 import { Button } from "@/components/ui/button";
+import { Modal } from "@/components/ui/modal";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import type { FileRow } from "@/stores/clinic-store";
 
@@ -114,14 +115,13 @@ function UploadModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/30"
-        onClick={onClose}
-      />
-      {/* Modal */}
-      <div className="relative bg-white rounded-xl shadow-lg w-full max-w-md mx-4 p-5">
+    <Modal
+      open
+      onClose={onClose}
+      aria-label="Upload file"
+      panelClassName="w-full max-w-md rounded-xl bg-white p-5 shadow-lg"
+      backdropClassName="bg-black/30"
+    >
         <h2 className="text-lg font-semibold text-gray-800 mb-4">
           Upload file
         </h2>
@@ -240,8 +240,7 @@ function UploadModal({
             {uploading ? "Uploading..." : "Upload"}
           </Button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 

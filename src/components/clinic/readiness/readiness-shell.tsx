@@ -12,6 +12,7 @@ import type {
 } from "@/stores/clinic-store";
 import type { ReadinessPriority } from "@/lib/readiness/derived-state";
 import { Button } from "@/components/ui/button";
+import { Modal } from "@/components/ui/modal";
 import { SyncButton } from "@/components/clinic/shared/sync-button";
 import { ReadinessModeToggle } from "@/components/clinic/readiness/readiness-mode-toggle";
 import {
@@ -562,42 +563,39 @@ export function ReadinessShell() {
 
       {/* Task resolution dialog */}
       {taskResolving && (
-        <>
-          <div
-            className="fixed inset-0 bg-black/20 z-50"
-            onClick={() => setTaskResolving(null)}
-          />
-          <div className="fixed inset-0 z-50 flex items-center justify-center">
-            <div className="bg-white rounded-xl shadow-xl border border-gray-200 w-[400px] p-5">
-              <h3 className="text-sm font-semibold text-gray-800 mb-1">
-                Resolve: {taskResolving.taskTitle}
-              </h3>
-              <p className="text-xs text-gray-500 mb-3">
-                What did you do? (optional)
-              </p>
-              <textarea
-                value={taskNote}
-                onChange={(e) => setTaskNote(e.target.value)}
-                rows={3}
-                placeholder="Add a note..."
-                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500 resize-none mb-3"
-                autoFocus
-              />
-              <div className="flex gap-2 justify-end">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setTaskResolving(null)}
-                >
-                  Cancel
-                </Button>
-                <Button size="sm" onClick={handleTaskResolve}>
-                  Confirm
-                </Button>
-              </div>
+        <Modal
+          open
+          onClose={() => setTaskResolving(null)}
+          aria-label={`Resolve: ${taskResolving.taskTitle}`}
+          panelClassName="w-[400px] rounded-xl border border-gray-200 bg-white p-5 shadow-xl"
+        >
+            <h3 className="text-sm font-semibold text-gray-800 mb-1">
+              Resolve: {taskResolving.taskTitle}
+            </h3>
+            <p className="text-xs text-gray-500 mb-3">
+              What did you do? (optional)
+            </p>
+            <textarea
+              value={taskNote}
+              onChange={(e) => setTaskNote(e.target.value)}
+              rows={3}
+              placeholder="Add a note..."
+              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-500 resize-none mb-3"
+              autoFocus
+            />
+            <div className="flex gap-2 justify-end">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setTaskResolving(null)}
+              >
+                Cancel
+              </Button>
+              <Button size="sm" onClick={handleTaskResolve}>
+                Confirm
+              </Button>
             </div>
-          </div>
-        </>
+        </Modal>
       )}
     </div>
   );

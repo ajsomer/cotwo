@@ -1,6 +1,7 @@
 import { IntakeJourney } from '@/components/patient/intake-journey';
 import { PersistentHeader } from '@/components/patient/persistent-header';
 import { resolveJourney } from '@/lib/intake/resolve-journey';
+import { CheckCircle } from '@/components/ui/check-circle';
 
 export default async function IntakePage({
   params,
@@ -33,21 +34,7 @@ export default async function IntakePage({
           logoUrl={context.org.logo_url}
         />
         <div className="flex flex-col items-center py-8 text-center">
-          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-teal-50">
-            <svg
-              className="h-6 w-6 text-teal-500"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={2}
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M4.5 12.75l6 6 9-13.5"
-              />
-            </svg>
-          </div>
+          <CheckCircle className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-teal-50" />
           <h1 className="text-xl font-semibold text-gray-800">All done</h1>
           <p className="mt-2 text-sm text-gray-500">
             You&apos;ve already completed this intake. We&apos;ll be in touch

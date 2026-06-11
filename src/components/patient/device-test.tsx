@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { PersistentHeader } from './persistent-header';
 import { Check, X, AlertTriangle } from 'lucide-react';
+import { Spinner } from '@/components/ui/spinner';
 
 interface DeviceTestProps {
   clinicName: string;
@@ -221,7 +222,7 @@ function StatusIcon({ status }: { status: TestStatus }) {
       return <div className="h-5 w-5 rounded-full border-2 border-gray-200" />;
     case 'testing':
       return (
-        <div className="h-5 w-5 animate-spin rounded-full border-2 border-teal-500 border-t-transparent" />
+        <Spinner className="h-5 w-5" />
       );
     case 'pass':
       return (

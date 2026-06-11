@@ -3,6 +3,7 @@
 import { useState, useMemo, useRef } from "react";
 import { SlideOver } from "@/components/ui/slide-over";
 import { Button } from "@/components/ui/button";
+import { CloseButton } from "@/components/ui/close-button";
 import { useOrg } from "@/hooks/useOrg";
 import { createSessions, updateSession, deleteSession } from "@/lib/runsheet/mutations";
 import type { Room, EnrichedSession } from "@/lib/types/domain";
@@ -269,15 +270,10 @@ export function AddSessionPanel({
                 Select rooms and add patients to build {dayLabel} schedule.
               </p>
             </div>
-            <button
+            <CloseButton
               onClick={onClose}
               className="p-1 text-gray-500 hover:text-gray-800 transition-colors rounded flex-shrink-0 -mr-1 -mt-0.5"
-              aria-label="Close"
-            >
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+            />
           </div>
         </div>
 

@@ -86,6 +86,8 @@ interface ConfirmContact {
 // Lazy imports to keep phone-verification etc tree-shaken if unused
 import { CardCapture } from './card-capture';
 import { OnboardingTooltip } from './onboarding-tooltip';
+import { Spinner } from '@/components/ui/spinner';
+import { CheckCircle } from '@/components/ui/check-circle';
 
 export function IntakeJourney({
   context,
@@ -321,7 +323,7 @@ export function IntakeJourney({
     if (isDemoRedirect) {
       return (
         <div className="flex flex-col items-center py-8">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-teal-500 border-t-transparent" />
+          <Spinner />
         </div>
       );
     }
@@ -330,21 +332,7 @@ export function IntakeJourney({
       <div className="flex flex-col items-center">
         <PersistentHeader clinicName={org.name} logoUrl={org.logo_url} />
         <div className="flex flex-col items-center py-8 text-center">
-          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-teal-50">
-            <svg
-              className="h-6 w-6 text-teal-500"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={2}
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M4.5 12.75l6 6 9-13.5"
-              />
-            </svg>
-          </div>
+          <CheckCircle className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-teal-50" />
           <h1 className="text-xl font-semibold text-gray-800">You&apos;re all set</h1>
           <p className="mt-2 text-sm text-gray-500">
             {appointment.terminal_type === 'run_sheet'
@@ -388,7 +376,7 @@ export function IntakeJourney({
           totalSteps={totalSteps}
         />
         <div className="flex h-32 w-full items-center justify-center">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-teal-500 border-t-transparent" />
+          <Spinner />
         </div>
         {error && (
           <p className="text-center text-sm text-red-500" role="alert">
@@ -867,7 +855,7 @@ function FormStep({
           totalSteps={totalSteps}
         />
         <div className="flex h-32 w-full items-center justify-center">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-teal-500 border-t-transparent" />
+          <Spinner />
         </div>
       </div>
     );
@@ -898,7 +886,7 @@ function FormStep({
           totalSteps={totalSteps}
         />
         <div className="flex flex-col items-center gap-3 py-12 text-center">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-teal-500 border-t-transparent" />
+          <Spinner />
           <p className="text-sm text-gray-500">Saving your answers…</p>
         </div>
       </div>

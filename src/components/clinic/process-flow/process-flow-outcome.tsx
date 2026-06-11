@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
+import { Toggle } from "@/components/ui/toggle";
 import { selectOutcomePathway, skipOutcomePathway } from "@/lib/runsheet/actions";
 import { useClinicStore, getClinicStore } from "@/stores/clinic-store";
 import {
@@ -382,23 +383,13 @@ export function ProcessFlowOutcome({
                   </div>
 
                   {/* Toggle */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      updateBlock(block.id, { enabled: !block.enabled });
-                    }}
-                    className={`shrink-0 w-8 h-5 rounded-full transition-colors ${
-                      block.enabled ? "bg-teal-500" : "bg-gray-200"
-                    }`}
-                  >
-                    <div
-                      className={`w-3.5 h-3.5 rounded-full bg-white shadow transition-transform ${
-                        block.enabled
-                          ? "translate-x-3.5"
-                          : "translate-x-0.5"
-                      }`}
-                    />
-                  </button>
+                  <Toggle
+                    checked={block.enabled}
+                    onChange={() =>
+                      updateBlock(block.id, { enabled: !block.enabled })
+                    }
+                    aria-label="Enabled"
+                  />
 
                   {/* Expand indicator */}
                   <div className="shrink-0 text-gray-400">

@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import { getJson, postJson } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
-import { CheckCircle2, Loader2, X } from "lucide-react";
+import { Modal } from "@/components/ui/modal";
+import { CloseButton } from "@/components/ui/close-button";
+import { CheckCircle2, Loader2 } from "lucide-react";
 
 type PmsProvider = "cliniko" | "halaxy" | "nookal" | "power_diary" | "gentu";
 
@@ -250,19 +252,22 @@ export function PmsSelectionGrid() {
 
       {/* Credential connect modal (registry-backed providers) */}
       {connectModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl">
+        <Modal
+          open
+          onClose={() => setConnectModal(null)}
+          aria-label={`Connect ${connectModal.label}`}
+          panelClassName="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl"
+          backdropClassName="bg-black/40"
+        >
             <div className="flex items-start justify-between mb-3">
               <h2 className="text-base font-semibold text-gray-800">
                 Connect {connectModal.label}
               </h2>
-              <button
-                type="button"
+              <CloseButton
                 onClick={() => setConnectModal(null)}
                 className="text-gray-400 hover:text-gray-600"
-              >
-                <X size={18} />
-              </button>
+                iconClassName="h-[18px] w-[18px]"
+              />
             </div>
             <p className="text-sm text-gray-500 mb-3">
               Enter your {connectModal.label} credentials. We verify them before
@@ -309,23 +314,25 @@ export function PmsSelectionGrid() {
                 {connecting === connectModal.provider ? "Verifying…" : "Connect"}
               </Button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
 
       {/* Coming soon modal */}
       {comingSoonModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl">
+        <Modal
+          open
+          onClose={() => setComingSoonModal(null)}
+          aria-label="Integration coming soon"
+          panelClassName="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl"
+          backdropClassName="bg-black/40"
+        >
             <div className="flex items-start justify-between mb-3">
               <h2 className="text-base font-semibold text-gray-800">Integration coming soon</h2>
-              <button
-                type="button"
+              <CloseButton
                 onClick={() => setComingSoonModal(null)}
                 className="text-gray-400 hover:text-gray-600"
-              >
-                <X size={18} />
-              </button>
+                iconClassName="h-[18px] w-[18px]"
+              />
             </div>
             <p className="text-sm text-gray-500 mb-5">
               This integration is coming soon. We&apos;ll let you know when it&apos;s ready. You can continue setting up your clinic and connect your PMS later in Settings.
@@ -348,8 +355,7 @@ export function PmsSelectionGrid() {
                 Continue without PMS
               </Button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

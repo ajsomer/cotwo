@@ -12,6 +12,7 @@ import { PersistentHeader } from './persistent-header';
 import { EmbeddedIntakeJourney } from './embedded-intake-journey';
 import type { OutstandingJourney } from '@/lib/intake/outstanding';
 import { useRouter } from 'next/navigation';
+import { Spinner } from '@/components/ui/spinner';
 
 type FlowStep =
   | 'primer'
@@ -282,7 +283,7 @@ export function EntryFlow({ context, token }: EntryFlowProps) {
             roomName={context.room?.name || null}
           />
           <div className="flex h-32 w-full items-center justify-center">
-            <div className="h-6 w-6 animate-spin rounded-full border-2 border-teal-500 border-t-transparent" />
+            <Spinner />
           </div>
           <p className="text-sm text-gray-500">Checking your details...</p>
         </div>
@@ -346,7 +347,7 @@ export function EntryFlow({ context, token }: EntryFlowProps) {
             roomName={context.room?.name || null}
           />
           <div className="flex h-32 w-full items-center justify-center">
-            <div className="h-6 w-6 animate-spin rounded-full border-2 border-teal-500 border-t-transparent" />
+            <Spinner />
           </div>
           <p className="text-sm text-gray-500">Joining waiting room...</p>
         </div>

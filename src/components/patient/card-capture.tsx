@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { getJson, postJson } from '@/lib/api-client';
 import { PersistentHeader } from './persistent-header';
+import { Spinner } from '@/components/ui/spinner';
 
 interface CardCaptureProps {
   clinicName: string;
@@ -136,7 +137,7 @@ export function CardCapture({
           totalSteps={totalSteps}
         />
         <div className="flex h-32 w-full items-center justify-center">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-teal-500 border-t-transparent" />
+          <Spinner />
         </div>
       </div>
     );
