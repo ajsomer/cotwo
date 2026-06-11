@@ -84,7 +84,7 @@ interface ConfirmContact {
 }
 
 // Lazy imports to keep phone-verification etc tree-shaken if unused
-import { IntakeCardCapture } from './intake-card-capture';
+import { CardCapture } from './card-capture';
 import { OnboardingTooltip } from './onboarding-tooltip';
 
 export function IntakeJourney({
@@ -545,13 +545,22 @@ export function IntakeJourney({
         show={isDemo}
         copy="Card storage is optional. Toggle it per intake package in Workflows."
       >
-        <IntakeCardCapture
+        <CardCapture
           clinicName={org.name}
           logoUrl={org.logo_url}
           currentStep={currentStepNumber ?? 3}
           totalSteps={totalSteps}
           patientId={state.patient_id}
           token={token}
+          intro={`${org.name} will use this card to take payment when appropriate. You won't be charged now.`}
+          postSave={async () => {
+            const result = await postJson(
+              `/api/intake/${token}/complete-item`,
+              { item_type: 'card' },
+              'Failed to record card completion'
+            );
+            return result.ok ? null : result.error;
+          }}
           onComplete={handleItemComplete}
         />
       </OnboardingTooltip>

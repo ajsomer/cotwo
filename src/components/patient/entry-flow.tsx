@@ -314,7 +314,6 @@ export function EntryFlow({ context, token }: EntryFlowProps) {
           totalSteps={totalSteps}
           patientId={patientId!}
           token={token}
-          stripeAccountId={context.location.stripe_account_id}
           onComplete={handleCardComplete}
         />
       );

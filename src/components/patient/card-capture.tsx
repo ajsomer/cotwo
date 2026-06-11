@@ -7,12 +7,19 @@ import { PersistentHeader } from './persistent-header';
 interface CardCaptureProps {
   clinicName: string;
   logoUrl: string | null;
-  roomName: string | null;
+  roomName?: string | null;
   currentStep: number;
   totalSteps: number;
   patientId: string;
   token: string;
-  stripeAccountId: string | null;
+  /** Copy under the heading. Defaults to the entry-flow wording. */
+  intro?: string;
+  /**
+   * Runs after the card is saved (or confirmed) and before onComplete —
+   * the intake journey uses it to mark its card item complete.
+   * Return an error message to block completion and surface it.
+   */
+  postSave?: () => Promise<string | null>;
   onComplete: (cardInfo: { card_last_four: string; card_brand: string } | null) => void;
 }
 
@@ -25,12 +32,13 @@ interface ExistingCard {
 export function CardCapture({
   clinicName,
   logoUrl,
-  roomName,
+  roomName = null,
   currentStep,
   totalSteps,
   patientId,
   token,
-  stripeAccountId,
+  intro,
+  postSave,
   onComplete,
 }: CardCaptureProps) {
   const [existingCard, setExistingCard] = useState<ExistingCard | null>(null);
@@ -59,6 +67,29 @@ export function CardCapture({
     checkCard();
   }, [patientId, token]);
 
+  const finish = async (cardInfo: { card_last_four: string; card_brand: string }) => {
+    if (postSave) {
+      const postSaveError = await postSave();
+      if (postSaveError) {
+        setError(postSaveError);
+        setSaving(false);
+        return;
+      }
+    }
+    setSaving(false);
+    onComplete(cardInfo);
+  };
+
+  const continueWithExisting = async () => {
+    if (!existingCard) return;
+    setError(null);
+    setSaving(true);
+    await finish({
+      card_last_four: existingCard.card_last_four,
+      card_brand: existingCard.card_brand,
+    });
+  };
+
   const saveCard = async () => {
     setError(null);
     setSaving(true);
@@ -84,14 +115,14 @@ export function CardCapture({
       },
       'Failed to save card'
     );
-    setSaving(false);
 
     if (!result.ok) {
       setError(result.error);
+      setSaving(false);
       return;
     }
 
-    onComplete({ card_last_four: lastFour, card_brand: brand });
+    await finish({ card_last_four: lastFour, card_brand: brand });
   };
 
   if (loading) {
@@ -127,8 +158,8 @@ export function CardCapture({
         </h1>
 
         <p className="text-sm text-gray-500">
-          {clinicName} collects payment after your appointment. Please store a
-          card so your clinician can focus on your care.
+          {intro ??
+            `${clinicName} collects payment after your appointment. Please store a card so your clinician can focus on your care.`}
         </p>
 
         {/* Existing card on file */}
@@ -156,13 +187,11 @@ export function CardCapture({
             </div>
 
             <button
-              onClick={() => onComplete({
-                card_last_four: existingCard.card_last_four,
-                card_brand: existingCard.card_brand,
-              })}
-              className="w-full rounded-lg bg-teal-500 px-6 py-3 text-base font-medium text-white transition-colors hover:bg-teal-600"
+              onClick={continueWithExisting}
+              disabled={saving}
+              className="w-full rounded-lg bg-teal-500 px-6 py-3 text-base font-medium text-white transition-colors hover:bg-teal-600 disabled:opacity-50"
             >
-              Continue with this card
+              {saving ? 'Saving...' : 'Continue with this card'}
             </button>
 
             <button
