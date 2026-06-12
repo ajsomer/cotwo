@@ -337,7 +337,7 @@ async function ensureRegistrationForm(
     orgId,
     name: "Patient Registration",
     description: "Write-back registration form, generated from your PMS fields.",
-    status: "draft",
+    status: "published",
     pmsProvider: provider as typeof formsT.$inferInsert.pmsProvider,
     schema: buildRegistrationFormSchema(meta.fieldCatalogue),
   });
