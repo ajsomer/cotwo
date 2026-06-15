@@ -3,6 +3,7 @@ import type { PmsAdapter, PmsAdapterFactory } from "./adapter";
 import { decryptCredentials } from "./credentials";
 import { clinikoFactory } from "./cliniko/adapter";
 import { nookalFactory } from "./nookal/adapter";
+import { gentuFactory } from "./gentu/adapter";
 
 /**
  * Provider registry. The single place that knows which concrete adapters exist.
@@ -14,6 +15,7 @@ import { nookalFactory } from "./nookal/adapter";
 const FACTORIES: Record<string, PmsAdapterFactory> = {
   [clinikoFactory.provider]: clinikoFactory,
   [nookalFactory.provider]: nookalFactory,
+  [gentuFactory.provider]: gentuFactory, // replaces the credential-less demo stub
 };
 
 /** Provider enum values that have a real adapter wired up. */

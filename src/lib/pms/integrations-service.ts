@@ -102,10 +102,20 @@ export async function connectPms(args: {
   const orgId = await orgForLocation(args.locationId);
   if (!orgId) return { ok: false, detail: "Location has no org." };
 
-  // Verify before storing — build a throwaway adapter from the raw creds.
+  // Exchange connect-form input for the storable blob, if the provider needs to
+  // (Gentu turns a one-time pairing_code into a durable tenant_id). Most
+  // providers store the API key as-is and omit this hook.
+  let credentials = args.credentials;
+  if (factory.exchangeCredentials) {
+    const exchanged = await factory.exchangeCredentials(args.credentials);
+    if (!exchanged.ok) return { ok: false, detail: exchanged.detail };
+    credentials = exchanged.credentials;
+  }
+
+  // Verify before storing — build a throwaway adapter from the exchanged creds.
   const probe = factory.create({
     connectionId: "probe",
-    credentials: args.credentials,
+    credentials,
   });
   const verified = await probe.verify();
   if (!verified.ok) return verified;
@@ -114,7 +124,7 @@ export async function connectPms(args: {
   // patient deep links work. Best-effort — editable later in Settings.
   const webHint = (await probe.getWebHint?.()) ?? null;
 
-  const encrypted = encryptCredentials(args.credentials);
+  const encrypted = encryptCredentials(credentials);
 
   // Provider switch on an existing connection: every stored external id
   // (patient/practitioner/type links, the business mapping, sync cursors) is
@@ -353,6 +363,40 @@ export async function disconnectPms(locationId: string): Promise<void> {
       updatedAt: new Date().toISOString(),
     })
     .where(eq(pmsConnections.locationId, locationId));
+}
+
+/**
+ * Clear ALL PMS connection state for a location — the row plus its
+ * connection-scoped links, cursors, and business mapping. Used by the "No PMS"
+ * setup choice so no-PMS is idempotently "no row" (plan §1a.2) even when a
+ * location already had a connection (an old demo/skipped marker, or a real one
+ * the clinic is abandoning). Unlike `disconnectPms` (which keeps the marker +
+ * mappings for a later reconnect), this leaves nothing behind, so
+ * `getIntegrationStatus` reports `hasConnection: false`. No-op when there's no
+ * row. One transaction — a partial wipe would orphan links.
+ */
+export async function clearPmsConnection(locationId: string): Promise<void> {
+  const existing = await getConnectionForLocation(locationId);
+  if (!existing) return;
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(pmsPatientLinks)
+      .where(eq(pmsPatientLinks.connectionId, existing.id));
+    await tx
+      .delete(pmsPractitionerLinks)
+      .where(eq(pmsPractitionerLinks.connectionId, existing.id));
+    await tx
+      .delete(pmsAppointmentTypeLinks)
+      .where(eq(pmsAppointmentTypeLinks.connectionId, existing.id));
+    await tx
+      .delete(pmsSyncCursors)
+      .where(eq(pmsSyncCursors.connectionId, existing.id));
+    await tx
+      .update(locationsT)
+      .set({ pmsExternalId: null, updatedAt: new Date().toISOString() })
+      .where(eq(locationsT.id, locationId));
+    await tx.delete(pmsConnections).where(eq(pmsConnections.id, existing.id));
+  });
 }
 
 // ─────────────────────── Mapping read surfaces ───────────────────────

@@ -27,6 +27,12 @@ const settingsCards = [
       "Connect your practice management system and map appointment types, practitioners, and fields.",
     href: "/settings/integrations",
   },
+  {
+    title: "Phone (testing)",
+    description:
+      "Internal call-pop test trigger. Dial a Twilio number to pop the matching patient on a chosen screen.",
+    href: "/settings/phone-test",
+  },
 ];
 
 export default function SettingsPage() {

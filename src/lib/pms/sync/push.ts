@@ -1,6 +1,7 @@
 import "server-only";
 import { db } from "@/lib/db";
 import {
+  appointments as appointmentsT,
   forms as formsT,
   formSubmissions,
   pmsPushFieldResults,
@@ -16,7 +17,7 @@ import {
   getConnectionForLocation,
   isSyncActive,
 } from "../connection";
-import { getPatientExternalId } from "./mapping";
+import { getPatientExternalId, getPractitionerExternalByRoom } from "./mapping";
 
 export interface PushSubmissionResult {
   submissionId: string;
@@ -142,12 +143,37 @@ export async function attachIntakePdfToPms(args: {
     return { ok: false, noPms: false, detail: "No intake package to attach." };
   }
 
+  // Resolve the appointment's practitioner external id for providers that file
+  // attachments against a practitioner (Gentu). Cliniko/Nookal ignore it.
+  //
+  // Prefer the AUTHORITATIVE source: re-fetch the PMS appointment by its stored
+  // external id and read its real practitionerExternalId. Reversing room →
+  // practitioner-link is unreliable — a shared room maps to one practitioner,
+  // and mappings can change after sync — so it's only the fallback for manual
+  // appointments that have no PMS external id.
+  let practitionerExternalId: string | undefined;
+  const [appt] = await db
+    .select({ roomId: appointmentsT.roomId, pmsExternalId: appointmentsT.pmsExternalId })
+    .from(appointmentsT)
+    .where(eq(appointmentsT.id, args.appointmentId))
+    .limit(1);
+  if (appt?.pmsExternalId) {
+    const pmsAppt = await adapter.getAppointment(appt.pmsExternalId);
+    practitionerExternalId = pmsAppt?.practitionerExternalId ?? undefined;
+  }
+  if (!practitionerExternalId && appt?.roomId) {
+    // Fallback: appointment isn't PMS-sourced (or the re-fetch found nothing).
+    practitionerExternalId =
+      (await getPractitionerExternalByRoom(connection.id, appt.roomId)) ?? undefined;
+  }
+
   const result = await adapter.uploadPatientAttachment({
     externalId,
     fileName: pdf.fileName,
     contentType: "application/pdf",
     contentBase64: pdf.buffer.toString("base64"),
     description: `Coviu intake — ${pdf.patientName}`,
+    practitionerExternalId,
   });
   return { ok: result.ok, noPms: false, attachmentId: result.attachmentId, detail: result.detail };
 }

@@ -12,6 +12,8 @@ import { useFaviconBadge } from "@/hooks/useFaviconBadge";
 import { seedDemoData, nukeSessions } from "@/lib/runsheet/seed";
 import { PatientContactCard } from "@/components/clinic/patient/patient-contact-card";
 import { PatientSlideOverProvider } from "@/components/clinic/patient/patient-slide-over-context";
+import { UnknownCallerCard } from "@/components/clinic/patient/unknown-caller-card";
+import { useCallPop } from "@/hooks/useCallPop";
 import { useClinicStore, getClinicStore, selectRooms } from "@/stores/clinic-store";
 import type { OnboardingState } from "@/stores/clinic-store";
 import { useLocation } from "@/hooks/useLocation";
@@ -236,7 +238,46 @@ export function RunsheetShell() {
   const handleOpenPatient = useCallback((patientId: string) => {
     setContactPatientId(patientId);
     setContactSessionId(null);
+    setUnknownCaller(null);
   }, []);
+
+  // Call-pop test trigger: an inbound call to the configured Twilio number pops
+  // the matched patient (or an "unknown caller" panel) on the demo target's
+  // screen, and closes on hangup. `useCallPop` filters to this user and tracks
+  // the call id; here we translate each pop into the existing slide-over state.
+  const [unknownCaller, setUnknownCaller] = useState<string | null>(null);
+  const { pop: callPop, dismiss: dismissCallPop } = useCallPop(locationId || null);
+
+  const handleOpenUnknownCaller = useCallback((number: string) => {
+    setUnknownCaller(number);
+    setContactPatientId(null);
+    setContactSessionId(null);
+  }, []);
+
+  const handleCloseCallPop = useCallback(() => {
+    setUnknownCaller(null);
+    setContactPatientId(null);
+    setContactSessionId(null);
+    dismissCallPop();
+  }, [dismissCallPop]);
+
+  useEffect(() => {
+    if (!callPop) {
+      // call_ended (or dismissal) — close whatever the call opened.
+      setUnknownCaller(null);
+      setContactPatientId(null);
+      return;
+    }
+    const { match } = callPop;
+    if (match.kind === "patient") {
+      handleOpenPatient(match.patientId);
+    } else if (match.kind === "multi") {
+      // MVP: open the first contact; multi-contact chooser is a later refinement.
+      handleOpenPatient(match.patientIds[0]);
+    } else {
+      handleOpenUnknownCaller(match.number);
+    }
+  }, [callPop, handleOpenPatient, handleOpenUnknownCaller]);
 
   // Process flow state
   const [processingSessionId, setProcessingSessionId] = useState<string | null>(null);
@@ -403,7 +444,11 @@ export function RunsheetShell() {
   const sessionsLoading = !sessionsLoaded;
 
   return (
-    <PatientSlideOverProvider onOpenPatient={handleOpenPatient}>
+    <PatientSlideOverProvider
+      onOpenPatient={handleOpenPatient}
+      onOpenUnknownCaller={handleOpenUnknownCaller}
+      onClose={handleCloseCallPop}
+    >
       {/* ONBOARDING DISABLED — uncomment these two mounts to re-enable the
           first-login walkthrough (also remove the eslint-disable on the imports).
           See docs/plans/remove-runsheet-ctas-and-onboarding.md */}
@@ -520,7 +565,13 @@ export function RunsheetShell() {
         onClose={() => {
           setContactSessionId(null);
           setContactPatientId(null);
+          dismissCallPop();
         }}
+      />
+      <UnknownCallerCard
+        open={!!unknownCaller}
+        number={unknownCaller}
+        onClose={handleCloseCallPop}
       />
       {activeCallSession && (
         <VideoCallPanelDynamic

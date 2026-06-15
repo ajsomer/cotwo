@@ -107,3 +107,34 @@ export async function broadcastReadinessChange(
 ): Promise<void> {
   await publish(`location:${locationId}`, "readiness_changed", { event, ...payload });
 }
+
+/**
+ * Discriminated caller→patient match resolved by the telephony webhook. Mirrors
+ * `CallMatch` in `src/lib/telephony/patient-match.ts` (kept structurally in sync;
+ * this layer stays free of a server-only import so it's safe in any context).
+ */
+export type IncomingCallMatch =
+  | { kind: "patient"; patientId: string; number: string }
+  | { kind: "multi"; patientIds: string[]; number: string }
+  | { kind: "unknown"; number: string };
+
+/**
+ * Notify clinic clients at a location that a call was answered (call-pop test
+ * trigger). The event is location-scoped — everyone in the room receives it —
+ * so the client filters on `userId` (the configured demo target) before popping.
+ * `callId` lets the client pair the open with its later `call_ended`.
+ */
+export async function broadcastIncomingCall(
+  locationId: string,
+  payload: { userId: string | null; callId: string; match: IncomingCallMatch }
+): Promise<void> {
+  await publish(`location:${locationId}`, "incoming_call", payload);
+}
+
+/** Notify that a call ended so the client closes the card it opened (by callId). */
+export async function broadcastCallEnded(
+  locationId: string,
+  payload: { callId: string }
+): Promise<void> {
+  await publish(`location:${locationId}`, "call_ended", payload);
+}

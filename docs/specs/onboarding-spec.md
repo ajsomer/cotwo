@@ -472,11 +472,11 @@ CREATE POLICY "Staff can read org stripe_connections"
 
 **`POST /api/setup/pms`**
 
-Body: `{ provider: 'cliniko' | 'halaxy' | 'nookal' | 'power_diary' | 'gentu' | null, skipped: boolean }`.
+> **Updated (Gentu integration, branch `feat/gentu-integration`):** this route now handles **only the "No PMS" choice**. The Gentu "demo simulation" branch (seeding fake appointment types/forms/rooms/clinicians + a credential-less `connected` marker) was **removed** when Gentu became a real registry-backed adapter. Real provider connects — **Cliniko, Nookal, and Gentu** — go through `POST /api/setup/pms/connect` → `connectPms` → the registry. Gentu's connect collects a one-time **pairing code** (not an API key), exchanged for a durable `tenant_id`.
 
-If `provider === 'gentu'`: seeds appointment types, forms, rooms, clinicians against the user's org. Then re-runs `seedDefaultWorkflows(org_id)` so workflow templates link to the newly created types. Writes `pms_connections` row. Returns `{ ok: true }`.
+Body: `{ provider: null, skipped: true }` (the "No PMS" choice; a non-null provider here is rejected with 400 — use `/connect`).
 
-If `skipped` or another provider: writes `pms_connections` row with status `skipped`. No seeding. Returns `{ ok: true }`.
+No PMS is modelled as **no `pms_connections` row** (not a `skipped` marker). The route calls `clearPmsConnection(locationId)`, which deletes any existing connection row + its links/cursors/business-mapping, so the state is idempotently "no row" even if the location had a prior (demo/skipped/real) connection. The setup gate keys off org → rooms (not PMS), so a no-PMS clinic proceeds normally. Returns `{ ok: true }`.
 
 **`POST /api/setup/payments`**
 

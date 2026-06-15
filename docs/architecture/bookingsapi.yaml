@@ -1,0 +1,4797 @@
+---
+openapi: "3.0.0"
+info:
+  version: "1.0.0"
+  title: "Bookings API"
+  description: "Bookings API"
+components:
+  securitySchemes:
+    OAuth2:
+      type: "oauth2"
+      description: "This API uses OAuth 2.0 with the client credentials grant flow."
+      flows:
+        clientCredentials:
+          scopes: []
+          tokenUrl: "https://api.pm.sandbox.magentus.com/oauth2/token"
+  schemas:
+    TenantIdParameter:
+      type: "string"
+      format: "uuid"
+    PatientIdParameter:
+      type: "string"
+      format: "uuid"
+    PractitionerIdParameter:
+      type: "string"
+      format: "uuid"
+    AttachmentIdParameter:
+      type: "string"
+      format: "uuid"
+    AppIdParameter:
+      type: "string"
+      format: "uuid"
+    PairingCodeParameter:
+      type: "string"
+      format: "uuid"
+    AppointmentIdParameter:
+      type: "string"
+      format: "uuid"
+    ProcedureIdParameter:
+      type: "string"
+      format: "uuid"
+    ContactIdParameter:
+      type: "string"
+      format: "uuid"
+    RelatedPersonName:
+      type: "object"
+      properties:
+        family:
+          type:
+          - "string"
+          - "null"
+          description: "Family name (often called 'Surname')"
+          example: "Tribbiani"
+        given:
+          type:
+          - "string"
+          - "null"
+          description: "Given names (not always 'first'). Includes middle names"
+          example: "Joey"
+        prefix:
+          type:
+          - "string"
+          - "null"
+          description: "Name prefix / title (e.g. Mr, Mrs, Dr)"
+          example: "Mr"
+      required:
+      - "family"
+      - "given"
+      - "prefix"
+      additionalProperties: false
+    RelatedPersonContact:
+      type: "object"
+      properties:
+        system:
+          type: "string"
+          enum:
+          - "phone"
+          - "fax"
+          - "email"
+          - "pager"
+          - "sms"
+          - "other"
+          - "url"
+          description: "phone | fax | email | pager | url | sms | other - type of\
+            \ contact point"
+          example: "phone"
+        use:
+          type: "string"
+          enum:
+          - "home"
+          - "work"
+          - "mobile"
+          description: "home | work | mobile - purpose of this contact point"
+          example: "home"
+        rank:
+          type:
+          - "number"
+          - "null"
+          exclusiveMinimum: 0
+          description: "Specify preferred order of use (1 = highest)"
+          example: 1
+        value:
+          type:
+          - "string"
+          - "null"
+          description: "The actual contact point details"
+          example: "0412345678"
+      required:
+      - "system"
+      - "use"
+      - "rank"
+      - "value"
+      additionalProperties: false
+    RelatedPersonAddress:
+      type: "object"
+      properties:
+        city:
+          type:
+          - "string"
+          - "null"
+          description: "Name of city, town etc."
+          example: "Brisbane | West End"
+        line:
+          type: "array"
+          items:
+            type:
+            - "string"
+            - "null"
+            description: "Street name, number, direction & P.O. Box etc. The first\
+              \ entry is line 1 of the address. All remaining entries will be joined\
+              \ into line 2"
+            example: "100 Test St"
+        postalCode:
+          type:
+          - "string"
+          - "null"
+          description: "Postal code for area"
+          example: "4000"
+        state:
+          type:
+          - "string"
+          - "null"
+          enum:
+          - "ACT"
+          - "NSW"
+          - "NT"
+          - "QLD"
+          - "SA"
+          - "TAS"
+          - "VIC"
+          - "WA"
+          description: "Sub-unit of country (abbreviations ok)"
+          example: "QLD"
+        use:
+          type: "string"
+          enum:
+          - "home"
+          - "work"
+          - "billing"
+          - "temp"
+          - "old"
+          description: "home | work | temp | old | billing - purpose of this address"
+          example: "home"
+        type:
+          type: "string"
+          enum:
+          - "postal"
+          - "physical"
+          - "both"
+          description: "postal | physical | both - type of this address"
+          example: "postal"
+      required:
+      - "city"
+      - "line"
+      - "postalCode"
+      - "state"
+      - "use"
+      - "type"
+      additionalProperties: false
+    Identifier:
+      type: "object"
+      properties:
+        type:
+          type: "string"
+          enum:
+          - "mc"
+          - "pen"
+          - "dvau"
+          - "dvg"
+          - "dvo"
+          - "dvw"
+          - "hc"
+          - "mb"
+          description: "Type of identifier"
+          example: "mc"
+        system:
+          type: "string"
+          description: "References the standard system used for the identifier"
+          example: "http://ns.electronichealth.net.au/id/medicare-number"
+        value:
+          type:
+          - "string"
+          - "null"
+          description: "Actual identifier info"
+          example: "8003608833357360"
+        assigner:
+          type:
+          - "string"
+          - "null"
+          enum:
+          - "aca"
+          - "ahb"
+          - "ahm"
+          - "ama"
+          - "auf"
+          - "bup"
+          - "cbc"
+          - "cbh"
+          - "cdh"
+          - "cps"
+          - "fai"
+          - "gmh"
+          - "hbf"
+          - "hcf"
+          - "hci"
+          - "hif"
+          - "lhm"
+          - "lhs"
+          - "mbp"
+          - "mdh"
+          - "myo"
+          - "nhb"
+          - "nib"
+          - "ntf"
+          - "omf"
+          - "pwa"
+          - "qch"
+          - "qtu"
+          - "rbh"
+          - "rte"
+          - "slm"
+          - "spe"
+          - "sps"
+          - "wfd"
+          description: "Body responsible for issuing the identifier if specified"
+          example: "aca"
+        period:
+          type: "object"
+          properties:
+            end:
+              type:
+              - "string"
+              - "null"
+              description: "End date of the identifier"
+              example: "2000-01-01"
+          additionalProperties: false
+        extension:
+          type: "array"
+          items:
+            type: "object"
+            properties:
+              system:
+                type: "string"
+                enum:
+                - "individual-reference-number"
+              valueInteger:
+                type: "number"
+                exclusiveMinimum: 0
+                minimum: 1
+                description: "The IRN for the patient on their medicare card."
+                example: 1
+            required:
+            - "system"
+            - "valueInteger"
+            additionalProperties: false
+      required:
+      - "type"
+      - "system"
+      - "period"
+      additionalProperties: false
+    RelatedPersonIdentifier:
+      allOf:
+      - $ref: "#/components/schemas/Identifier"
+      - type: "object"
+        properties:
+          type:
+            type: "string"
+            enum:
+            - "mc"
+        additionalProperties: false
+    RelatedPerson:
+      type: "object"
+      properties:
+        id:
+          type: "string"
+          format: "uuid"
+        entityType:
+          type:
+          - "string"
+          - "null"
+          enum:
+          - "business"
+          - "individual"
+        holderType:
+          type: "string"
+          enum:
+          - "patient"
+          - "contact"
+        primary:
+          type: "boolean"
+        birthDate:
+          type:
+          - "string"
+          - "null"
+        name:
+          $ref: "#/components/schemas/RelatedPersonName"
+        contact:
+          type:
+          - "array"
+          - "null"
+          items:
+            $ref: "#/components/schemas/RelatedPersonContact"
+        address:
+          type:
+          - "array"
+          - "null"
+          items:
+            $ref: "#/components/schemas/RelatedPersonAddress"
+        identifier:
+          type:
+          - "array"
+          - "null"
+          items:
+            $ref: "#/components/schemas/RelatedPersonIdentifier"
+        contactType:
+          type:
+          - "string"
+          - "null"
+          enum:
+          - "Hospital"
+          - "Practitioner"
+          - "AccountHolder"
+          - "HealthFundContact"
+          - "GenericContact"
+          description: "Type/classification of the related person"
+          example: "AccountHolder"
+      required:
+      - "id"
+      - "entityType"
+      - "holderType"
+      - "primary"
+      - "birthDate"
+      - "name"
+      - "contact"
+      - "address"
+      - "identifier"
+      - "contactType"
+      additionalProperties: false
+    CancelAppointment:
+      type: "object"
+      properties:
+        action:
+          type: "string"
+          enum:
+          - "cancel"
+        payload:
+          type: "object"
+          properties:
+            cancellationReason:
+              type: "object"
+              properties:
+                text:
+                  type: "string"
+                  minLength: 1
+                  maxLength: 200
+                  description: "The reason that the patient is cancelling the appointment.\
+                    \ **This reason will be added to the notes of an appointment.**\n\
+                    | **Note (Before)** | **Note (After)** |\n|-------------------|------------------|\n\
+                    | Patient has hearing difficulty. | Cancellation reason: Patient\
+                    \ cancelled due to illness.<br><br>Patient has hearing difficulty.\
+                    \ |"
+                  example: "Cancellation reason: Patient cancelled due to illness"
+              required:
+              - "text"
+      required:
+      - "action"
+    UpdateAppointment:
+      oneOf:
+      - $ref: "#/components/schemas/CancelAppointment"
+      discriminator:
+        propertyName: "action"
+        mapping:
+          cancel: "#/components/schemas/CancelAppointment"
+    ContactAddress:
+      type: "object"
+      properties:
+        city:
+          type:
+          - "string"
+          - "null"
+          description: "City or suburb of the address"
+          example: "Brisbane"
+        line:
+          type:
+          - "array"
+          - "null"
+          items:
+            type:
+            - "string"
+            - "null"
+            description: "Street details of the address. The first entry is line 1,\
+              \ remaining entries are joined into line 2."
+            example: "100 Test St"
+          description: "Street address lines"
+        postalCode:
+          type:
+          - "string"
+          - "null"
+          description: "Postcode of the address"
+          example: "4000"
+        state:
+          type:
+          - "string"
+          - "null"
+          enum:
+          - "ACT"
+          - "NSW"
+          - "NT"
+          - "QLD"
+          - "SA"
+          - "TAS"
+          - "VIC"
+          - "WA"
+          description: "Australian state or territory"
+          example: "QLD"
+        type:
+          type: "string"
+          enum:
+          - "physical"
+          description: "Type of the address. Only 'physical' is accepted."
+          example: "physical"
+        use:
+          type: "string"
+          enum:
+          - "work"
+          description: "Purpose of the address. Only 'work' is accepted for account\
+            \ holder contacts."
+          example: "work"
+      required:
+      - "use"
+      additionalProperties: false
+    ContactPoint:
+      type: "object"
+      properties:
+        rank:
+          type:
+          - "number"
+          - "null"
+          description: "Preferred order of contact points (lower is higher priority)"
+          example: 1
+        system:
+          type: "string"
+          enum:
+          - "phone"
+          - "fax"
+          - "email"
+          description: "Type of contact point: phone | fax | email"
+          example: "email"
+        use:
+          type: "string"
+          enum:
+          - "mobile"
+          - "work"
+          description: "Context of the contact point: work | mobile"
+          example: "mobile"
+        value:
+          type: "string"
+          description: "The actual contact point value (phone number, email, etc.)"
+          example: "test@example.com"
+      required:
+      - "system"
+      - "value"
+      additionalProperties: false
+    ContactIdentifier:
+      type: "object"
+      properties:
+        extension:
+          type: "array"
+          items:
+            type: "object"
+            properties:
+              system:
+                type: "string"
+                enum:
+                - "individual-reference-number"
+                description: "Must be 'individual-reference-number'"
+              valueInteger:
+                type: "integer"
+                minimum: 1
+                maximum: 9
+                description: "Individual Reference Number (IRN) on the Medicare card.\
+                  \ Must be a single digit between 1 and 9."
+                example: 1
+            required:
+            - "system"
+            - "valueInteger"
+            additionalProperties: false
+          description: "Extensions for the identifier (e.g. IRN for Medicare)"
+        period:
+          type: "object"
+          properties:
+            end:
+              type:
+              - "string"
+              - "null"
+              description: "Expiry date of the identifier"
+              example: "2030-06-30"
+          additionalProperties: false
+        system:
+          type: "string"
+          description: "The namespace for the identifier value"
+          example: "https://developer.digitalhealth.gov.au/namespaces/id/medicare-number/index.html"
+        type:
+          type: "string"
+          enum:
+          - "mc"
+        value:
+          type: "string"
+          description: "The Medicare card number (exactly 10 digits)"
+          example: "2123456701"
+      required:
+      - "period"
+      - "system"
+      - "type"
+      - "value"
+      additionalProperties: false
+    ContactHumanName:
+      type: "object"
+      properties:
+        family:
+          type:
+          - "string"
+          - "null"
+          description: "Family name (surname). Required when entityType is 'individual'."
+          example: "Smith"
+        given:
+          type:
+          - "string"
+          - "null"
+          description: "Given name (first name). Required when entityType is 'individual'."
+          example: "John"
+        prefix:
+          type:
+          - "string"
+          - "null"
+          description: "Name prefix / title (e.g. Mr, Mrs, Dr)"
+          example: "Mr"
+      additionalProperties: false
+    DVA Card (Gold):
+      type: "object"
+      properties:
+        extension:
+          type: "array"
+          items:
+            oneOf:
+            - type: "object"
+              properties:
+                system:
+                  type: "string"
+                  enum:
+                  - "card-name"
+                valueHumanName:
+                  type: "object"
+                  properties:
+                    family:
+                      type: "string"
+                      minLength: 1
+                      description: "DVA Card holders family name (as shown on the\
+                        \ card)."
+                      example: "Doe"
+                    given:
+                      type: "string"
+                      minLength: 1
+                      description: "DVA Card holders given name (as shown on the card)."
+                      example: "John"
+              required:
+              - "system"
+              - "valueHumanName"
+        period:
+          type: "object"
+          properties:
+            end:
+              type: "string"
+              description: "End, must be a future date, in the format YYYY-MM."
+              example: "2000-01"
+          required:
+          - "end"
+        system:
+          type: "string"
+          enum:
+          - "https://developer.digitalhealth.gov.au/namespaces/id/dva/index.html"
+          description: "References the standard system used for the identifier."
+          example: "https://developer.digitalhealth.gov.au/namespaces/id/dva/index.html"
+        value:
+          type: "string"
+          description: "DVA Card number"
+          example: "WA123456A"
+        type:
+          type: "string"
+          enum:
+          - "dvg"
+          description: "DVA Gold Card"
+          example: "dvg"
+      required:
+      - "extension"
+      - "period"
+      - "system"
+      - "value"
+      - "type"
+    DVA Card (Orange):
+      type: "object"
+      properties:
+        extension:
+          type: "array"
+          items:
+            oneOf:
+            - type: "object"
+              properties:
+                system:
+                  type: "string"
+                  enum:
+                  - "card-name"
+                valueHumanName:
+                  type: "object"
+                  properties:
+                    family:
+                      type: "string"
+                      minLength: 1
+                      description: "DVA Card holders family name (as shown on the\
+                        \ card)."
+                      example: "Doe"
+                    given:
+                      type: "string"
+                      minLength: 1
+                      description: "DVA Card holders given name (as shown on the card)."
+                      example: "John"
+              required:
+              - "system"
+              - "valueHumanName"
+        period:
+          type: "object"
+          properties:
+            end:
+              type: "string"
+              description: "End, must be a future date, in the format YYYY-MM."
+              example: "2000-01"
+          required:
+          - "end"
+        system:
+          type: "string"
+          enum:
+          - "https://developer.digitalhealth.gov.au/namespaces/id/dva/index.html"
+          description: "References the standard system used for the identifier."
+          example: "https://developer.digitalhealth.gov.au/namespaces/id/dva/index.html"
+        value:
+          type: "string"
+          description: "DVA Card number"
+          example: "WA123456A"
+        type:
+          type: "string"
+          enum:
+          - "dvo"
+          description: "DVA Orange Card"
+          example: "dvo"
+      required:
+      - "extension"
+      - "period"
+      - "system"
+      - "value"
+      - "type"
+    DVA Card (Unknown):
+      type: "object"
+      properties:
+        extension:
+          type: "array"
+          items:
+            oneOf:
+            - type: "object"
+              properties:
+                system:
+                  type: "string"
+                  enum:
+                  - "card-name"
+                valueHumanName:
+                  type: "object"
+                  properties:
+                    family:
+                      type: "string"
+                      minLength: 1
+                      description: "DVA Card holders family name (as shown on the\
+                        \ card)."
+                      example: "Doe"
+                    given:
+                      type: "string"
+                      minLength: 1
+                      description: "DVA Card holders given name (as shown on the card)."
+                      example: "John"
+              required:
+              - "system"
+              - "valueHumanName"
+        period:
+          type: "object"
+          properties:
+            end:
+              type: "string"
+              description: "End, must be a future date, in the format YYYY-MM."
+              example: "2000-01"
+          required:
+          - "end"
+        system:
+          type: "string"
+          enum:
+          - "https://developer.digitalhealth.gov.au/namespaces/id/dva/index.html"
+          description: "References the standard system used for the identifier."
+          example: "https://developer.digitalhealth.gov.au/namespaces/id/dva/index.html"
+        value:
+          type: "string"
+          description: "DVA Card number"
+          example: "WA123456A"
+        type:
+          type: "string"
+          enum:
+          - "dvau"
+          description: "DVA Card (no type)"
+          example: "dvau"
+      required:
+      - "extension"
+      - "period"
+      - "system"
+      - "value"
+      - "type"
+    DVA Card (White):
+      type: "object"
+      properties:
+        extension:
+          type: "array"
+          items:
+            oneOf:
+            - type: "object"
+              properties:
+                system:
+                  type: "string"
+                  enum:
+                  - "card-name"
+                valueHumanName:
+                  type: "object"
+                  properties:
+                    family:
+                      type: "string"
+                      minLength: 1
+                      description: "DVA Card holders family name (as shown on the\
+                        \ card)."
+                      example: "Doe"
+                    given:
+                      type: "string"
+                      minLength: 1
+                      description: "DVA Card holders given name (as shown on the card)."
+                      example: "John"
+              required:
+              - "system"
+              - "valueHumanName"
+            - type: "object"
+              properties:
+                system:
+                  type: "string"
+                  enum:
+                  - "condition"
+                valueString:
+                  type: "string"
+                  minLength: 1
+                  maxLength: 100
+                  description: "Specific medical condition(s) for the card."
+                  example: "Post-traumatic stress disorder (PTSD)"
+              required:
+              - "system"
+              - "valueString"
+        period:
+          type: "object"
+          properties:
+            end:
+              type: "string"
+              description: "End, must be a future date, in the format YYYY-MM."
+              example: "2000-01"
+          required:
+          - "end"
+        system:
+          type: "string"
+          enum:
+          - "https://developer.digitalhealth.gov.au/namespaces/id/dva/index.html"
+          description: "References the standard system used for the identifier."
+          example: "https://developer.digitalhealth.gov.au/namespaces/id/dva/index.html"
+        value:
+          type: "string"
+          description: "DVA Card number"
+          example: "WA123456A"
+        type:
+          type: "string"
+          enum:
+          - "dvw"
+          description: "DVA White Card"
+          example: "dvw"
+      required:
+      - "extension"
+      - "period"
+      - "system"
+      - "value"
+      - "type"
+    Healthcare Concession Card:
+      type: "object"
+      properties:
+        period:
+          type: "object"
+          properties:
+            end:
+              type: "string"
+              description: "End must be a future date, in the format YYYY-MM-DD."
+              example: "2000-01-01"
+          required:
+          - "end"
+        system:
+          type: "string"
+          enum:
+          - "https://developer.digitalhealth.gov.au/namespaces/id/centrelink-customer-reference-number/index.html"
+          description: "References the standard system used for the identifier."
+          example: "https://developer.digitalhealth.gov.au/namespaces/id/centrelink-customer-reference-number/index.html"
+        type:
+          type: "string"
+          enum:
+          - "hc"
+          description: "Health Care Card"
+          example: "hc"
+        value:
+          type: "string"
+          description: "Centerlink CRN (customer reference number)."
+          example: "123456789A"
+      required:
+      - "period"
+      - "system"
+      - "type"
+      - "value"
+    Pensioner Concession Card:
+      type: "object"
+      properties:
+        period:
+          type: "object"
+          properties:
+            end:
+              type: "string"
+              description: "End must be a future date, in the format YYYY-MM-DD."
+              example: "2000-01-01"
+          required:
+          - "end"
+        system:
+          type: "string"
+          enum:
+          - "https://developer.digitalhealth.gov.au/namespaces/id/centrelink-customer-reference-number/index.html"
+          description: "References the standard system used for the identifier."
+          example: "https://developer.digitalhealth.gov.au/namespaces/id/centrelink-customer-reference-number/index.html"
+        type:
+          type: "string"
+          enum:
+          - "pen"
+          description: "Pensioner Concession Card"
+          example: "pen"
+        value:
+          type: "string"
+          description: "Centerlink CRN (customer reference number)."
+          example: "123456789A"
+      required:
+      - "period"
+      - "system"
+      - "type"
+      - "value"
+    Private Insurance Member:
+      type: "object"
+      properties:
+        assigner:
+          type:
+          - "string"
+          - "null"
+          enum:
+          - "aca"
+          - "ahb"
+          - "ahm"
+          - "ama"
+          - "auf"
+          - "bup"
+          - "cbc"
+          - "cbh"
+          - "cdh"
+          - "cps"
+          - "fai"
+          - "gmh"
+          - "hbf"
+          - "hcf"
+          - "hci"
+          - "hif"
+          - "lhm"
+          - "lhs"
+          - "mbp"
+          - "mdh"
+          - "myo"
+          - "nhb"
+          - "nib"
+          - "ntf"
+          - "omf"
+          - "pwa"
+          - "qch"
+          - "qtu"
+          - "rbh"
+          - "rte"
+          - "slm"
+          - "spe"
+          - "sps"
+          - "wfd"
+          description: "Body responsible for issuing the identifier if specified.\
+            \ Please use URL at `system` to reference."
+          example: "aca"
+        extension:
+          type: "array"
+          items:
+            oneOf:
+            - type: "object"
+              properties:
+                system:
+                  type: "string"
+                  enum:
+                  - "member-reference"
+                valueInteger:
+                  type: "number"
+                  exclusiveMinimum: 0
+                  minimum: 0
+                  description: "Private Health Card member's reference number."
+                  example: 1
+              required:
+              - "system"
+              - "valueInteger"
+            - type: "object"
+              properties:
+                system:
+                  type: "string"
+                  enum:
+                  - "member-name"
+                valueHumanName:
+                  type: "object"
+                  properties:
+                    family:
+                      type:
+                      - "string"
+                      - "null"
+                      description: "Private Health Card member's family name."
+                      example: "Doe"
+                    given:
+                      type:
+                      - "string"
+                      - "null"
+                      description: "Private Health Card member's given name."
+                      example: "John"
+              required:
+              - "system"
+              - "valueHumanName"
+        period:
+          type: "object"
+          properties:
+            end:
+              type: "string"
+              description: "End must be a future date, in the format YYYY-MM."
+              example: "2000-01"
+          required:
+          - "end"
+        system:
+          type: "string"
+          enum:
+          - "https://www.privatehealth.gov.au/dynamic/insurer"
+          description: "References the standard system used for the identifier."
+          example: "https://www.privatehealth.gov.au/dynamic/insurer"
+        type:
+          type: "string"
+          enum:
+          - "mb"
+          description: "Private Health Card"
+          example: "mb"
+        value:
+          type: "string"
+          pattern: "^[a-zA-Z0-9]+$"
+          description: "Private Health Card number."
+          example: "12345678"
+      required:
+      - "assigner"
+      - "extension"
+      - "period"
+      - "system"
+      - "type"
+      - "value"
+    Medicare Card:
+      type: "object"
+      properties:
+        extension:
+          type: "array"
+          items:
+            oneOf:
+            - type: "object"
+              properties:
+                system:
+                  type: "string"
+                  enum:
+                  - "individual-reference-number"
+                valueInteger:
+                  type: "number"
+                  exclusiveMinimum: 0
+                  minimum: 1
+                  maximum: 9
+                  description: "The IRN for the patient on their medicare card."
+                  example: 1
+              required:
+              - "system"
+              - "valueInteger"
+        period:
+          type: "object"
+          properties:
+            end:
+              type: "string"
+              description: "End must be a future date, in the format YYYY-MM."
+              example: "2000-01"
+          required:
+          - "end"
+        system:
+          type: "string"
+          enum:
+          - "https://developer.digitalhealth.gov.au/namespaces/id/medicare-number/index.html"
+          description: "References the standard system used for the identifier."
+          example: "https://developer.digitalhealth.gov.au/namespaces/id/medicare-number/index.html"
+        type:
+          type: "string"
+          enum:
+          - "mc"
+          description: "Medicare Card"
+          example: "mc"
+        value:
+          type: "string"
+          description: "Medicare Card number."
+          example: "2042107263"
+      required:
+      - "period"
+      - "system"
+      - "type"
+      - "value"
+    Patient Identifier:
+      oneOf:
+      - $ref: "#/components/schemas/DVA Card (Gold)"
+      - $ref: "#/components/schemas/DVA Card (Orange)"
+      - $ref: "#/components/schemas/DVA Card (Unknown)"
+      - $ref: "#/components/schemas/DVA Card (White)"
+      - $ref: "#/components/schemas/Healthcare Concession Card"
+      - $ref: "#/components/schemas/Pensioner Concession Card"
+      - $ref: "#/components/schemas/Private Insurance Member"
+      - $ref: "#/components/schemas/Medicare Card"
+      discriminator:
+        propertyName: "type"
+        mapping:
+          dvg: "#/components/schemas/DVA Card (Gold)"
+          dvo: "#/components/schemas/DVA Card (Orange)"
+          dvau: "#/components/schemas/DVA Card (Unknown)"
+          dvw: "#/components/schemas/DVA Card (White)"
+          hc: "#/components/schemas/Healthcare Concession Card"
+          pen: "#/components/schemas/Pensioner Concession Card"
+          mb: "#/components/schemas/Private Insurance Member"
+          mc: "#/components/schemas/Medicare Card"
+      description: "Patient identifier, can be one of: DVA Card (Unknown, Gold, Orange,\
+        \ White), Healthcare Concesssion Card, Pensioner Concession Card, Private\
+        \ Insurance Member, or Medicare Card."
+    Emergency Contact:
+      type: "object"
+      properties:
+        relationship:
+          type: "array"
+          items:
+            type: "object"
+            properties:
+              coding:
+                type: "array"
+                items:
+                  type: "object"
+                  properties:
+                    code:
+                      type: "string"
+                      enum:
+                      - "C"
+                      - "N"
+                      description: "Symbol in syntax defined by the system"
+                      example: "C"
+                    display:
+                      type: "string"
+                      description: "Representation defined by the system"
+                      example: "Emergency Contact"
+                  required:
+                  - "code"
+              text:
+                type: "string"
+                description: "Text representation of the relationship to the patient"
+                example: "grandparent"
+            required:
+            - "coding"
+          description: "The kind of relationship to patient\n| Coding | Text | Definition\
+            \ |\n| -------- | ----------- | --------------- |\n| [{'code': 'C'}] |\
+            \ 'grandparent' | Emergency Contact who is a grandparent |\n| [{'code':'C'},\
+            \ {'code': 'N'}] | 'daughter' | Emergency Contact who is Next of Kin and\
+            \ a daughter |\n\nThe following values are suggested:\nAunt, Brother,\
+            \ Child, Cousin, Daughter, Dependent, Father, Grandchild, Grandfather,\
+            \ Grandmother, Grandparent, Guardian, Husband, Mother, Nephew, Niece,\
+            \ Parent, Partner, Sibling, Sister, Son, Spouse, Uncle, Wife."
+          example:
+          - coding:
+            - code: "C"
+            - code: "N"
+            text: "daughter"
+        name:
+          type: "object"
+          properties:
+            given:
+              type: "string"
+              minLength: 2
+              description: "Given name/s, they will be split in first and middle names\
+                \ if present e.g. first name: `Joey` & middle name: `Doe Boe`"
+              example: "Joey Doe Boe"
+            family:
+              type: "string"
+              minLength: 2
+              description: "Family name of the contact"
+              example: "Smith"
+          required:
+          - "given"
+        telecom:
+          type: "array"
+          items:
+            type: "object"
+            properties:
+              system:
+                type: "string"
+                enum:
+                - "phone"
+              use:
+                type: "string"
+                enum:
+                - "mobile"
+              rank:
+                type: "number"
+                exclusiveMinimum: 0
+                description: "Rank indicates what order the Contact should be used\
+                  \ in, the lowest number is the highest priority. Must be a positive\
+                  \ number."
+                example: 1
+              value:
+                type:
+                - "string"
+                - "null"
+                description: "Value of the Contact"
+                example: "0412345678"
+            required:
+            - "system"
+            - "use"
+            - "rank"
+            - "value"
+      required:
+      - "name"
+      additionalProperties: false
+    Address:
+      type: "object"
+      properties:
+        city:
+          type:
+          - "string"
+          - "null"
+          description: "Name of city, town etc."
+          example: "Brisbane | West End"
+        line:
+          type: "array"
+          items:
+            type:
+            - "string"
+            - "null"
+            description: "Street name, number, direction & P.O. Box etc. The first\
+              \ entry is line 1 of the address. All remaining entries will be joined\
+              \ into line 2"
+            example: "100 Test St"
+        postalCode:
+          type:
+          - "string"
+          - "null"
+          description: "Postal code for area"
+          example: "4000"
+        state:
+          type:
+          - "string"
+          - "null"
+          enum:
+          - "ACT"
+          - "NSW"
+          - "NT"
+          - "QLD"
+          - "SA"
+          - "TAS"
+          - "VIC"
+          - "WA"
+          description: "Sub-unit of country (abbreviations ok)"
+          example: "QLD"
+        use:
+          type: "string"
+          enum:
+          - "home"
+          - "work"
+          - "billing"
+          - "temp"
+          - "old"
+          description: "home | work | temp | old | billing - purpose of this address"
+          example: "home"
+        type:
+          type: "string"
+          enum:
+          - "postal"
+          - "physical"
+          - "both"
+          description: "postal | physical | both - type of this address"
+          example: "postal"
+      required:
+      - "city"
+      - "line"
+      - "postalCode"
+      - "state"
+      - "use"
+      - "type"
+      additionalProperties: false
+    HospitalName:
+      type: "object"
+      properties:
+        text:
+          type: "string"
+          minLength: 1
+          description: "Business or organisation name. Required for Hospital contacts."
+          example: "City General Hospital"
+      required:
+      - "text"
+      additionalProperties: false
+    PatientContact:
+      type: "object"
+      properties:
+        system:
+          type: "string"
+          enum:
+          - "email"
+          - "fax"
+          - "phone"
+          description: "Type of the Contact"
+          example: "phone"
+        use:
+          type: "string"
+          enum:
+          - "home"
+          - "work"
+          - "mobile"
+          description: "Use of the Contact"
+          example: "home"
+        rank:
+          type:
+          - "number"
+          - "null"
+          description: "Rank indicates what order the Contact should be used in, the\
+            \ lowest number is the highest priority. For example 1 should be used\
+            \ before 2. If null this Contact has no assigned priority, please prefer\
+            \ to use Contact(s) assigned a priority first and in priority order."
+          example: 1
+        value:
+          type:
+          - "string"
+          - "null"
+          description: "Value of the Contact"
+          example: "0412345678"
+      required:
+      - "system"
+      - "use"
+      - "rank"
+      - "value"
+    PatientIdentifier:
+      type: "object"
+      properties:
+        type:
+          type: "string"
+          enum:
+          - "mc"
+          - "pen"
+          - "dvau"
+          - "dvg"
+          - "dvo"
+          - "dvw"
+          - "hc"
+          - "mb"
+          description: "| Value | Definition |\n|-------|------------|\n| mc    |\
+            \ Medicare Card |\n| pen   | Pensioner Concession Card |\n| dvau  | Department\
+            \ of Veterans’ Affairs - Unspecified Entitlement Card |\n| dvg   | Department\
+            \ of Veterans’ Affairs - Gold Entitlement Card |\n| dvo   | Department\
+            \ of Veterans’ Affairs - Orange Entitlement Card |\n| dvw   | Department\
+            \ of Veterans’ Affairs - White Entitlement Card |\n| hc    | Health Care\
+            \ Card |\n| mb    | Private Insurance Member |"
+          example: "dvau"
+        system:
+          type: "string"
+          description: "References the standard system used for the identifier"
+          example: "http://ns.electronichealth.net.au/id/medicare-number"
+        value:
+          type:
+          - "string"
+          - "null"
+          description: "Actual identifier info"
+          example: "8003608833357360"
+        assigner:
+          type:
+          - "string"
+          - "null"
+          enum:
+          - "aca"
+          - "ahb"
+          - "ahm"
+          - "ama"
+          - "auf"
+          - "bup"
+          - "cbc"
+          - "cbh"
+          - "cdh"
+          - "cps"
+          - "fai"
+          - "gmh"
+          - "hbf"
+          - "hcf"
+          - "hci"
+          - "hif"
+          - "lhm"
+          - "lhs"
+          - "mbp"
+          - "mdh"
+          - "myo"
+          - "nhb"
+          - "nib"
+          - "ntf"
+          - "omf"
+          - "pwa"
+          - "qch"
+          - "qtu"
+          - "rbh"
+          - "rte"
+          - "slm"
+          - "spe"
+          - "sps"
+          - "wfd"
+          description: "Body responsible for issuing the identifier if specified"
+          example: "aca"
+        period:
+          type: "object"
+          properties:
+            end:
+              type:
+              - "string"
+              - "null"
+              description: "End date of the identifier"
+              example: "2000-01-01"
+        extension:
+          type: "array"
+          items:
+            type: "object"
+            properties:
+              system:
+                type: "string"
+                enum:
+                - "individual-reference-number"
+              valueInteger:
+                type: "number"
+                exclusiveMinimum: 0
+                minimum: 1
+                description: "The IRN for the patient on their medicare card."
+                example: 1
+            required:
+            - "system"
+            - "valueInteger"
+      required:
+      - "type"
+      - "system"
+      - "period"
+    PatientName:
+      type: "object"
+      properties:
+        family:
+          type: "string"
+          description: "Family name"
+          example: "Tribbiani"
+        given:
+          type:
+          - "string"
+          - "null"
+          description: "Given name"
+          example: "Joey"
+        prefix:
+          type:
+          - "string"
+          - "null"
+          description: "Prefix for name"
+          example: "Mr"
+      required:
+      - "family"
+      - "given"
+      - "prefix"
+    Patient:
+      type: "object"
+      properties:
+        id:
+          type: "string"
+          description: "The UUID of the Patient."
+          example: "128eb8c9-61c0-4b1b-9519-6bbb86bfe7aa"
+        address:
+          type:
+          - "array"
+          - "null"
+          items:
+            $ref: "#/components/schemas/Address"
+        birthDate:
+          type:
+          - "string"
+          - "null"
+          description: "Date of birth of the Patient."
+          example: "2000-01-01"
+        contact:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/PatientContact"
+        gender:
+          type:
+          - "string"
+          - "null"
+          enum:
+          - "female"
+          - "male"
+          - "unspecified"
+          description: "Gender of the Patient"
+          example: "male"
+        identifier:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/PatientIdentifier"
+        name:
+          $ref: "#/components/schemas/PatientName"
+        deceased:
+          type:
+          - "object"
+          - "null"
+          properties:
+            deceasedBoolean:
+              type:
+              - "boolean"
+              - "null"
+              description: "Indicates if the Patient is deceased."
+              example: true
+            deceasedDateTime:
+              type:
+              - "string"
+              - "null"
+              description: "Date of death of the Patient."
+              example: "2000-01-01"
+          required:
+          - "deceasedBoolean"
+          - "deceasedDateTime"
+        occupation:
+          type:
+          - "string"
+          - "null"
+          description: "Occupation of the Patient"
+          example: "Doctor"
+        indigenousStatus:
+          type:
+          - "string"
+          - "null"
+          enum:
+          - "aboriginal"
+          - "torres_strait_islander"
+          - "both"
+          - "neither"
+          - "declined"
+          description: "Indigenous Status of the Patient"
+          example: "aboriginal"
+        chartNumber:
+          type:
+          - "string"
+          - "null"
+          description: "Practice-specific chart number for the patient."
+          example: "CHT001"
+        emailEnabled:
+          type: "boolean"
+          description: "Whether the patient has opted in to email contact."
+          example: true
+        smsEnabled:
+          type:
+          - "boolean"
+          - "null"
+          description: "Whether the patient has opted in to SMS contact."
+          example: true
+        extension:
+          type: "array"
+          items:
+            oneOf:
+            - type: "object"
+              properties:
+                system:
+                  type: "string"
+                  enum:
+                  - "emergency-contacts"
+                valueArray:
+                  type: "array"
+                  items:
+                    allOf:
+                    - $ref: "#/components/schemas/Emergency Contact"
+                    - properties:
+                        id:
+                          type: "string"
+                          format: "uuid"
+                        relationship:
+                          type: "array"
+                          items:
+                            type: "object"
+                            properties:
+                              coding:
+                                type: "array"
+                                items:
+                                  type: "object"
+                                  properties:
+                                    code:
+                                      type: "string"
+                                      enum:
+                                      - "C"
+                                      - "N"
+                                      description: "Symbol in syntax defined by the\
+                                        \ system"
+                                      example: "C"
+                                    display:
+                                      type: "string"
+                                      description: "Representation defined by the\
+                                        \ system"
+                                      example: "Emergency Contact"
+                                  required:
+                                  - "code"
+                              text:
+                                type:
+                                - "string"
+                                - "null"
+                                description: "Text representation of the relationship\
+                                  \ to the patient"
+                                example: "grandparent"
+                            required:
+                            - "coding"
+                            - "text"
+                          description: "The kind of relationship to patient\n| Coding\
+                            \ | Text | Definition |\n| -------- | ----------- | ---------------\
+                            \ |\n| [{'code': 'C'}] | 'grandparent' | Emergency Contact\
+                            \ who is a grandparent |\n| [{'code':'C'}, {'code': 'N'}]\
+                            \ | 'daughter' | Emergency Contact who is Next of Kin\
+                            \ and a daughter |\n\nThe following values are commonly\
+                            \ used to indicate the relationship type:\nAunt, Brother,\
+                            \ Child, Cousin, Daughter, Dependent, Father, Grandchild,\
+                            \ Grandfather, Grandmother, Grandparent, Guardian, Husband,\
+                            \ Mother, Nephew, Niece, Parent, Partner, Sibling, Sister,\
+                            \ Son, Spouse, Uncle, Wife."
+                          example:
+                          - coding:
+                            - code: "C"
+                            - code: "N"
+                            text: "daughter"
+                        name:
+                          type: "object"
+                          properties:
+                            given:
+                              type:
+                              - "string"
+                              - "null"
+                              description: "Given name/s"
+                              example: "Joey Doe Boe"
+                            family:
+                              type:
+                              - "string"
+                              - "null"
+                              description: "Family name of the contact"
+                              example: "Smith"
+                          required:
+                          - "given"
+                          - "family"
+                          description: "Name of the contact"
+                        telecom:
+                          type: "array"
+                          items:
+                            type: "object"
+                            properties:
+                              system:
+                                type: "string"
+                                enum:
+                                - "phone"
+                              use:
+                                type: "string"
+                                enum:
+                                - "mobile"
+                              rank:
+                                type:
+                                - "number"
+                                - "null"
+                                exclusiveMinimum: 0
+                                description: "Rank indicates what order the Contact\
+                                  \ should be used in, the lowest number is the highest\
+                                  \ priority. Must be a positive number."
+                                example: 1
+                              value:
+                                type:
+                                - "string"
+                                - "null"
+                                description: "Value of the Contact"
+                                example: "0412345678"
+                            required:
+                            - "system"
+                            - "use"
+                            - "rank"
+                            - "value"
+                          description: "Phone number of the contact"
+                      required:
+                      - "id"
+                      - "relationship"
+                      - "name"
+                      - "telecom"
+                  description: "A contact party (e.g. guardian, partner, friend) for\
+                    \ the patient."
+              required:
+              - "system"
+              - "valueArray"
+            - type: "object"
+              properties:
+                system:
+                  type: "string"
+                  enum:
+                  - "firstname"
+                valueString:
+                  type:
+                  - "string"
+                  - "null"
+                  description: "The first name component of the patient's given name."
+                  example: "Joey"
+              required:
+              - "system"
+              - "valueString"
+            - type: "object"
+              properties:
+                system:
+                  type: "string"
+                  enum:
+                  - "middlename"
+                valueString:
+                  type:
+                  - "string"
+                  - "null"
+                  description: "The middle name component of the patient's given name."
+                  example: "Francis"
+              required:
+              - "system"
+              - "valueString"
+            - type: "object"
+              properties:
+                system:
+                  type: "string"
+                  enum:
+                  - "pronouns"
+                valueString:
+                  type:
+                  - "string"
+                  - "null"
+                  description: "The patient's preferred pronouns."
+                  example: "he/him"
+              required:
+              - "system"
+              - "valueString"
+            - type: "object"
+              properties:
+                system:
+                  type: "string"
+                  enum:
+                  - "maiden-name"
+                valueString:
+                  type:
+                  - "string"
+                  - "null"
+                  description: "The patient's maiden name (birth family name)."
+                  example: "Smith"
+              required:
+              - "system"
+              - "valueString"
+      required:
+      - "id"
+      additionalProperties: false
+    AppointmentType:
+      type: "object"
+      properties:
+        id:
+          type: "string"
+          format: "uuid"
+          description: "The UUID of the AppointmentType."
+          example: "128eb8c9-61c0-4b1b-9519-6bbb86bfe7aa"
+        duration:
+          type:
+          - "number"
+          - "null"
+          description: "Duration of the AppointmentType"
+          example: 15
+        text:
+          type: "string"
+          description: "Name of the AppointmentType"
+          example: "Followup"
+        colour:
+          type:
+          - "string"
+          - "null"
+          description: "The hex colour code of the appointment in Gentu"
+          example: "#00FF00"
+        onlineBookable:
+          type: "boolean"
+          description: "Whether this appointment type is available for online bookings"
+      required:
+      - "id"
+      - "duration"
+      - "text"
+      - "colour"
+      - "onlineBookable"
+    AppointmentParticipant:
+      type: "object"
+      properties:
+        referenceType:
+          type: "string"
+          enum:
+          - "patient"
+          - "provider"
+          - "location"
+          - "health_care_service"
+          description: "Reference type of the Appointment Participant"
+          example: "patient"
+        referenceId:
+          type: "string"
+          description: "Reference to the Appointment Participant"
+          example: "d011246e-bc0b-4913-9742-5ad9dcb5ded2"
+        arrivedAt:
+          type: "string"
+          format: "date-time"
+          description: "Time at which the Appointment Participant arrived (ISO 8601\
+            \ with offset)"
+          example: "2000-01-01T00:00:00.000+00:00"
+      required:
+      - "referenceType"
+      - "referenceId"
+    AppointmentTypeId:
+      type: "object"
+      properties:
+        reference:
+          type:
+          - "string"
+          - "null"
+          description: "Reference to the type of Appointment"
+          example: "ac433a35-b2c5-4b8f-ab23-fe95714f6593"
+      required:
+      - "reference"
+    AppointmentExtension:
+      anyOf:
+      - type: "object"
+        properties:
+          system:
+            type: "string"
+            description: "This is an extension to support the system specified data"
+            example: "cancelled-at"
+          valueDateTime:
+            type: "string"
+            format: "date-time"
+            description: "Time value for the extension (ISO 8601 with offset)"
+            example: "2000-01-01T00:00:00.000+00:00"
+        required:
+        - "system"
+        - "valueDateTime"
+      - type: "object"
+        properties:
+          system:
+            type: "string"
+            description: "This is an extension to support the system specified data"
+            example: "cancelled-at"
+          valueBoolean:
+            type:
+            - "boolean"
+            - "null"
+            description: "Boolean value for the extension"
+            example: true
+        required:
+        - "system"
+    Appointment:
+      type: "object"
+      properties:
+        id:
+          type: "string"
+          description: "The UUID of the Appointment."
+          example: "128eb8c9-61c0-4b1b-9519-6bbb86bfe7aa"
+        startAt:
+          type: "string"
+          format: "date-time"
+          description: "Time at which Appointment starts (ISO 8601 with offset)"
+          example: "2000-01-01T00:00:00.000+00:00"
+        endAt:
+          type:
+          - "string"
+          - "null"
+          format: "date-time"
+          description: "Time at which the Appointment ends (ISO 8601 with offset)"
+          example: "2000-01-01T00:00:00.000+00:00"
+        status:
+          type:
+          - "string"
+          - "null"
+          description: "Status of the Appointment"
+          example: "cancelled"
+        minutesDuration:
+          type:
+          - "number"
+          - "null"
+          description: "Duration of the Appointment"
+          example: 60
+        comment:
+          type:
+          - "string"
+          - "null"
+          description: "Comment on the Appointment"
+          example: "Patient to arrive 15 minutes prior."
+        description:
+          type:
+          - "string"
+          - "null"
+          description: "Description of the Appointment"
+          example: "Patient requires a face to face consultation."
+        participant:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/AppointmentParticipant"
+        appointmentType:
+          $ref: "#/components/schemas/AppointmentTypeId"
+        extension:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/AppointmentExtension"
+      required:
+      - "id"
+      - "startAt"
+      - "endAt"
+      - "status"
+      - "minutesDuration"
+      - "comment"
+      - "description"
+      - "participant"
+      - "appointmentType"
+      - "extension"
+      additionalProperties: false
+    UserName:
+      type: "object"
+      properties:
+        family:
+          type:
+          - "string"
+          - "null"
+          description: "Family name"
+          example: "Ramoray"
+        given:
+          type:
+          - "string"
+          - "null"
+          description: "Given name"
+          example: "Drake"
+        prefix:
+          type:
+          - "string"
+          - "null"
+          description: "Prefix for name"
+          example: "Dr"
+      required:
+      - "family"
+      - "given"
+      - "prefix"
+    UserContact:
+      type: "object"
+      properties:
+        system:
+          type: "string"
+          enum:
+          - "email"
+          - "fax"
+          - "phone"
+          - "https://docs.magentus.com/practice-administration/contacts/argus"
+          - "https://docs.magentus.com/practice-administration/contacts/healthlink"
+          - "https://docs.magentus.com/practice-administration/contacts/medicalObjects"
+          description: "Type of the Contact"
+          example: "phone"
+        use:
+          type: "string"
+          description: "Location of the Contact"
+          example: "work"
+        rank:
+          type:
+          - "number"
+          - "null"
+          description: "Rank indicates what order the Contact should be used in, the\
+            \ lowest number is the highest priority. For example 1 should be used\
+            \ before 2. If null all Contact(s) are of equal priority."
+          example: 1
+        value:
+          type:
+          - "string"
+          - "null"
+          description: "Value of the Contact"
+          example: "0412345678"
+      required:
+      - "system"
+      - "use"
+      - "rank"
+      - "value"
+    ListUser:
+      type: "object"
+      properties:
+        id:
+          type: "string"
+          description: "The UUID of the User."
+          example: "128eb8c9-61c0-4b1b-9519-6bbb86bfe7aa"
+        name:
+          $ref: "#/components/schemas/UserName"
+        contact:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/UserContact"
+        active:
+          type: "boolean"
+        shownInAppointmentBook:
+          type: "boolean"
+      required:
+      - "id"
+      - "name"
+      - "contact"
+      - "active"
+      - "shownInAppointmentBook"
+      additionalProperties: false
+    UserIdentifier:
+      type: "object"
+      properties:
+        type:
+          type: "string"
+          enum:
+          - "hpii"
+          - "upin"
+          description: "Type of practitioner identifier"
+          example: "upin"
+        system:
+          type: "string"
+          description: "References the standard system used for the identifier"
+          example: "http://ns.electronichealth.net.au/id/medicare-provider-number"
+        value:
+          type:
+          - "string"
+          - "null"
+          description: "Value of the Identifier"
+          example: "7402575F"
+        use:
+          type:
+          - "string"
+          - "null"
+          description: "Use of identifier"
+          example: "official"
+        location:
+          type:
+          - "object"
+          - "null"
+          properties:
+            display:
+              type:
+              - "string"
+              - "null"
+              description: "Location the Identifier is relevant for"
+              example: "Sacred Heart Hospital"
+          required:
+          - "display"
+      required:
+      - "type"
+      - "system"
+    User:
+      type: "object"
+      properties:
+        id:
+          type: "string"
+          description: "The UUID of the User."
+          example: "128eb8c9-61c0-4b1b-9519-6bbb86bfe7aa"
+        address:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/Address"
+        contact:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/UserContact"
+        identifier:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/UserIdentifier"
+        name:
+          $ref: "#/components/schemas/UserName"
+      required:
+      - "id"
+      - "address"
+      - "contact"
+      - "identifier"
+      - "name"
+    AvailabilitySchema:
+      type: "object"
+      properties:
+        endAt:
+          type: "string"
+          format: "date-time"
+          description: "End date and time of the availability (shown as ISO 8601 with\
+            \ offset)"
+          example: "2000-00-00T00:00:00.000+00:00"
+        startAt:
+          type: "string"
+          format: "date-time"
+          description: "Start date and time of the availability (shown as ISO 8601\
+            \ with offset)"
+          example: "2000-00-00T00:00:00.000+00:00"
+      required:
+      - "endAt"
+      - "startAt"
+      description: "Schedule availability provides the available blocks of time within\
+        \ a given schedule"
+    Schedule:
+      type: "object"
+      properties:
+        appointmentTypeId:
+          type:
+          - "string"
+          - "null"
+          format: "uuid"
+          description: "Appointment type ID"
+          example: "fb5f0949-875e-4a35-9719-5727f3179651"
+        practitionerId:
+          type:
+          - "string"
+          - "null"
+          format: "uuid"
+          description: "Practitioner ID"
+          example: "fb5f0949-875e-4a35-9719-5727f3179651"
+        availabilities:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/AvailabilitySchema"
+        endAt:
+          type: "string"
+          format: "date-time"
+          description: "End date and time of the schedule (shown as ISO 8601 with\
+            \ offset)"
+          example: "2000-01-01T00:00:00.000+00:00"
+        id:
+          type:
+          - "string"
+          - "null"
+          format: "uuid"
+          description: "Unique identifier for the schedule (this can be null too)"
+          example: "caceee93-8168-445f-942d-19f2c937852d"
+        siteId:
+          type:
+          - "string"
+          - "null"
+          format: "uuid"
+          description: "Site of service ID"
+          example: "fb5f0949-875e-4a35-9719-5727f3179651"
+        minutesDuration:
+          type: "integer"
+          minimum: 1
+          maximum: 9999
+          description: "Duration (in minutes) of the schedule"
+          example: 10
+        name:
+          type:
+          - "string"
+          - "null"
+          description: "Descriptive name of the schedule"
+          example: "Walk-ins"
+        startAt:
+          type: "string"
+          format: "date-time"
+          description: "The start date and time of the schedule (shown as ISO 8601\
+            \ with offset)"
+          example: "2000-01-01T00:00:00.000+00:00"
+      required:
+      - "appointmentTypeId"
+      - "practitionerId"
+      - "availabilities"
+      - "endAt"
+      - "id"
+      - "siteId"
+      - "minutesDuration"
+      - "name"
+      - "startAt"
+      description: "Schedules are created as a once off or recurring entity that allows\
+        \ users to organise a single practitioner's time and categorise appointments\
+        \ accordingly."
+    Tenant:
+      type: "object"
+      properties:
+        tenantId:
+          type: "string"
+          format: "uuid"
+          description: "The UUID of the Tenant."
+          example: "768e0295-33ce-45f3-ba5c-37587dcd4b30"
+        tenantAccess:
+          type: "string"
+          enum:
+          - "enabled"
+          - "disabled"
+          description: "Whether or not you are authorized to access the Tenant"
+          example: "enabled"
+      required:
+      - "tenantId"
+      - "tenantAccess"
+    PractitionerFilters:
+      type: "object"
+      properties:
+        contactType:
+          type: "string"
+          const: "practitioners"
+          description: "Filter to practitioner contacts only."
+        email:
+          description: "Filter by the practitioner's email address."
+          examples:
+          - "jane.smith@clinic.com.au"
+          type: "string"
+          format: "email"
+          pattern: "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\\
+            -]*\\.)+[A-Za-z]{2,}$"
+        firstName:
+          description: "Filter by the practitioner's first name."
+          examples:
+          - "Jane"
+          - "John"
+          type: "string"
+          minLength: 1
+        lastName:
+          description: "Filter by the practitioner's last name."
+          examples:
+          - "Smith"
+          - "Jones"
+          type: "string"
+          minLength: 1
+        mobilePhone:
+          description: "Filter by the practitioner's mobile phone number."
+          examples:
+          - "0412345678"
+          type: "string"
+          minLength: 1
+        providerNumber:
+          description: "Filter by the practitioner's Medicare provider number."
+          examples:
+          - "2123456A"
+          type: "string"
+        specialtyCode:
+          description: "Filter by the practitioner's Genie specialty code."
+          examples:
+          - "GP"
+          - "CARDIO"
+          type: "string"
+          minLength: 1
+        workPhone:
+          description: "Filter by the practitioner's work phone number."
+          examples:
+          - "0298765432"
+          type: "string"
+          minLength: 1
+      required:
+      - "contactType"
+      additionalProperties: false
+      examples:
+      - contactType: "practitioners"
+        lastName: "Smith"
+      - contactType: "practitioners"
+        providerNumber: "2123456A"
+      - contactType: "practitioners"
+        firstName: "Jane"
+        specialtyCode: "GP"
+    AccountHolderFilters:
+      type: "object"
+      properties:
+        contactType:
+          type: "string"
+          const: "account_holders"
+          description: "Filter to account holder contacts only."
+        birthDate:
+          description: "Filter by the account holder's date of birth (ISO 8601, YYYY-MM-DD)."
+          examples:
+          - "1985-03-15"
+          - "2000-12-01"
+          type: "string"
+          format: "date"
+          pattern: "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\\
+            d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\\
+            d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+        email:
+          description: "Filter by the account holder's email address."
+          examples:
+          - "patient@example.com"
+          type: "string"
+          format: "email"
+          pattern: "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\\
+            -]*\\.)+[A-Za-z]{2,}$"
+        entityType:
+          description: "Narrow results to a specific entity type (individual or business)."
+          type: "string"
+          enum:
+          - "business"
+          - "individual"
+        firstName:
+          description: "Filter by the account holder's first name."
+          examples:
+          - "Jane"
+          - "John"
+          type: "string"
+          minLength: 1
+        lastName:
+          description: "Filter by the account holder's last name."
+          examples:
+          - "Smith"
+          - "Jones"
+          type: "string"
+          minLength: 1
+        medicareNumber:
+          description: "Filter by the account holder's Medicare card number."
+          examples:
+          - "2123456701"
+          type: "string"
+        mobilePhone:
+          description: "Filter by the account holder's mobile phone number."
+          examples:
+          - "0412345678"
+          type: "string"
+          minLength: 1
+        workPhone:
+          description: "Filter by the account holder's work phone number."
+          examples:
+          - "0298765432"
+          type: "string"
+          minLength: 1
+      required:
+      - "contactType"
+      additionalProperties: false
+      examples:
+      - contactType: "account_holders"
+        lastName: "Jones"
+      - contactType: "account_holders"
+        lastName: "Jones"
+        birthDate: "1985-03-15"
+      - contactType: "account_holders"
+        medicareNumber: "2123456701"
+    HospitalFilters:
+      type: "object"
+      properties:
+        contactType:
+          type: "string"
+          const: "hospitals"
+          description: "Filter to hospital contacts only."
+        businessName:
+          description: "Filter by the hospital's business name."
+          examples:
+          - "Royal North Shore Hospital"
+          - "Westmead Hospital"
+          type: "string"
+          minLength: 1
+        email:
+          description: "Filter by the hospital's email address."
+          examples:
+          - "admin@rnsh.health.nsw.gov.au"
+          type: "string"
+          format: "email"
+          pattern: "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\\
+            -]*\\.)+[A-Za-z]{2,}$"
+        workPhone:
+          description: "Filter by the hospital's work phone number."
+          examples:
+          - "0299261111"
+          type: "string"
+          minLength: 1
+      required:
+      - "contactType"
+      additionalProperties: false
+      examples:
+      - contactType: "hospitals"
+        businessName: "Royal North Shore Hospital"
+      - contactType: "hospitals"
+        email: "admin@rnsh.health.nsw.gov.au"
+    GenericContactFilters:
+      type: "object"
+      properties:
+        contactType:
+          type: "string"
+          const: "generic_contacts"
+          description: "Filter to generic contacts only."
+        email:
+          description: "Filter by the contact's email address."
+          examples:
+          - "contact@example.com"
+          type: "string"
+          format: "email"
+          pattern: "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\\
+            -]*\\.)+[A-Za-z]{2,}$"
+        entityType:
+          description: "Narrow results to a specific entity type (individual or business)."
+          type: "string"
+          enum:
+          - "business"
+          - "individual"
+        firstName:
+          description: "Filter by the contact's first name."
+          examples:
+          - "Alex"
+          - "Jordan"
+          type: "string"
+          minLength: 1
+        lastName:
+          description: "Filter by the contact's last name."
+          examples:
+          - "Taylor"
+          - "Morgan"
+          type: "string"
+          minLength: 1
+        mobilePhone:
+          description: "Filter by the contact's mobile phone number."
+          examples:
+          - "0412345678"
+          type: "string"
+          minLength: 1
+        workPhone:
+          description: "Filter by the contact's work phone number."
+          examples:
+          - "0298765432"
+          type: "string"
+          minLength: 1
+      required:
+      - "contactType"
+      additionalProperties: false
+      examples:
+      - contactType: "generic_contacts"
+        email: "contact@example.com"
+      - contactType: "generic_contacts"
+        firstName: "Alex"
+        lastName: "Taylor"
+  parameters:
+    TenantIdParameter:
+      schema:
+        $ref: "#/components/schemas/TenantIdParameter"
+      required: true
+      in: "path"
+      name: "tenantId"
+      description: "The UUID of the Practice, also known as a Tenant."
+      example: "3aef91c0-ff22-47e6-942d-182cb65cbf20"
+      allowEmptyValue: false
+    PatientIdParameter:
+      schema:
+        $ref: "#/components/schemas/PatientIdParameter"
+      required: true
+      in: "path"
+      name: "patientId"
+      description: "The UUID of a patient."
+      example: "40027bce-841f-41de-9e06-a29864922558"
+      allowEmptyValue: false
+    PractitionerIdParameter:
+      schema:
+        $ref: "#/components/schemas/PractitionerIdParameter"
+      required: true
+      in: "path"
+      name: "practitionerId"
+      description: "The UUID of a practioner."
+      example: "40027bce-841f-41de-9e06-a29864922558"
+      allowEmptyValue: false
+    AttachmentIdParameter:
+      schema:
+        $ref: "#/components/schemas/AttachmentIdParameter"
+      required: true
+      in: "path"
+      name: "attachmentId"
+      description: "The UUID of identfying an attachment."
+      example: "3aef91c0-ff22-47e6-942d-182cb65cbf20"
+      allowEmptyValue: false
+    AppIdParameter:
+      schema:
+        $ref: "#/components/schemas/AppIdParameter"
+      required: true
+      in: "path"
+      name: "appId"
+      description: "The UUID of the app in Apigee"
+      example: "40027bce-841f-41de-9e06-a29864922558"
+      allowEmptyValue: false
+    PairingCodeParameter:
+      schema:
+        $ref: "#/components/schemas/PairingCodeParameter"
+      required: true
+      in: "path"
+      name: "pairingCode"
+      description: "A string of 8 characters"
+      example: "1234abcd"
+      allowEmptyValue: false
+    AppointmentIdParameter:
+      schema:
+        $ref: "#/components/schemas/AppointmentIdParameter"
+      required: true
+      in: "path"
+      name: "appointmentId"
+      description: "The UUID of an appointment."
+      example: "40027bce-841f-41de-9e06-a29864922558"
+      allowEmptyValue: false
+    ProcedureIdParameter:
+      schema:
+        $ref: "#/components/schemas/ProcedureIdParameter"
+      required: true
+      in: "path"
+      name: "procedureId"
+      description: "The UUID of a procedure."
+      example: "40027bce-841f-41de-9e06-a29864922558"
+      allowEmptyValue: false
+    ContactIdParameter:
+      schema:
+        $ref: "#/components/schemas/ContactIdParameter"
+      required: true
+      in: "path"
+      name: "contactId"
+      description: "The UUID of a contact."
+      example: "40027bce-841f-41de-9e06-a29864922558"
+      allowEmptyValue: false
+paths:
+  /v1/tenants/{tenantId}/patients/{patientId}/account-holders:
+    get:
+      security:
+      - OAuth2: []
+      description: "Retrieves account holders for a patient."
+      parameters:
+      - $ref: "#/components/parameters/TenantIdParameter"
+      - $ref: "#/components/parameters/PatientIdParameter"
+      x-apps-api:
+        lambdaName: "@lambdas/get-account-holders"
+      responses:
+        "200":
+          description: "Account holders successfully retrieved."
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  accountHolders:
+                    type: "array"
+                    items:
+                      $ref: "#/components/schemas/RelatedPerson"
+                required:
+                - "accountHolders"
+  /v1/tenants/{tenantId}:
+    get:
+      security:
+      - OAuth2: []
+      description: "Returns details of a tenant."
+      parameters:
+      - $ref: "#/components/parameters/TenantIdParameter"
+      x-apps-api:
+        lambdaName: "@lambdas/get-tenant-by-id"
+      responses:
+        "200":
+          description: "Returns details of a tenant."
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  tenantId:
+                    type: "string"
+                    format: "uuid"
+                    description: "The UUID of the Tenant"
+                    example: "d011246e-bc0b-4913-9742-5ad9dcb5ded2"
+                  tenantNumber:
+                    type:
+                    - "string"
+                    - "null"
+                    description: "The Gentu Tenant Number"
+                    example: "GTU0001"
+                  timezone:
+                    type:
+                    - "string"
+                    - "null"
+                    description: "The IANA timezone of the Tenant/Practice"
+                    example: "Australia/Melbourne"
+                  tenantName:
+                    type:
+                    - "string"
+                    - "null"
+                    description: "Human readable name of the Tenant"
+                    example: "Sacred Heart Hospital"
+                required:
+                - "tenantId"
+                - "tenantNumber"
+                - "timezone"
+                - "tenantName"
+  /v1/tenants/{tenantId}/patients/{patientId}/attachments/{attachmentId}:
+    get:
+      security:
+      - OAuth2: []
+      description: "Retrieves the metadata of an attachment."
+      parameters:
+      - $ref: "#/components/parameters/TenantIdParameter"
+      - $ref: "#/components/parameters/PatientIdParameter"
+      - $ref: "#/components/parameters/AttachmentIdParameter"
+      x-apps-api:
+        lambdaName: "@lambdas/get-read-attachment-metadata-by-id"
+      responses:
+        "200":
+          description: "Attachment metadata successfully retrieved."
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  status:
+                    type: "string"
+                    enum:
+                    - "accepted"
+                    - "scanned_infected"
+                    - "scanned_clean"
+                    - "failed"
+                    - "completed"
+                    description: "Status of the Attachment\n| Status | Meaning |\n\
+                      |-----------------|-----------------|\n| accepted | The file\
+                      \ has been accepted and is being processed before uploading\
+                      \ |\n| scanned_infected | The file is infected and has been\
+                      \ quarantined |\n| scanned_clean | The file is clean and has\
+                      \ been queued for upload |\n| failed | The file failed to upload\
+                      \ |\n| completed | The file uploaded successfully |"
+                    example: "failed"
+                  fileName:
+                    type: "string"
+                    description: "Name of the attachment."
+                    example: "test.pdf"
+                  setDate:
+                    type: "string"
+                    description: "The upload date to which the attachment is set during\
+                      \ upload."
+                    example: "2000-01-01T00:00:00.000+00:00"
+                  createdAt:
+                    type: "string"
+                    description: "The date the attachment was created."
+                    example: "2000-01-01T00:00:00.000+00:00"
+                  id:
+                    type: "string"
+                    format: "uuid"
+                    description: "The tracking ID of the uploaded attachment."
+                    example: "d24bbd9e-7699-4103-b981-e55df0f2225f"
+                required:
+                - "status"
+                - "fileName"
+                - "setDate"
+                - "createdAt"
+                - "id"
+                additionalProperties: false
+  /v1/tenants/{tenantId}/appointments/{appointmentId}:
+    patch:
+      security:
+      - OAuth2: []
+      description: "This endpoint updates an appointment. Currently, it supports only\
+        \ the following action\n| Action | Meaning |\n|-----------------|-----------------|\n\
+        | cancel | Change status of appointment to `cancelled` |"
+      parameters:
+      - $ref: "#/components/parameters/TenantIdParameter"
+      - $ref: "#/components/parameters/AppointmentIdParameter"
+      x-apps-api:
+        lambdaName: "@lambdas/patch-update-appointment"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAppointment"
+      responses:
+        "200":
+          description: "Appointment successfully updated."
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  id:
+                    type: "string"
+                    format: "uuid"
+                    description: "The UUID of the cancelled appointment."
+                required:
+                - "id"
+                description: "Response body for the appointment cancellation."
+                example:
+                  id: "123e4567-e89b-12d3-a456-426614174000"
+        "400":
+          description: "One or more fields failed validation"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  details:
+                    type: "array"
+                    items:
+                      type: "object"
+                      properties:
+                        validation:
+                          type: "string"
+                          description: "Data type on which the validation failed"
+                          example: "uuid"
+                        code:
+                          type: "string"
+                          description: "Error description"
+                          example: "invalid_string"
+                        message:
+                          type: "string"
+                          description: "Error message"
+                          example: "Invalid uuid"
+                        path:
+                          type: "array"
+                          items:
+                            anyOf:
+                            - type: "string"
+                            - type: "number"
+                          description: "Path to the field that failed validation"
+                          example:
+                          - "id"
+                      required:
+                      - "code"
+                      - "message"
+                      - "path"
+                    description: "List of validation errors"
+                    example:
+                    - validation: "uuid"
+                      code: "invalid_string"
+                      message: "Invalid uuid"
+                      path:
+                      - "id"
+                  message:
+                    type: "string"
+                    enum:
+                    - "Validation error"
+                    description: "Error message"
+                    example: "Validation error"
+                required:
+                - "details"
+                - "message"
+        "404":
+          description: "One of the provided IDs was not found"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  message:
+                    type: "string"
+                    description: "Error message"
+                    example: "Unable to find XYZ resource with id: {ID}"
+                required:
+                - "message"
+        "409":
+          description: "The appointment cannot be updated. It is in an invalid status"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  message:
+                    type: "string"
+                    description: "Error message"
+                    example: "Can only change the status of an appointment with status\
+                      \ 'none', 'confirmed' or 'in waiting room'"
+                required:
+                - "message"
+        "422":
+          description: "The appointment cannot be updated"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  message:
+                    type: "string"
+                    description: "Error message"
+                    example: "Unable to cancel an appointment that is in the past"
+                required:
+                - "message"
+    get:
+      security:
+      - OAuth2: []
+      description: "Retrieves an appointment by its id."
+      parameters:
+      - $ref: "#/components/parameters/TenantIdParameter"
+      - $ref: "#/components/parameters/AppointmentIdParameter"
+      x-apps-api:
+        lambdaName: "@lambdas/get-appointment-by-id"
+      responses:
+        "200":
+          description: "Appointment successfully retrieved."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Appointment"
+  /v1/tenants/{tenantId}/contacts/{contactId}:
+    patch:
+      security:
+      - OAuth2: []
+      description: "Update an existing contact for a tenant. Only individual Account\
+        \ Holder contacts are supported."
+      parameters:
+      - $ref: "#/components/parameters/TenantIdParameter"
+      - $ref: "#/components/parameters/ContactIdParameter"
+      x-apps-api:
+        lambdaName: "@lambdas/patch-update-contact"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: "object"
+                properties:
+                  address:
+                    type: "array"
+                    items:
+                      $ref: "#/components/schemas/ContactAddress"
+                  birthDate:
+                    type:
+                    - "string"
+                    - "null"
+                  contact:
+                    type: "array"
+                    items:
+                      allOf:
+                      - $ref: "#/components/schemas/ContactPoint"
+                      - type: "object"
+                        properties:
+                          use:
+                            type: "string"
+                            enum:
+                            - "home"
+                            - "work"
+                            - "mobile"
+                        additionalProperties: false
+                  contactType:
+                    type: "string"
+                    enum:
+                    - "AccountHolder"
+                  entityType:
+                    type: "string"
+                    enum:
+                    - "individual"
+                  holderType:
+                    type: "string"
+                    enum:
+                    - "contact"
+                    - "patient"
+                  identifier:
+                    type: "array"
+                    items:
+                      $ref: "#/components/schemas/ContactIdentifier"
+                  name:
+                    $ref: "#/components/schemas/ContactHumanName"
+                  primary:
+                    type: "boolean"
+                required:
+                - "contactType"
+                - "entityType"
+                additionalProperties: false
+      responses:
+        "200":
+          description: "The contact was successfully updated"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  id:
+                    type: "string"
+                    format: "uuid"
+                    description: "The UUID of the updated contact."
+                required:
+                - "id"
+  /v1/tenants/{tenantId}/patients/{patientId}:
+    patch:
+      security:
+      - OAuth2: []
+      description: "Update a patient\n- Additional content, such as emergency contacts\
+        \ and name components, is defined under the extension array. This aligns with\
+        \ the FHIR standard's concept of 'additional content defined by implementations.'\n\
+        - Emergency contact and associated fields, such as relationship, are added\
+        \ as a nested array under extensions.\n- Name components can be individually\
+        \ set via extension entries: 'firstname', 'middlename', 'maiden-name', and\
+        \ 'pronouns'. These may be used instead of name.given for first/middle names\
+        \ — the two modes are mutually exclusive per request.\n- To clear a name field,\
+        \ pass null as the valueString for 'firstname', 'middlename', 'maiden-name',\
+        \ or 'pronouns' extension entries.\n- We recommend fetching the patient resource\
+        \ first to get the current state of the patient before updating."
+      parameters:
+      - $ref: "#/components/parameters/TenantIdParameter"
+      - $ref: "#/components/parameters/PatientIdParameter"
+      x-apps-api:
+        lambdaName: "@lambdas/patch-update-patient"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: "object"
+              properties:
+                address:
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      city:
+                        type:
+                        - "string"
+                        - "null"
+                        description: "City or Suburb of the Address"
+                        example: "Brisbane | West End"
+                      line:
+                        type: "array"
+                        items:
+                          type: "string"
+                          description: "Street details of the Address. The first entry\
+                            \ is line 1 of the address. All remaining entries will\
+                            \ be joined into line 2"
+                          example: "100 Test St"
+                        maxItems: 2
+                      postalCode:
+                        type:
+                        - "string"
+                        - "null"
+                        description: "Postcode of the Address"
+                        example: "4000"
+                      state:
+                        type:
+                        - "string"
+                        - "null"
+                        enum:
+                        - "ACT"
+                        - "NSW"
+                        - "NT"
+                        - "QLD"
+                        - "SA"
+                        - "TAS"
+                        - "VIC"
+                        - "WA"
+                        description: "State of the Address"
+                        example: "QLD"
+                      use:
+                        type: "string"
+                        enum:
+                        - "home"
+                        description: "Name identifier (label) of this Address. Only\
+                          \ accept home for now"
+                        example: "home"
+                      type:
+                        type: "string"
+                        enum:
+                        - "postal"
+                        - "physical"
+                        description: "Type of the Address. postal | physical"
+                        example: "postal"
+                    required:
+                    - "use"
+                    - "type"
+                  minItems: 1
+                  description: "List of patient addresses."
+                gender:
+                  type:
+                  - "string"
+                  - "null"
+                  enum:
+                  - "female"
+                  - "male"
+                  - "unspecified"
+                  description: "Gender of the Patient"
+                  example: "male"
+                name:
+                  type: "object"
+                  properties:
+                    given:
+                      type:
+                      - "string"
+                      - "null"
+                      minLength: 2
+                      description: "NOTE: prefer using 'firstname' and 'middlename'\
+                        \ within 'extension' for more predictable control over name\
+                        \ fields. Given name/s, will be split in first and middle\
+                        \ names if present e.g. first name: `Joey` & middle name:\
+                        \ `Doe Boe`"
+                      example: "Joey Doe Boe"
+                    family:
+                      type: "string"
+                      minLength: 2
+                      description: "Family name of the patient"
+                      example: "Smith"
+                    prefix:
+                      type:
+                      - "string"
+                      - "null"
+                      description: "Prefix for name"
+                      example: "Mr"
+                contact:
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      system:
+                        type: "string"
+                        enum:
+                        - "email"
+                        - "phone"
+                        description: "Type of the Contact"
+                        example: "phone"
+                      use:
+                        type: "string"
+                        enum:
+                        - "home"
+                        - "work"
+                        - "mobile"
+                        description: "Purpose of this contact"
+                        example: "home"
+                      rank:
+                        type: "number"
+                        exclusiveMinimum: 0
+                        description: "Rank indicates what order the Contact should\
+                          \ be used in, the lowest number is the highest priority.\
+                          \ Must be a positive number."
+                        example: 1
+                      value:
+                        type:
+                        - "string"
+                        - "null"
+                        description: "Value of the Contact"
+                        example: "0412345678"
+                    required:
+                    - "system"
+                    - "use"
+                    - "rank"
+                    - "value"
+                  minItems: 1
+                  description: "List of patient contact details. Must be a combination\
+                    \ of email/home, phone/mobile, phone/work and phone/home"
+                identifier:
+                  type: "array"
+                  items:
+                    $ref: "#/components/schemas/Patient Identifier"
+                  description: "List of Patient Identifier(s), maximum of one per\
+                    \ identifier type may be specified, i.e. you can not specify two\
+                    \ Medicare Cards."
+                deceased:
+                  type: "object"
+                  properties:
+                    deceasedBoolean:
+                      type: "boolean"
+                      description: "Indicates if the Patient is deceased."
+                      example: true
+                    deceasedDateTime:
+                      type:
+                      - "string"
+                      - "null"
+                      description: "Date of death of the Patient."
+                      example: "2000-01-01"
+                  required:
+                  - "deceasedBoolean"
+                emailEnabled:
+                  type: "boolean"
+                  description: "Whether the patient has opted in to email contact."
+                  example: true
+                occupation:
+                  type:
+                  - "string"
+                  - "null"
+                  description: "Occupation of the Patient"
+                  example: "Doctor"
+                smsEnabled:
+                  type: "boolean"
+                  description: "Whether the patient has opted in to SMS contact."
+                  example: true
+                indigenousStatus:
+                  type:
+                  - "string"
+                  - "null"
+                  enum:
+                  - "aboriginal"
+                  - "torres_strait_islander"
+                  - "both"
+                  - "neither"
+                  - "declined"
+                  description: "Indigenous Status of the Patient"
+                  example: "aboriginal"
+                extension:
+                  type: "array"
+                  items:
+                    oneOf:
+                    - type: "object"
+                      properties:
+                        system:
+                          type: "string"
+                          enum:
+                          - "emergency-contacts"
+                        valueArray:
+                          type: "array"
+                          items:
+                            anyOf:
+                            - $ref: "#/components/schemas/Emergency Contact"
+                            - allOf:
+                              - $ref: "#/components/schemas/Emergency Contact"
+                              - properties:
+                                  id:
+                                    type: "string"
+                                    format: "uuid"
+                                  relationship:
+                                    type: "array"
+                                    items:
+                                      type: "object"
+                                      properties:
+                                        coding:
+                                          type: "array"
+                                          items:
+                                            type: "object"
+                                            properties:
+                                              code:
+                                                type: "string"
+                                                enum:
+                                                - "C"
+                                                - "N"
+                                                description: "Symbol in syntax defined\
+                                                  \ by the system"
+                                                example: "C"
+                                              display:
+                                                type: "string"
+                                                description: "Representation defined\
+                                                  \ by the system"
+                                                example: "Emergency Contact"
+                                            required:
+                                            - "code"
+                                        text:
+                                          type: "string"
+                                          description: "Text representation of the\
+                                            \ relationship to the patient"
+                                          example: "grandparent"
+                                      required:
+                                      - "coding"
+                                    description: "The kind of relationship to patient\n\
+                                      | Coding | Text | Definition |\n| -------- |\
+                                      \ ----------- | --------------- |\n| [{'code':\
+                                      \ 'C'}] | 'grandparent' | Emergency Contact\
+                                      \ who is a grandparent |\n| [{'code':'C'}, {'code':\
+                                      \ 'N'}] | 'daughter' | Emergency Contact who\
+                                      \ is Next of Kin and a daughter |\n\nThe following\
+                                      \ values are suggested:\nAunt, Brother, Child,\
+                                      \ Cousin, Daughter, Dependent, Father, Grandchild,\
+                                      \ Grandfather, Grandmother, Grandparent, Guardian,\
+                                      \ Husband, Mother, Nephew, Niece, Parent, Partner,\
+                                      \ Sibling, Sister, Son, Spouse, Uncle, Wife."
+                                    example:
+                                    - coding:
+                                      - code: "C"
+                                      - code: "N"
+                                      text: "daughter"
+                                  name:
+                                    type: "object"
+                                    properties:
+                                      given:
+                                        type: "string"
+                                        minLength: 2
+                                        description: "Given name/s, they will be split\
+                                          \ in first and middle names if present e.g.\
+                                          \ first name: `Joey` & middle name: `Doe\
+                                          \ Boe`"
+                                        example: "Joey Doe Boe"
+                                      family:
+                                        type:
+                                        - "string"
+                                        - "null"
+                                        minLength: 2
+                                        description: "Family name of the contact"
+                                        example: "Smith"
+                                  telecom:
+                                    type: "array"
+                                    items:
+                                      type: "object"
+                                      properties:
+                                        system:
+                                          type: "string"
+                                          enum:
+                                          - "phone"
+                                        use:
+                                          type: "string"
+                                          enum:
+                                          - "mobile"
+                                        rank:
+                                          type: "number"
+                                          exclusiveMinimum: 0
+                                          description: "Rank indicates what order\
+                                            \ the Contact should be used in, the lowest\
+                                            \ number is the highest priority. Must\
+                                            \ be a positive number."
+                                          example: 1
+                                        value:
+                                          type:
+                                          - "string"
+                                          - "null"
+                                          description: "Value of the Contact"
+                                          example: "0412345678"
+                                      required:
+                                      - "system"
+                                      - "use"
+                                      - "rank"
+                                      - "value"
+                                required:
+                                - "id"
+                                - "name"
+                          description: "A contact party (e.g. guardian, partner, friend)\
+                            \ for the patient. Use ID as key for this array."
+                      required:
+                      - "system"
+                      - "valueArray"
+                    - type: "object"
+                      properties:
+                        system:
+                          type: "string"
+                          enum:
+                          - "firstname"
+                        valueString:
+                          type:
+                          - "string"
+                          - "null"
+                          minLength: 1
+                          description: "Patient's first name. Pass null to clear."
+                          example: "Joey"
+                      required:
+                      - "system"
+                      - "valueString"
+                    - type: "object"
+                      properties:
+                        system:
+                          type: "string"
+                          enum:
+                          - "maiden-name"
+                        valueString:
+                          type:
+                          - "string"
+                          - "null"
+                          minLength: 1
+                          description: "Patient's maiden name. Pass null to clear."
+                          example: "Johnson"
+                      required:
+                      - "system"
+                      - "valueString"
+                    - type: "object"
+                      properties:
+                        system:
+                          type: "string"
+                          enum:
+                          - "middlename"
+                        valueString:
+                          type:
+                          - "string"
+                          - "null"
+                          minLength: 1
+                          description: "Patient's middle name. Pass null to clear."
+                          example: "Michael"
+                      required:
+                      - "system"
+                      - "valueString"
+                    - type: "object"
+                      properties:
+                        system:
+                          type: "string"
+                          enum:
+                          - "pronouns"
+                        valueString:
+                          type:
+                          - "string"
+                          - "null"
+                          enum:
+                          - "any"
+                          - "he/him"
+                          - "he/they"
+                          - "she/her"
+                          - "she/they"
+                          - "they/them"
+                          description: "Patient's pronouns. Pass null to clear."
+                          example: "he/him"
+                      required:
+                      - "system"
+                      - "valueString"
+                  description: "Additional patient fields. Use 'firstname' (required\
+                    \ when using extension-based naming) and optionally 'middlename'\
+                    \ to set individual name fields — mutually exclusive with name.given.\
+                    \ Pass null for any of 'firstname', 'middlename', 'maiden-name',\
+                    \ or 'pronouns' valueString to clear those fields. Use 'emergency-contacts'\
+                    \ to update emergency contacts."
+      responses:
+        "200":
+          description: "Patient successfully updated."
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  id:
+                    type: "string"
+                    format: "uuid"
+                    description: "ID of the updated patient"
+                    example: "d24bbd9e-7699-4103-b981-e55df0f2225f"
+                required:
+                - "id"
+        "400":
+          description: "One or more fields failed validation"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  details:
+                    type: "array"
+                    items:
+                      type: "object"
+                      properties:
+                        validation:
+                          type: "string"
+                          description: "Data type on which the validation failed"
+                          example: "uuid"
+                        code:
+                          type: "string"
+                          description: "Error description"
+                          example: "invalid_string"
+                        message:
+                          type: "string"
+                          description: "Error message"
+                          example: "Invalid uuid"
+                        path:
+                          type: "array"
+                          items:
+                            anyOf:
+                            - type: "string"
+                            - type: "number"
+                          description: "Path to the field that failed validation"
+                          example:
+                          - "id"
+                      required:
+                      - "code"
+                      - "message"
+                      - "path"
+                    description: "List of validation errors"
+                    example:
+                    - validation: "uuid"
+                      code: "invalid_string"
+                      message: "Invalid uuid"
+                      path:
+                      - "id"
+                  message:
+                    type: "string"
+                    enum:
+                    - "Validation error"
+                    description: "Error message"
+                    example: "Validation error"
+                required:
+                - "details"
+                - "message"
+        "404":
+          description: "One of the provided IDs was not found"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  message:
+                    type: "string"
+                    description: "Error message"
+                    example: "Unable to find XYZ resource with id: {ID}"
+                required:
+                - "message"
+    get:
+      security:
+      - OAuth2: []
+      description: "Retrieves a patient by its ID."
+      parameters:
+      - $ref: "#/components/parameters/TenantIdParameter"
+      - $ref: "#/components/parameters/PatientIdParameter"
+      x-apps-api:
+        lambdaName: "@lambdas/get-patients-by-id"
+      responses:
+        "200":
+          description: "Patient successfully retrieved."
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: "#/components/schemas/Patient"
+                - required:
+                  - "id"
+                  - "address"
+                  - "birthDate"
+                  - "contact"
+                  - "gender"
+                  - "identifier"
+                  - "name"
+                  - "deceased"
+                  - "occupation"
+                  - "indigenousStatus"
+                  - "chartNumber"
+                  - "emailEnabled"
+                  - "smsEnabled"
+                  - "extension"
+  /v1/tenants/{tenantId}/appointments:
+    post:
+      security:
+      - OAuth2: []
+      description: "Create an Appointment."
+      parameters: []
+      x-apps-api:
+        lambdaName: "@lambdas/post-appointments"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: "object"
+              properties:
+                appointmentTypeId:
+                  type: "string"
+                  format: "uuid"
+                  description: "Appointment Type ID of the appointment."
+                  example: "0adac388-a637-474d-8a77-eaaa01158c1e"
+                duration:
+                  type: "integer"
+                  minimum: 0
+                  description: "Duration of the appointment in minutes."
+                  example: 15
+                notes:
+                  type: "string"
+                patientId:
+                  type: "string"
+                  format: "uuid"
+                  description: "Patient ID for the Patient attending the appointment."
+                  example: "d3acc047-aa03-428f-8cc7-55fc7cfc1d5b"
+                practitionerId:
+                  type: "string"
+                  format: "uuid"
+                  description: "Practitioner ID whom the appointment is with."
+                  example: "b3c7c80d-7148-4ff5-90f1-438a9be8d279"
+                siteOfServiceId:
+                  type: "string"
+                  format: "uuid"
+                  description: "Site of Service ID of the appointment."
+                  example: "fb5f0949-875e-4a35-9719-5727f3179651"
+                startsAt:
+                  type: "string"
+                  format: "date-time"
+                  description: "Start time for the appointment"
+                  example: "2000-01-01T00:00:00.000+10:00"
+                status:
+                  type: "string"
+                  enum:
+                  - "none"
+                  - "confirmed"
+                  - "completed"
+                  - "in_waiting_room"
+                  - "with_doctor"
+                  - "invoiced"
+                  - "cancelled"
+                  - "did_not_arrive"
+                  default: "none"
+                  description: "Status of the appointment.\n\n### Guidelines\n\n1.\
+                    \ **None**: No appointment status has been assigned yet. Default\
+                    \ applied when appointment created. All new appointments should\
+                    \ be created as None.\n\n2. **Confirmed**: The appointment has\
+                    \ been confirmed by the patient or by the practice on behalf of\
+                    \ the patient.\n\n3. **Completed**: The appointment has taken\
+                    \ place, and the patient has been seen by the healthcare provider.\n\
+                    \n4. **In Waiting Room**: The patient has arrived at the clinic\
+                    \ or tele-health waiting room and is waiting to be seen.\n\n5.\
+                    \ **With Doctor**: The patient is currently with the healthcare\
+                    \ provider for their consultation.\n\n6. **Invoiced**: The appointment\
+                    \ has been completed, and an invoice has been generated for the\
+                    \ services provided.\n\n7. **Cancelled**: The appointment has\
+                    \ been cancelled by either the patient or the clinic on behalf\
+                    \ of the patient.\n\n8. **Did Not Arrive**: The patient did not\
+                    \ show up for the scheduled appointment."
+                  example: "confirmed"
+              required:
+              - "appointmentTypeId"
+              - "duration"
+              - "patientId"
+              - "practitionerId"
+              - "startsAt"
+              - "status"
+      responses:
+        "201":
+          description: "Appointment successfully created."
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  id:
+                    type: "string"
+                    format: "uuid"
+                    description: "ID of the appointment."
+                    example: "8555907e-540e-4315-8f01-a6912a75125c"
+                required:
+                - "id"
+  /v1/tenants/{tenantId}/contacts:
+    post:
+      security:
+      - OAuth2: []
+      description: "Create a new contact in the address book"
+      parameters:
+      - $ref: "#/components/parameters/TenantIdParameter"
+      x-apps-api:
+        lambdaName: "@lambdas/post-create-contact"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: "object"
+                properties:
+                  address:
+                    type: "array"
+                    items:
+                      $ref: "#/components/schemas/Address"
+                  contact:
+                    type: "array"
+                    items:
+                      type: "object"
+                      properties:
+                        rank:
+                          type: "number"
+                          exclusiveMinimum: 0
+                        system:
+                          type: "string"
+                          enum:
+                          - "phone"
+                          - "fax"
+                          - "email"
+                          - "pager"
+                          - "sms"
+                          - "other"
+                          - "url"
+                        use:
+                          type: "string"
+                          enum:
+                          - "home"
+                          - "work"
+                          - "mobile"
+                        value:
+                          type: "string"
+                      required:
+                      - "system"
+                      - "value"
+                      additionalProperties: false
+                  holderType:
+                    type: "string"
+                    enum:
+                    - "contact"
+                    - "patient"
+                  id:
+                    type: "string"
+                    format: "uuid"
+                  primary:
+                    type: "boolean"
+                  birthDate:
+                    type:
+                    - "string"
+                    - "null"
+                  contactType:
+                    type: "string"
+                    enum:
+                    - "AccountHolder"
+                  entityType:
+                    type: "string"
+                    enum:
+                    - "business"
+                    - "individual"
+                  identifier:
+                    type: "array"
+                    items:
+                      allOf:
+                      - $ref: "#/components/schemas/Identifier"
+                      - type: "object"
+                        properties:
+                          type:
+                            type: "string"
+                            enum:
+                            - "mc"
+                          value:
+                            type: "string"
+                        required:
+                        - "value"
+                        additionalProperties: false
+                  name:
+                    type: "object"
+                    properties:
+                      family:
+                        type:
+                        - "string"
+                        - "null"
+                      given:
+                        type:
+                        - "string"
+                        - "null"
+                      prefix:
+                        type:
+                        - "string"
+                        - "null"
+                      text:
+                        type:
+                        - "string"
+                        - "null"
+                    additionalProperties: false
+                required:
+                - "contactType"
+                - "entityType"
+                additionalProperties: false
+              - type: "object"
+                properties:
+                  address:
+                    type: "array"
+                    items:
+                      $ref: "#/components/schemas/Address"
+                  contact:
+                    type: "array"
+                    items:
+                      type: "object"
+                      properties:
+                        rank:
+                          type: "number"
+                          exclusiveMinimum: 0
+                        system:
+                          type: "string"
+                          enum:
+                          - "phone"
+                          - "fax"
+                          - "email"
+                          - "pager"
+                          - "sms"
+                          - "other"
+                          - "url"
+                        use:
+                          type: "string"
+                          enum:
+                          - "home"
+                          - "work"
+                          - "mobile"
+                        value:
+                          type: "string"
+                      required:
+                      - "system"
+                      - "value"
+                      additionalProperties: false
+                  holderType:
+                    type: "string"
+                    enum:
+                    - "contact"
+                    - "patient"
+                  id:
+                    type: "string"
+                    format: "uuid"
+                  primary:
+                    type: "boolean"
+                  contactType:
+                    type: "string"
+                    enum:
+                    - "GenericContact"
+                  entityType:
+                    type: "string"
+                    enum:
+                    - "business"
+                    - "individual"
+                  name:
+                    type: "object"
+                    properties:
+                      family:
+                        type:
+                        - "string"
+                        - "null"
+                      given:
+                        type:
+                        - "string"
+                        - "null"
+                      prefix:
+                        type:
+                        - "string"
+                        - "null"
+                      text:
+                        type:
+                        - "string"
+                        - "null"
+                    additionalProperties: false
+                required:
+                - "contactType"
+                - "entityType"
+                additionalProperties: false
+              - type: "object"
+                properties:
+                  address:
+                    type: "array"
+                    items:
+                      $ref: "#/components/schemas/Address"
+                  contact:
+                    type: "array"
+                    items:
+                      type: "object"
+                      properties:
+                        rank:
+                          type: "number"
+                          exclusiveMinimum: 0
+                        system:
+                          type: "string"
+                          enum:
+                          - "phone"
+                          - "fax"
+                          - "email"
+                          - "pager"
+                          - "sms"
+                          - "other"
+                          - "url"
+                        use:
+                          type: "string"
+                          enum:
+                          - "home"
+                          - "work"
+                          - "mobile"
+                        value:
+                          type: "string"
+                      required:
+                      - "system"
+                      - "value"
+                      additionalProperties: false
+                  holderType:
+                    type: "string"
+                    enum:
+                    - "contact"
+                    - "patient"
+                  id:
+                    type: "string"
+                    format: "uuid"
+                  primary:
+                    type: "boolean"
+                  businessPerformsProcedure:
+                    type: "boolean"
+                  contactMethod:
+                    type:
+                    - "string"
+                    - "null"
+                    enum:
+                    - "fax"
+                    - "mail"
+                  contactType:
+                    type: "string"
+                    enum:
+                    - "Hospital"
+                  entityType:
+                    type: "string"
+                    enum:
+                    - "business"
+                  facilityId:
+                    type: "string"
+                  name:
+                    $ref: "#/components/schemas/HospitalName"
+                  website:
+                    type:
+                    - "string"
+                    - "null"
+                    format: "uri"
+                required:
+                - "contactType"
+                - "entityType"
+                - "name"
+                additionalProperties: false
+              - type: "object"
+                properties:
+                  address:
+                    type: "array"
+                    items:
+                      $ref: "#/components/schemas/Address"
+                  contact:
+                    type: "array"
+                    items:
+                      type: "object"
+                      properties:
+                        rank:
+                          type: "number"
+                          exclusiveMinimum: 0
+                        system:
+                          type: "string"
+                          enum:
+                          - "phone"
+                          - "fax"
+                          - "email"
+                          - "pager"
+                          - "sms"
+                          - "other"
+                          - "url"
+                        use:
+                          type: "string"
+                          enum:
+                          - "home"
+                          - "work"
+                          - "mobile"
+                        value:
+                          type: "string"
+                      required:
+                      - "system"
+                      - "value"
+                      additionalProperties: false
+                  holderType:
+                    type: "string"
+                    enum:
+                    - "contact"
+                    - "patient"
+                  id:
+                    type: "string"
+                    format: "uuid"
+                  primary:
+                    type: "boolean"
+                  assistant:
+                    type:
+                    - "boolean"
+                    - "null"
+                  contactMethod:
+                    type: "string"
+                    enum:
+                    - "email"
+                    - "fax"
+                    - "healthlink"
+                    - "mail"
+                    - "medical_objects"
+                  contactType:
+                    type: "string"
+                    enum:
+                    - "Practitioner"
+                  entityType:
+                    type: "string"
+                    enum:
+                    - "individual"
+                  healthlink:
+                    type:
+                    - "string"
+                    - "null"
+                  medicalObjects:
+                    type:
+                    - "string"
+                    - "null"
+                  name:
+                    type: "object"
+                    properties:
+                      family:
+                        type: "string"
+                      given:
+                        type: "string"
+                      prefix:
+                        type:
+                        - "string"
+                        - "null"
+                      text:
+                        type:
+                        - "string"
+                        - "null"
+                    required:
+                    - "family"
+                    - "given"
+                    additionalProperties: false
+                  providerNumber:
+                    type: "string"
+                  specialtyCode:
+                    type: "string"
+                required:
+                - "contactType"
+                - "entityType"
+                - "name"
+                additionalProperties: false
+      responses:
+        "201":
+          description: "Contact created successfully."
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  id:
+                    type: "string"
+                    format: "uuid"
+                    description: "ID of the Contact created"
+                    example: "ce64c193-ec3c-4872-b940-1fc5ccb8826b"
+                required:
+                - "id"
+  /v1/tenants/{tenantId}/patients:
+    post:
+      security:
+      - OAuth2: []
+      description: "Create a new patient\n- Patient names can be provided via name.given\
+        \ (combined) or via extension entries (individually). These modes are mutually\
+        \ exclusive — do not mix name.given with firstname/middlename extensions in\
+        \ the same request.\n- Extension-based naming: 'firstname' is required; 'middlename'\
+        \ is optional. Providing name.given alongside either extension entry will\
+        \ fail validation.\n- Additional name fields supported via extension: 'maiden-name'\
+        \ and 'pronouns'."
+      parameters:
+      - $ref: "#/components/parameters/TenantIdParameter"
+      x-apps-api:
+        lambdaName: "@lambdas/post-create-patient"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: "object"
+              properties:
+                address:
+                  type: "array"
+                  items:
+                    allOf:
+                    - $ref: "#/components/schemas/Address"
+                    - properties:
+                        city:
+                          type:
+                          - "string"
+                          - "null"
+                          description: "City or Suburb of the Address"
+                          example: "Brisbane | West End"
+                        line:
+                          type: "array"
+                          items:
+                            type:
+                            - "string"
+                            - "null"
+                            description: "Street details of the Address. The first\
+                              \ entry is line 1 of the address. All remaining entries\
+                              \ will be joined into line 2"
+                            example: "100 Test St"
+                        postalCode:
+                          type:
+                          - "string"
+                          - "null"
+                          description: "Postcode of the Address"
+                          example: "4000"
+                        state:
+                          type:
+                          - "string"
+                          - "null"
+                          enum:
+                          - "ACT"
+                          - "NSW"
+                          - "NT"
+                          - "QLD"
+                          - "SA"
+                          - "TAS"
+                          - "VIC"
+                          - "WA"
+                          description: "State of the Address"
+                          example: "QLD"
+                        use:
+                          type: "string"
+                          enum:
+                          - "home"
+                          - "work"
+                          description: "Name identifier (label) of this Address. Only\
+                            \ accept home for now"
+                          example: "home"
+                        type:
+                          type: "string"
+                          enum:
+                          - "postal"
+                          - "physical"
+                          - "both"
+                          description: "Type of the Address. postal | physical | both"
+                          example: "postal"
+                birthDate:
+                  type: "string"
+                  description: "Date of birth of the Patient being created."
+                  example: "2000-01-01"
+                contact:
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      system:
+                        type: "string"
+                        enum:
+                        - "email"
+                        - "phone"
+                        description: "Type of the Contact"
+                        example: "phone"
+                      use:
+                        type: "string"
+                        enum:
+                        - "home"
+                        - "work"
+                        - "mobile"
+                        description: "Use of the Contact"
+                        example: "home"
+                      rank:
+                        type: "number"
+                        exclusiveMinimum: 0
+                        description: "Rank indicates what order the Contact should\
+                          \ be used in, the lowest number is the highest priority.\
+                          \ Must be a positive number."
+                        example: 1
+                      value:
+                        type: "string"
+                        description: "Value of the Contact"
+                        example: "0412345678"
+                    required:
+                    - "system"
+                    - "use"
+                    - "rank"
+                    - "value"
+                  minItems: 1
+                  description: "Atleast one of mobile or email should be provided"
+                gender:
+                  type: "string"
+                  enum:
+                  - "female"
+                  - "male"
+                  - "unspecified"
+                  description: "Gender of the Patient"
+                  example: "male"
+                identifier:
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      value:
+                        type: "string"
+                        description: "Actual identifier info"
+                        example: "8003608833357360"
+                      type:
+                        type: "string"
+                        enum:
+                        - "mc"
+                        - "pen"
+                        - "dvau"
+                        - "dvg"
+                        - "dvo"
+                        - "dvw"
+                        - "hc"
+                        - "mb"
+                        description: "| Value | Definition |\n|-------|------------|\n\
+                          | mc    | Medicare Card - currently supports only Medicare\
+                          \ |"
+                        example: "mc"
+                      system:
+                        type: "string"
+                        description: "| Type | System |\n|-------|------------|\n\
+                          | mc | https://developer.digitalhealth.gov.au/namespaces/id/medicare-number/index.html\
+                          \  |"
+                        example: "https://developer.digitalhealth.gov.au/namespaces/id/medicare-number/index.html"
+                      period:
+                        type: "object"
+                        properties:
+                          end:
+                            type: "string"
+                            description: "Expiry date of the identifier, please enter\
+                              \ `01` as the day if unknown. Date must not be in the\
+                              \ past."
+                            example: "2000-01-01"
+                        required:
+                        - "end"
+                    required:
+                    - "value"
+                    - "type"
+                    - "system"
+                    - "period"
+                  description: "List of identifiers for the patient, currently supports\
+                    \ only medicare"
+                extension:
+                  type: "array"
+                  items:
+                    oneOf:
+                    - type: "object"
+                      properties:
+                        system:
+                          type: "string"
+                          enum:
+                          - "firstname"
+                        valueString:
+                          type: "string"
+                          minLength: 1
+                          description: "Patient's first name"
+                          example: "Joey"
+                      required:
+                      - "system"
+                      - "valueString"
+                    - type: "object"
+                      properties:
+                        system:
+                          type: "string"
+                          enum:
+                          - "maiden-name"
+                        valueString:
+                          type: "string"
+                          minLength: 1
+                          description: "Patient's maiden name"
+                          example: "Johnson"
+                      required:
+                      - "system"
+                      - "valueString"
+                    - type: "object"
+                      properties:
+                        system:
+                          type: "string"
+                          enum:
+                          - "middlename"
+                        valueString:
+                          type: "string"
+                          minLength: 1
+                          description: "Patient's middle name"
+                          example: "Michael"
+                      required:
+                      - "system"
+                      - "valueString"
+                    - type: "object"
+                      properties:
+                        system:
+                          type: "string"
+                          enum:
+                          - "pronouns"
+                        valueString:
+                          type: "string"
+                          enum:
+                          - "any"
+                          - "he/him"
+                          - "he/they"
+                          - "she/her"
+                          - "she/they"
+                          - "they/them"
+                          description: "Patient's pronouns"
+                          example: "he/him"
+                      required:
+                      - "system"
+                      - "valueString"
+                  description: "Additional patient name fields. Use 'firstname' (required\
+                    \ when using extension-based naming) and optionally 'middlename'\
+                    \ to set name fields individually instead of name.given. Also\
+                    \ supports 'maiden-name' and 'pronouns'."
+                name:
+                  type: "object"
+                  properties:
+                    family:
+                      type: "string"
+                      description: "Family name"
+                      example: "Tribbiani"
+                    given:
+                      type: "string"
+                      description: "NOTE: prefer using 'firstname' and 'middlename'\
+                        \ within 'extension' for more predictable control over name\
+                        \ fields. Given name/s, will be split in first and middle\
+                        \ names if present e.g. first name: `Joey` & middle name:\
+                        \ `Doe Boe`"
+                      example: "Joey Doe Boe"
+                    prefix:
+                      type: "string"
+                      description: "Prefix for name"
+                      example: "Mr"
+                  required:
+                  - "family"
+                  description: "Name of the patient"
+                deceased:
+                  type: "object"
+                  properties:
+                    deceasedBoolean:
+                      type: "boolean"
+                      description: "Indicates if the Patient is deceased."
+                      example: true
+                    deceasedDateTime:
+                      type: "string"
+                      format: "date-time"
+                      description: "Date and time of death of the Patient."
+                      example: "2000-01-01T00:00:00.000+00:00+10:00"
+                  required:
+                  - "deceasedBoolean"
+                occupation:
+                  type: "string"
+                  description: "Occupation of the Patient"
+                  example: "Doctor"
+                indigenousStatus:
+                  type: "string"
+                  enum:
+                  - "aboriginal"
+                  - "torres_strait_islander"
+                  - "both"
+                  - "neither"
+                  - "declined"
+                  description: "Indigenous Status of the Patient"
+                  example: "aboriginal"
+              required:
+              - "birthDate"
+              - "contact"
+              - "name"
+      responses:
+        "201":
+          description: "Patient created successfully."
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  id:
+                    type: "string"
+                    format: "uuid"
+                    description: "ID of the Patient created"
+                    example: "ce64c193-ec3c-4872-b940-1fc5ccb8826b"
+                required:
+                - "id"
+  /v1/tenants/{tenantId}/patients/{patientId}/incoming-correspondence:
+    post:
+      security:
+      - OAuth2: []
+      description: "Creates an incoming correspondence with attachments.\n\n Incoming\
+        \ correspondence is a central ‘inbox’ to receive any written communication\
+        \ received by the practice, such as referral letters or updates from other\
+        \ healthcare providers. This information is typically triaged, reviewed and\
+        \ added to the patient's file (if not already done automatically) for reference\
+        \ and follow-up."
+      parameters:
+      - $ref: "#/components/parameters/TenantIdParameter"
+      - $ref: "#/components/parameters/PatientIdParameter"
+      - schema:
+          type: "string"
+          format: "uuid"
+          description: "Provide practitioner id. Practitioner must be a billing provider."
+          example: "b3c7c80d-7148-4ff5-90f1-438a9be8d279"
+        required: false
+        name: "practitionerId"
+        in: "query"
+      - schema:
+          type: "string"
+          maxLength: 100
+          description: "Name and title of the person sending referral. This is displayed\
+            \ in Gentu UI."
+          example: "Dr. Strange Cow"
+        required: false
+        name: "referringProviderName"
+        in: "query"
+      x-apps-api:
+        lambdaName: "@lambdas/post-create-incoming-correspondence"
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: "string"
+              minLength: 1
+              description: "Attach your files here. The files must be in one of the\
+                \ `jpeg|jpg`, `png` or `pdf`. Combined size of the files should not\
+                \ exceed 4MB.\n\nProvide file name with extension.\n\n\n\n**Important:\
+                \ The name field in the metadata should always include the file extension.**"
+              example: "test report.pdf"
+      responses:
+        "200":
+          description: "Incoming correspondence accepted and is being processed. It\
+            \ is an asynchronous operation. Check the status of the operation using\
+            \ the attatchment status endpoint (/tenants/{tenantId}/patients/{patientId}/attachments/{attachmentId})."
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  id:
+                    type: "string"
+                    format: "uuid"
+                    description: "Incoming Correspondence ID"
+                    example: "d24bbd9e-7699-4103-b981-e55df0f2225f"
+                required:
+                - "id"
+  /v1/tenants/{tenantId}/patients/list:
+    post:
+      security:
+      - OAuth2: []
+      description: "Retrieves a list of Patients.\n\nTo query for a list of Patients\
+        \ you must provide at least 1 filter, additionally we have implemented sparse\
+        \ fields and require that you specify what fields you require access to in\
+        \ the returned Patient objects.\n\nThis is a non-standard REST List (or Index)\
+        \ endpoint, it lives on the POST method and uses a request body instead of\
+        \ GET with query string parameters. This helps to protect against unwanted\
+        \ or unintended logging of PHI which would otherwise be passed as query string\
+        \ parameters. "
+      parameters: []
+      x-apps-api:
+        lambdaName: "@lambdas/post-list-patients"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: "object"
+              properties:
+                fields:
+                  type: "array"
+                  items:
+                    type: "string"
+                    enum:
+                    - "address"
+                    - "birthDate"
+                    - "contact"
+                    - "deceased"
+                    - "extension"
+                    - "gender"
+                    - "identifier"
+                    - "indigenousStatus"
+                    - "name"
+                    - "occupation"
+                  description: "A list of the top level fields of the Patient object\
+                    \ to include for each resource, by default \"id\" is always included.\
+                    \ Any fields not provided will not be returned in the resources\
+                    \ returned."
+                  example:
+                  - "address"
+                  - "name"
+                filters:
+                  type: "object"
+                  properties:
+                    birthDate:
+                      type: "string"
+                    email:
+                      type: "string"
+                      format: "email"
+                    familyName:
+                      type: "string"
+                      minLength: 1
+                    firstName:
+                      type: "string"
+                      minLength: 1
+                    gender:
+                      type: "string"
+                      enum:
+                      - "female"
+                      - "male"
+                      - "unspecified"
+                    medicareCardNumber:
+                      type: "string"
+                    middleName:
+                      type: "string"
+                      minLength: 1
+                    mobilePhone:
+                      type: "string"
+                  additionalProperties: false
+                  description: "A list of filters, you must provide at least one of:\
+                    \ \"birthDate\", \"email\", \"familyName\", \"medicareCardNumber\"\
+                    , \"mobilePhone\", in addition to any others."
+                  example:
+                    email: "patient@practice.com"
+                pagination:
+                  type: "object"
+                  properties:
+                    cursor:
+                      type: "string"
+                      description: "Resource to start at."
+                      example: "WyIyMDI2LTA1LTI2VDA5OjUwOjEyLjE4NTk2MysxMDowMCIsIjhjMGIyZmI0LTA3OTgtNGFiMC1hYjJiLWFkNTMxOTJiYTVlNCJd"
+                    limit:
+                      type: "integer"
+                      minimum: 5
+                      maximum: 100
+                      description: "Number of Patients to retrieve per page."
+                      example: 5
+                  required:
+                  - "limit"
+                  additionalProperties: false
+              required:
+              - "filters"
+              - "pagination"
+              additionalProperties: false
+      responses:
+        "200":
+          description: "Patients successfully retrieved."
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  pagination:
+                    type: "object"
+                    properties:
+                      limit:
+                        type: "integer"
+                        minimum: 5
+                        maximum: 100
+                      next:
+                        type:
+                        - "string"
+                        - "null"
+                      previous:
+                        type:
+                        - "string"
+                        - "null"
+                      total:
+                        type: "integer"
+                        minimum: 0
+                    required:
+                    - "limit"
+                    - "next"
+                    - "previous"
+                    - "total"
+                    additionalProperties: false
+                  patients:
+                    type: "array"
+                    items:
+                      $ref: "#/components/schemas/Patient"
+                required:
+                - "pagination"
+                - "patients"
+                additionalProperties: false
+  /v1/tenants/{tenantId}/appointment-types:
+    get:
+      security:
+      - OAuth2: []
+      description: "Returns a list of Appointment Types."
+      parameters:
+      - $ref: "#/components/parameters/TenantIdParameter"
+      x-apps-api:
+        lambdaName: "@lambdas/get-appointment-types"
+      responses:
+        "200":
+          description: "Appointment types successfully retrieved."
+          content:
+            application/json:
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/AppointmentType"
+  /v1/tenants/{tenantId}/practitioners:
+    get:
+      security:
+      - OAuth2: []
+      description: "Retrieves a list of practitioners."
+      parameters:
+      - $ref: "#/components/parameters/TenantIdParameter"
+      x-apps-api:
+        lambdaName: "@lambdas/get-practitioners"
+      responses:
+        "200":
+          description: "Practitioners successfully retrieved."
+          content:
+            application/json:
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/ListUser"
+  /v1/tenants/{tenantId}/practitioners/{practitionerId}:
+    get:
+      security:
+      - OAuth2: []
+      description: "Retrieves a practitioner by its ID."
+      parameters:
+      - $ref: "#/components/parameters/TenantIdParameter"
+      - $ref: "#/components/parameters/PractitionerIdParameter"
+      x-apps-api:
+        lambdaName: "@lambdas/get-practitioners-by-id"
+      responses:
+        "200":
+          description: "Practitioner successfully retrieved."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+  /v1/tenants/{tenantId}/schedules:
+    get:
+      security:
+      - OAuth2: []
+      description: "Returns a list of Schedules for the practice."
+      parameters:
+      - $ref: "#/components/parameters/TenantIdParameter"
+      - schema:
+          type: "string"
+          description: "Comma delimited list of which appointment types to filter\
+            \ by"
+          example: "0adac388-a637-474d-8a77-eaaa01158c1e, 1adac388-a637-474d-8a77-eaaa01158c1f"
+        required: false
+        name: "appointmentTypeIds"
+        in: "query"
+      - schema:
+          type: "string"
+          description: "Comma delimited list of which practitioners to filter by"
+          example: "0adac388-a637-474d-8a77-eaaa01158c1e, 1adac388-a637-474d-8a77-eaaa01158c1f"
+        required: false
+        name: "practitionerIds"
+        in: "query"
+      - schema:
+          type: "string"
+          format: "date-time"
+          description: "Show Schedules that begin after the provided date time (ISO\
+            \ 8601 with offset).\n\n **Important**: This field must be URI Encoded\
+            \ as it includes symbols that will otherwise be stripped from the URL."
+          example: "2000-01-01T00:00:00.000+10:00"
+        required: true
+        name: "fromDate"
+        in: "query"
+      - schema:
+          type: "string"
+          format: "date-time"
+          description: "Show Schedules that begin between fromDate up until the provided\
+            \ date time (ISO 8601 with offset).\n\n This date time cannot be greater\
+            \ than 90 days after the _fromDate_.\n\n **Important**: This field must\
+            \ be URI Encoded as it includes symbols that will otherwise be stripped\
+            \ from the URL."
+          example: "2000-04-01T00:00:00.000+10:00"
+        required: true
+        name: "toDate"
+        in: "query"
+      x-apps-api:
+        lambdaName: "@lambdas/get-schedules"
+      responses:
+        "200":
+          description: "Schedules successfully retrieved."
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  schedules:
+                    type: "array"
+                    items:
+                      $ref: "#/components/schemas/Schedule"
+                required:
+                - "schedules"
+  /v1/tenants:
+    get:
+      security:
+      - OAuth2: []
+      description: "Retrieves a list of tenants."
+      parameters: []
+      x-apps-api:
+        lambdaName: "@lambdas/get-tenants"
+      responses:
+        "200":
+          description: "Tenants successfully retrieved."
+          content:
+            application/json:
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/Tenant"
+  /v1/tenants/{tenantId}/status:
+    get:
+      security:
+      - OAuth2: []
+      description: "Returns 'Hello world' to verify that the API server is running."
+      parameters:
+      - $ref: "#/components/parameters/TenantIdParameter"
+      x-apps-api:
+        lambdaName: "@lambdas/get-status"
+      responses:
+        "200":
+          description: "Returns 'Hello world!' in a message."
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  message:
+                    type: "string"
+                    example: "Hello world!"
+                required:
+                - "message"
+  /v1/tenants/{tenantId}/patients/match:
+    post:
+      security:
+      - OAuth2: []
+      description: "Retrieves the ID of a patient that matches the provided search\
+        \ criteria. If a search returns more than one matching patient, or a patient\
+        \ cannot be found, an error will be returned."
+      parameters:
+      - $ref: "#/components/parameters/TenantIdParameter"
+      x-apps-api:
+        lambdaName: "@lambdas/post-patients-match"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: "object"
+              properties:
+                firstName:
+                  type: "string"
+                  minLength: 2
+                  description: "First name of the Patient being search for."
+                  example: "Bruce"
+                lastName:
+                  type: "string"
+                  minLength: 2
+                  description: "Last name of the Patient being searched for."
+                  example: "Wayne"
+                dateOfBirth:
+                  type: "string"
+                  description: "Date of birth of the Patient being searched for, in\
+                    \ the format YYYY-MM-DD. The valid range for years is between\
+                    \ 1900 and next year."
+                  example: "2000-01-01"
+              required:
+              - "firstName"
+              - "lastName"
+              - "dateOfBirth"
+      responses:
+        "200":
+          description: "Successfully retrieved a patient's ID."
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  id:
+                    type: "string"
+                    format: "uuid"
+                    description: "ID of the Patient found who matches the search criteria."
+                    example: "ce64c193-ec3c-4872-b940-1fc5ccb8826b"
+                required:
+                - "id"
+  /v1/apps/{appId}/pairing/{pairingCode}:
+    put:
+      security:
+      - OAuth2: []
+      description: "Consumes a pairing code to authorize an Application against the\
+        \ Tenant who generated the code."
+      parameters:
+      - $ref: "#/components/parameters/AppIdParameter"
+      - $ref: "#/components/parameters/PairingCodeParameter"
+      x-apps-api:
+        lambdaName: "@lambdas/put-consume-pairing-code"
+      responses:
+        "200":
+          description: "Pairing code successfully consumed and tenantId returned"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  message:
+                    type: "string"
+                    example: "Successfully consumed pairing code"
+                  tenantId:
+                    type: "string"
+                    format: "uuid"
+                    description: "Tenant ID of the practice that issued the pairing\
+                      \ code."
+                    example: "f0e1d2c3-b4a5-b6c7-d8e9-f0e1d2c3b4a5"
+                required:
+                - "message"
+                - "tenantId"
+  /v1/tenants/{tenantId}/practitioners/{practitionerId}/sites:
+    get:
+      security:
+      - OAuth2: []
+      description: "Returns a list of Sites of Service for a given Practitioner"
+      parameters:
+      - $ref: "#/components/parameters/TenantIdParameter"
+      x-apps-api:
+        lambdaName: "@lambdas/get-sites-of-service"
+      responses:
+        "200":
+          description: "Sites of service successfully retrieved."
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  data:
+                    type: "array"
+                    items:
+                      type: "object"
+                      properties:
+                        id:
+                          type: "string"
+                          format: "uuid"
+                        name:
+                          type:
+                          - "string"
+                          - "null"
+                      required:
+                      - "id"
+                      - "name"
+                required:
+                - "data"
+  /v1/tenants/{tenantId}/users:
+    get:
+      security:
+      - OAuth2: []
+      description: "Retrieves a list of users."
+      parameters:
+      - $ref: "#/components/parameters/TenantIdParameter"
+      x-apps-api:
+        lambdaName: "@lambdas/get-users"
+      responses:
+        "200":
+          description: "Users successfully retrieved."
+          content:
+            application/json:
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/ListUser"
+  /v1/tenants/{tenantId}/contacts/list:
+    post:
+      operationId: "postV1Tenants:tenantIdContactsList"
+      description: "Search and filter contacts from the address book. At least one\
+        \ substantive filter (e.g. lastName, email) must be provided alongside the\
+        \ required contactType."
+      security:
+      - OAuth2: []
+      responses:
+        "200":
+          description: "Contacts list returned"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  contacts:
+                    type: "array"
+                    items: {}
+                  pagination:
+                    type: "object"
+                    properties:
+                      next:
+                        anyOf:
+                        - type: "string"
+                        - type: "null"
+                      total:
+                        type: "integer"
+                        minimum: 0
+                        maximum: 9007199254740991
+                    required:
+                    - "next"
+                    - "total"
+                    additionalProperties: false
+                required:
+                - "contacts"
+                - "pagination"
+                additionalProperties: false
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: "object"
+              properties:
+                filters:
+                  oneOf:
+                  - $ref: "#/components/schemas/PractitionerFilters"
+                  - $ref: "#/components/schemas/AccountHolderFilters"
+                  - $ref: "#/components/schemas/HospitalFilters"
+                  - $ref: "#/components/schemas/GenericContactFilters"
+                  description: "Filters to apply. Must include contactType and at\
+                    \ least one substantive filter field."
+                pagination:
+                  type: "object"
+                  properties:
+                    cursor:
+                      description: "Opaque cursor returned from a previous response\
+                        \ to fetch the next page."
+                      examples:
+                      - "eyJpZCI6IjEyMyJ9"
+                      type: "string"
+                    limit:
+                      type: "integer"
+                      minimum: 1
+                      maximum: 100
+                      description: "Number of contacts to return per page (1–100)."
+                      examples:
+                      - 20
+                      - 50
+                      - 100
+                  required:
+                  - "limit"
+                  additionalProperties: false
+              required:
+              - "filters"
+              - "pagination"
+              additionalProperties: false
+              examples:
+              - filters:
+                  contactType: "practitioners"
+                  lastName: "Smith"
+                pagination:
+                  limit: 20
+              - filters:
+                  contactType: "practitioners"
+                  providerNumber: "2123456A"
+                pagination:
+                  limit: 10
+                  cursor: "eyJpZCI6IjEyMyJ9"
+              - filters:
+                  contactType: "account_holders"
+                  lastName: "Jones"
+                  birthDate: "1985-03-15"
+                pagination:
+                  limit: 20
+              - filters:
+                  contactType: "account_holders"
+                  medicareNumber: "2123456701"
+                pagination:
+                  limit: 20
+              - filters:
+                  contactType: "hospitals"
+                  businessName: "Royal North Shore Hospital"
+                pagination:
+                  limit: 50
+              - filters:
+                  contactType: "generic_contacts"
+                  email: "contact@example.com"
+                pagination:
+                  limit: 20
+      parameters:
+      - schema:
+          type: "string"
+        in: "path"
+        name: "tenantId"
+        required: true
+  /v1/tenants/{tenantId}/patients/{patientId}/account-holders/{holderId}:
+    put:
+      operationId: "putV1Tenants:tenantIdPatients:patientIdAccount-holders:holderId"
+      description: "Link a patient or contact as an account holder for a patient,\
+        \ or update their primary status. The holderId can be the UUID of either an\
+        \ existing patient or an individual account holder contact."
+      security:
+      - OAuth2: []
+      responses:
+        "200":
+          description: "Account holder updated"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  id:
+                    type: "string"
+                    format: "uuid"
+                    pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    description: "The ID of the linked account holder (patient or\
+                      \ contact)"
+                required:
+                - "id"
+        "201":
+          description: "Account holder linked"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  id:
+                    type: "string"
+                    format: "uuid"
+                    pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    description: "The ID of the linked account holder (patient or\
+                      \ contact)"
+                required:
+                - "id"
+      parameters:
+      - in: "path"
+        name: "patientId"
+        schema:
+          type: "string"
+          format: "uuid"
+          pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        required: true
+      - in: "path"
+        name: "holderId"
+        schema:
+          type: "string"
+          format: "uuid"
+          pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        required: true
+      - schema:
+          type: "string"
+        in: "path"
+        name: "tenantId"
+        required: true
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: "object"
+              properties:
+                primary:
+                  description: "Whether this account holder is the primary account\
+                    \ holder for the patient. If omitted, the existing primary status\
+                    \ is preserved on update and defaults to false on create."
+                  type: "boolean"
+              additionalProperties: false
+webhooks: {}

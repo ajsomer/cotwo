@@ -159,6 +159,29 @@ export async function getRoomByPractitionerExternal(
   return row?.roomId ?? null;
 }
 
+/**
+ * PMS practitioner external id for a Coviu room under a connection (the reverse
+ * of the room mapping). Used to file practitioner-scoped writes — e.g. Gentu's
+ * attachment upload needs the appointment's practitioner id. Returns null when
+ * the room isn't mapped to a PMS practitioner.
+ */
+export async function getPractitionerExternalByRoom(
+  connectionId: string,
+  roomId: string
+): Promise<string | null> {
+  const [row] = await db
+    .select({ ext: pmsPractitionerLinks.pmsExternalId })
+    .from(pmsPractitionerLinks)
+    .where(
+      and(
+        eq(pmsPractitionerLinks.connectionId, connectionId),
+        eq(pmsPractitionerLinks.roomId, roomId)
+      )
+    )
+    .limit(1);
+  return row?.ext ?? null;
+}
+
 /** Resolution config for a Cliniko appointment type under a connection. */
 export async function getTypeLinkByExternal(
   connectionId: string,
