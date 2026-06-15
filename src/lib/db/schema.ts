@@ -848,6 +848,51 @@ export const pmsConnections = pgTable("pms_connections", {
 	unique("pms_connections_location_id_key").on(table.locationId),
 ]);
 
+// Telephony call-pop TEST trigger config (docs/plans/3cx-incoming-call-patient-pop.md).
+// Internal demo tool, NOT a real phone-system integration: a Twilio number's
+// webhook posts here, we match the caller number to a patient and pop the card
+// on the configured demo user's run sheet. One config per location.
+//   - path_token: hard-to-guess segment in the webhook URL; PRIMARY config locator.
+//   - webhook_url: the EXACT public URL pasted into Twilio, stored verbatim and used
+//     for X-Twilio-Signature validation (reconstructing it behind a proxy is unsafe).
+//   - auth_token_encrypted: Twilio auth token, encrypted via the PMS cred helper.
+//   - demo_user_id: whose run sheet the pop targets (Twilio can't report an answerer).
+export const telephonyTestConfig = pgTable("telephony_test_config", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	locationId: uuid("location_id").notNull(),
+	orgId: uuid("org_id").notNull(),
+	provider: text().default('twilio').notNull(),
+	twilioAccountSid: text("twilio_account_sid"),
+	twilioPhoneNumber: text("twilio_phone_number"),
+	pathToken: text("path_token").notNull(),
+	webhookUrl: text("webhook_url"),
+	authTokenEncrypted: text("auth_token_encrypted"),
+	demoUserId: uuid("demo_user_id"),
+	status: text().default('off').notNull(),
+	lastEventAt: timestamp("last_event_at", { withTimezone: true, mode: 'string' }),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_telephony_test_config_location_id").using("btree", table.locationId.asc().nullsLast().op("uuid_ops")),
+	foreignKey({
+			columns: [table.locationId],
+			foreignColumns: [locations.id],
+			name: "telephony_test_config_location_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.orgId],
+			foreignColumns: [organisations.id],
+			name: "telephony_test_config_org_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.demoUserId],
+			foreignColumns: [users.id],
+			name: "telephony_test_config_demo_user_id_fkey"
+		}).onDelete("set null"),
+	unique("telephony_test_config_location_id_key").on(table.locationId),
+	unique("telephony_test_config_path_token_key").on(table.pathToken),
+]);
+
 export const pmsSyncCursors = pgTable("pms_sync_cursors", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	connectionId: uuid("connection_id").notNull(),
