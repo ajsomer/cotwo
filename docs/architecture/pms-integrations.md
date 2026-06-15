@@ -155,8 +155,13 @@ are account-scoped; two accounts can reuse the same numeric id):
 partial unique index `(location_id, pms_external_id) WHERE pms_external_id IS
 NOT NULL`. `forms.pms_provider` tags PMS-bound forms with their provider's
 vocabulary. The `pms_provider` enum already contains `halaxy`, `power_diary`,
-`gentu` (gentu is a credential-less demo stub — no adapter, never
-sync-active).
+`gentu`. `halaxy`/`power_diary` remain coming-soon (no adapter). `gentu` has a
+real adapter on branch `feat/gentu-integration` (OAuth client-credentials +
+pairing-code → tenant_id; reads off the Healthcare API, writes off Bookings;
+`writeForms: false`) — built and type-checked, pending live verification against
+a Magentus tenant (blocked on app provisioning) and merge. See
+`docs/plans/gentu-integration.md` and
+`docs/architecture/gentu-bookings-healthcare-api.md`.
 
 ## 5. Read sync (PMS → run sheet)
 

@@ -20,7 +20,7 @@ interface PmsOption {
 const PMS_OPTIONS: PmsOption[] = [
   { id: "cliniko", name: "Cliniko", description: "Practice management software", comingSoon: false },
   { id: "nookal", name: "Nookal", description: "Allied health practice software", comingSoon: false },
-  { id: "gentu", name: "Gentu", description: "Australian allied health PMS (demo)", comingSoon: false },
+  { id: "gentu", name: "Gentu", description: "Australian specialist & allied health PMS", comingSoon: false },
   { id: "halaxy", name: "Halaxy", description: "Healthcare practice management", comingSoon: true },
   { id: "power_diary", name: "Power Diary", description: "Practice management system", comingSoon: true },
 ];
@@ -74,41 +74,20 @@ export function PmsSelectionGrid() {
       return;
     }
 
-    // Real credential connect (any registry-backed provider): open the modal.
-    // If the metadata fetch failed, error out rather than falling through to
-    // the demo path — that would record a credential-less marker while the UI
-    // claims the PMS is connected.
-    if (provider.id !== "gentu") {
-      const meta = providerMeta?.find((p) => p.provider === provider.id);
-      if (meta) {
-        setError(null);
-        setCredentialValues({});
-        setConnectModal(meta);
-      } else {
-        setError(
-          `Couldn't load ${provider.name} connection details — refresh and try again.`
-        );
-      }
-      return;
+    // Real credential connect — EVERY registry-backed provider (including
+    // Gentu, which used to have a demo-simulation branch here; plan §1a.1) opens
+    // the credential modal driven by /api/pms/providers metadata. If the
+    // metadata fetch failed, error out rather than connecting blind.
+    const meta = providerMeta?.find((p) => p.provider === provider.id);
+    if (meta) {
+      setError(null);
+      setCredentialValues({});
+      setConnectModal(meta);
+    } else {
+      setError(
+        `Couldn't load ${provider.name} connection details — refresh and try again.`
+      );
     }
-
-    // Gentu (demo simulation)
-    setConnecting(provider.id);
-    setError(null);
-
-    const result = await postJson("/api/setup/pms", {
-      provider: provider.id,
-      skipped: false,
-    });
-
-    setConnecting(null);
-
-    if (!result.ok) {
-      setError("Connection failed. Try again or choose a different PMS.");
-      return;
-    }
-
-    setConnected(provider.id);
   }
 
   async function handleConnectCredentials() {
@@ -228,7 +207,7 @@ export function PmsSelectionGrid() {
           <p className="text-sm text-green-700 font-medium">
             {connectedMeta
               ? `Connected to ${connectedMeta.label}. Next, confirm your appointment types and rooms in Settings → Integrations.`
-              : "Connected to Gentu — appointment types, forms, and rooms imported."}
+              : "Connected. Next, confirm your appointment types and rooms in Settings → Integrations."}
           </p>
           <Button
             type="button"

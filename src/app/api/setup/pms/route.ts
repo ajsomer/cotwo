@@ -1,42 +1,28 @@
-import { db } from "@/lib/db";
-import {
-  pmsConnections,
-  forms as formsT,
-  rooms as roomsT,
-  users as usersT,
-  staffAssignments,
-} from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
 import {
   PM_ROLES,
   getAuthenticatedUserId,
   requireStaffLocationAccess,
   resolveDefaultStaffOrg,
 } from "@/lib/auth/staff-access";
-import { seedDefaultWorkflows } from "@/lib/workflows/seed-defaults";
-import { newPatientIntakeSchema, defaultFormSchema } from "@/lib/survey/identity-page";
 import { NextResponse, type NextRequest } from "next/server";
 import { unauthenticatedResponse } from "@/lib/api/route-helpers";
+import { clearPmsConnection } from "@/lib/pms/integrations-service";
 
-const GENTU_FORMS = [
-  { name: "New Patient Intake", description: "Comprehensive new patient intake form" },
-  { name: "Mental Health Assessment (K10)", description: "Kessler Psychological Distress Scale" },
-  { name: "Patient Satisfaction Survey", description: "Post-appointment satisfaction survey" },
-];
-
-const GENTU_ROOMS = [
-  "Sarah Chen",
-  "Marcus Webb",
-  "Kate Murray",
-];
-
-const GENTU_CLINICIANS = [
-  { full_name: "Sarah Chen", email: "sarah.chen@gentu-demo.coviu.com" },
-  { full_name: "Marcus Webb", email: "marcus.webb@gentu-demo.coviu.com" },
-  { full_name: "Kate Murray", email: "kate.murray@gentu-demo.coviu.com" },
-  { full_name: "Amy Tran", email: "amy.tran@gentu-demo.coviu.com" },
-];
-
+/**
+ * Setup-flow "No PMS" endpoint.
+ *
+ * This route ONLY handles the clinic choosing no PMS at setup. Real provider
+ * connects (Cliniko, Nookal, Gentu) go through /api/setup/pms/connect →
+ * connectPms → the registry. The old Gentu "demo simulation" path (seeding fake
+ * clinicians/rooms/forms + a credential-less marker) was removed when Gentu
+ * became a real registry-backed adapter (plan §1a.1).
+ *
+ * No-PMS is modelled as NO pms_connections row (plan §1a.2) — we deliberately
+ * write nothing. The previous code wrote `provider: "cliniko", status:
+ * "skipped"`, which mislabelled no-PMS as skipped Cliniko and leaked into
+ * Settings. The setup gate treats a missing connection row as "PMS step
+ * satisfied," so the clinic proceeds to room setup.
+ */
 export async function POST(request: NextRequest) {
   const userId = await getAuthenticatedUserId();
   if (!userId) return unauthenticatedResponse();
@@ -44,133 +30,28 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const { provider } = body as { provider: string | null };
 
-  // Setup flow: no scope is supplied, so resolve the user's default org.
   const resolved = await resolveDefaultStaffOrg(userId);
   if (!resolved) return NextResponse.json({ error: "No org found." }, { status: 400 });
-  const { orgId, locationId } = resolved;
+  const { locationId } = resolved;
 
-  // Writing the connection marker / seeding demo data is admin-level config —
-  // gate on the same PM roles as the Settings connection route.
+  // Same PM-role gate as the Settings connection route.
   const access = await requireStaffLocationAccess(locationId);
   if (!access.ok || !PM_ROLES.has(access.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  if (provider === "gentu") {
-    await seedGentuData(orgId, locationId);
-    await db
-      .insert(pmsConnections)
-      .values({
-        orgId,
-        locationId,
-        provider: "gentu",
-        status: "connected",
-        importedData: { clinicians: 4, appointment_types: 12, rooms: 3 },
-      })
-      .onConflictDoUpdate({
-        target: pmsConnections.locationId,
-        set: {
-          provider: "gentu",
-          status: "connected",
-          importedData: { clinicians: 4, appointment_types: 12, rooms: 3 },
-          updatedAt: new Date().toISOString(),
-        },
-      });
-    try { await seedDefaultWorkflows(orgId); } catch (e) { console.error("[setup/pms] workflow re-seed failed:", e); }
-  } else {
-    await db
-      .insert(pmsConnections)
-      .values({
-        orgId,
-        locationId,
-        provider: (provider ?? "cliniko") as typeof pmsConnections.$inferInsert.provider,
-        status: "skipped",
-      })
-      .onConflictDoUpdate({
-        target: pmsConnections.locationId,
-        set: {
-          provider: (provider ?? "cliniko") as typeof pmsConnections.$inferInsert.provider,
-          status: "skipped",
-          updatedAt: new Date().toISOString(),
-        },
-      });
+  // A non-null provider should never reach here — those connect via /connect.
+  if (provider != null) {
+    return NextResponse.json(
+      { error: "Use /api/setup/pms/connect to connect a provider." },
+      { status: 400 }
+    );
   }
 
+  // No PMS → clear any existing connection state so no-PMS is idempotently
+  // "no row" (plan §1a.2). Without this, an old marker/demo/real row would
+  // linger and getIntegrationStatus would still report hasConnection:true with
+  // that stale provider. No-op on a clean setup.
+  await clearPmsConnection(locationId);
   return NextResponse.json({ ok: true });
-}
-
-async function seedGentuData(orgId: string, locationId: string) {
-  // NOTE: appointment types are owned solely by org/clinic setup
-  // (seedNoPmsFloor). PMS connect must NOT create them — doing so produced
-  // duplicate types across re-connects. We seed only the PMS-import demo data
-  // (forms, rooms, clinicians) here.
-  const [existingForms, existingRooms] = await Promise.all([
-    db.select({ name: formsT.name }).from(formsT).where(eq(formsT.orgId, orgId)),
-    db.select({ name: roomsT.name }).from(roomsT).where(eq(roomsT.locationId, locationId)),
-  ]);
-
-  const formNames = new Set((existingForms ?? []).map((r) => r.name));
-  const roomNames = new Set((existingRooms ?? []).map((r) => r.name));
-
-  const newForms = GENTU_FORMS.filter((f) => !formNames.has(f.name));
-  const newRooms = GENTU_ROOMS.filter((r) => !roomNames.has(r));
-
-  // Bulk inserts in parallel
-  await Promise.all([
-    newForms.length
-      ? db.insert(formsT).values(
-          newForms.map((f) => ({
-            orgId,
-            name: f.name,
-            description: f.description,
-            status: "published",
-            isPlatformDemo: false,
-            // "New Patient Intake" ships with real fields; others are shells.
-            schema:
-              f.name === "New Patient Intake"
-                ? newPatientIntakeSchema()
-                : defaultFormSchema(),
-          }))
-        )
-      : Promise.resolve(),
-    newRooms.length
-      ? db.insert(roomsT).values(
-          newRooms.map((name) => ({ locationId, name, roomType: "clinical" as const }))
-        )
-      : Promise.resolve(),
-  ]);
-
-  // Demo clinicians. These are seeded providers who appear on the run sheet but
-  // never log in, so we insert public.users rows directly rather than creating
-  // Neon Auth accounts. (Prototype: no auth identity needed for demo staff.)
-  await Promise.all(
-    GENTU_CLINICIANS.map(async (clinician) => {
-      const [upserted] = await db
-        .insert(usersT)
-        .values({ email: clinician.email, fullName: clinician.full_name })
-        .onConflictDoUpdate({
-          target: usersT.email,
-          set: { fullName: clinician.full_name },
-        })
-        .returning({ id: usersT.id });
-
-      const userId = upserted?.id;
-      if (!userId) return;
-
-      const [existingSa] = await db
-        .select({ id: staffAssignments.id })
-        .from(staffAssignments)
-        .where(eq(staffAssignments.userId, userId))
-        .limit(1);
-
-      if (!existingSa) {
-        await db.insert(staffAssignments).values({
-          userId,
-          locationId,
-          role: "clinician",
-          employmentType: "full_time",
-        });
-      }
-    })
-  );
 }

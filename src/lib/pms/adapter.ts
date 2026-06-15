@@ -115,6 +115,13 @@ export interface PmsAdapter {
     /** Base64-encoded file content. */
     contentBase64: string;
     description?: string;
+    /**
+     * PMS practitioner external id to file the attachment against, resolved
+     * from the appointment's practitioner. Required by some providers (Gentu's
+     * `PUT .../attachments` takes a mandatory `practitionerId`); ignored by
+     * those whose attachment flow is patient-scoped (Cliniko, Nookal).
+     */
+    practitionerExternalId?: string;
   }): Promise<{ ok: boolean; attachmentId?: string; detail?: string }>;
 
   // ── METADATA for the UI ──
@@ -151,6 +158,19 @@ export interface PmsAdapterFactory {
     /** Provider-opaque hint for web deep links (e.g. Cliniko account subdomain). */
     webHint?: string | null;
   }): PmsAdapter;
+  /**
+   * Exchange the connect-form input for the credentials blob that gets STORED,
+   * if they differ. Cliniko/Nookal store the API key as-is and omit this. Gentu
+   * collects a one-time `pairing_code` and exchanges it for a durable
+   * `tenant_id` (the pairing code is single-use). Called by `connectPms` before
+   * verify/encrypt. Return `{ ok: false, detail }` to abort the connect with an
+   * actionable message. When omitted, the form input is stored verbatim.
+   */
+  exchangeCredentials?(
+    input: PmsCredentials
+  ): Promise<
+    { ok: true; credentials: PmsCredentials } | { ok: false; detail: string }
+  >;
   /** Metadata available WITHOUT credentials (capabilities, catalogue, fields). */
   staticMetadata(): {
     capabilities: PmsCapabilities;

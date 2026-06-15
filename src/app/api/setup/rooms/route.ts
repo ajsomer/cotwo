@@ -42,11 +42,11 @@ export async function GET() {
   ]);
 
   const pms = pmsRows[0];
-  // Rooms were imported from a PMS when: a real (sync-active) connection
-  // provisioned them, or the Gentu demo marker seeded them.
-  const imported =
-    Boolean(pms?.credentialsEncrypted) ||
-    (pms?.provider === "gentu" && pms?.status === "connected");
+  // Rooms were imported from a PMS only when a real (sync-active) connection
+  // provisioned them. The old Gentu demo-marker clause was removed when Gentu
+  // became a real adapter (plan §1a.1) — a credential-less marker no longer
+  // exists, and no-PMS (no row) correctly reads as not-imported → manual entry.
+  const imported = Boolean(pms?.credentialsEncrypted);
 
   return NextResponse.json({ rooms: rooms ?? [], imported });
 }
