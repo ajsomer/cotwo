@@ -2,9 +2,8 @@
   "$schema": "https://schema.railpack.com",
   "steps": {
     "install": {
-      "commands": [
-        "npm install --no-audit --no-fund"
-      ]
+      "inputs": ["..."],
+      "commands": ["npm ci --no-audit --no-fund"]
     }
   }
 }
