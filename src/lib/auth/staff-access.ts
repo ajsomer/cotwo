@@ -168,6 +168,8 @@ async function fetchStaffAssignmentJoinRows(userId: string, limit?: number) {
       org_tier: organisationsT.tier,
       org_logo_url: organisationsT.logoUrl,
       org_stripe_routing: organisationsT.stripeRouting,
+      org_payment_provider: organisationsT.paymentProvider,
+      org_tyro_provider_number: organisationsT.tyroProviderNumber,
       org_timezone: organisationsT.timezone,
     })
     .from(staffAssignments)
@@ -710,6 +712,8 @@ export async function fetchUserClinicAssignments(
         tier: sa.org_tier as Organisation["tier"],
         logo_url: sa.org_logo_url,
         stripe_routing: sa.org_stripe_routing as Organisation["stripe_routing"],
+        payment_provider: sa.org_payment_provider as Organisation["payment_provider"],
+        tyro_provider_number: sa.org_tyro_provider_number,
         timezone: sa.org_timezone,
       },
     };

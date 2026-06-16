@@ -209,6 +209,10 @@ export interface ClinicianAccount {
 export interface PaymentsData {
   routing_mode: "location" | "clinician";
   location_stripe_account_id: string | null;
+  payment_provider: "stripe" | "tyro" | "console";
+  tyro_provider_number: string | null;
+  tyro_business_id: string | null;
+  tyro_connected: boolean;
   clinicians: ClinicianAccount[];
 }
 

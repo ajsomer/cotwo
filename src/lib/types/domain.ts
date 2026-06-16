@@ -45,6 +45,8 @@ export interface Organisation {
   tier: OrgTier;
   logo_url: string | null;
   stripe_routing: 'location' | 'clinician';
+  payment_provider: 'stripe' | 'tyro' | 'console';
+  tyro_provider_number: string | null;
   timezone: string;
 }
 

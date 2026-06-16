@@ -48,21 +48,25 @@ export function CardCapture({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [provider, setProvider] = useState<'stripe' | 'tyro' | 'console'>('stripe');
 
   // Card form fields (simplified — production would use Stripe Elements)
   const [cardNumber, setCardNumber] = useState('');
   const [expiry, setExpiry] = useState('');
   const [cvc, setCvc] = useState('');
 
-  // Check for existing card on file
+  // Check for existing card on file + resolve the org's payment provider.
   useEffect(() => {
     async function checkCard() {
-      const result = await getJson<{ card?: ExistingCard }>(
+      const result = await getJson<{
+        card?: ExistingCard;
+        payment_provider?: 'stripe' | 'tyro' | 'console';
+      }>(
         `/api/patient/card?token=${encodeURIComponent(token)}&patient_id=${patientId}`,
       );
-      // No card on file (or fetch failed) — just move on.
-      if (result.ok && result.data?.card) {
-        setExistingCard(result.data.card);
+      if (result.ok) {
+        if (result.data?.card) setExistingCard(result.data.card);
+        if (result.data?.payment_provider) setProvider(result.data.payment_provider);
       }
       setLoading(false);
     }
@@ -125,6 +129,89 @@ export function CardCapture({
     }
 
     await finish({ card_last_four: lastFour, card_brand: brand });
+  };
+
+  // Tyro: card capture via the REST "request payment details" flow (no charge).
+  // We fetch a hosted card-save URL and send the patient there; they save their
+  // card on Tyro's page and are redirected back. No SDK, no card data on us.
+  const showTyroCapture = provider === 'tyro' && (!existingCard || showNewCard);
+
+  const launchTyroCardSave = async () => {
+    setError(null);
+    setSaving(true);
+
+    // Open the popup synchronously inside the click handler so it isn't blocked
+    // by popup blockers; we navigate it to the Tyro URL once we have it.
+    const popup = window.open('about:blank', 'tyro_card_save', 'width=480,height=720');
+    if (!popup) {
+      setError('Please allow pop-ups to store your card.');
+      setSaving(false);
+      return;
+    }
+
+    try {
+      const res = await postJson<{ card_save_url: string; patient_ref_id: string }>(
+        '/api/patient/card/tyro-token',
+        { token, patient_id: patientId },
+        'Could not start card capture'
+      );
+      if (!res.ok) {
+        popup.close();
+        setError(res.error);
+        setSaving(false);
+        return;
+      }
+
+      const { card_save_url, patient_ref_id } = res.data;
+      // Persist the refId so future charges reuse the saved card; the hosted
+      // page vaults the card against this same refId.
+      await postJson(
+        '/api/patient/card',
+        {
+          token,
+          patient_id: patientId,
+          provider: 'tyro',
+          provider_customer_ref: patient_ref_id,
+        },
+        'Failed to record card'
+      );
+
+      popup.location.href = card_save_url;
+
+      // Tyro's hosted page has no return mechanism, so poll our card-on-file
+      // endpoint: once the card is saved on Tyro it shows up by refId. When it
+      // does, close the popup and advance. Also stop if the patient closes it.
+      const started = Date.now();
+      const poll = setInterval(async () => {
+        // Give up after 5 minutes.
+        if (Date.now() - started > 5 * 60 * 1000) {
+          clearInterval(poll);
+          setSaving(false);
+          return;
+        }
+        if (popup.closed) {
+          clearInterval(poll);
+          setSaving(false);
+          return;
+        }
+        const check = await getJson<{ card?: ExistingCard }>(
+          `/api/patient/card?token=${encodeURIComponent(token)}&patient_id=${patientId}`,
+        );
+        if (check.ok && check.data?.card) {
+          clearInterval(poll);
+          if (!popup.closed) popup.close();
+          setExistingCard(check.data.card);
+          await finish({
+            card_last_four: check.data.card.card_last_four,
+            card_brand: check.data.card.card_brand,
+          });
+        }
+      }, 2500);
+    } catch (err) {
+      if (!popup.closed) popup.close();
+      setError(err instanceof Error ? err.message : 'Card capture failed');
+      setSaving(false);
+    }
   };
 
   if (loading) {
@@ -205,8 +292,37 @@ export function CardCapture({
           </>
         )}
 
-        {/* New card form */}
-        {(!existingCard || showNewCard) && (
+        {/* Tyro: send the patient to the hosted card-save page (no charge). */}
+        {showTyroCapture && (
+          <>
+            {error && (
+              <p className="text-sm text-red-500" role="alert" aria-live="assertive">{error}</p>
+            )}
+            <button
+              onClick={launchTyroCardSave}
+              disabled={saving}
+              className="w-full rounded-lg bg-teal-500 px-6 py-3 text-base font-medium text-white transition-colors hover:bg-teal-600 disabled:opacity-50"
+            >
+              {saving ? 'Waiting for card…' : 'Store card securely'}
+            </button>
+            <p className="text-center text-xs text-gray-400">
+              A secure window will open to store your card with Tyro Health. You
+              won&apos;t be charged now — this page continues automatically once
+              your card is saved.
+            </p>
+            {existingCard && showNewCard && (
+              <button
+                onClick={() => setShowNewCard(false)}
+                className="w-full text-center text-sm text-gray-400 hover:text-gray-600"
+              >
+                Use existing card
+              </button>
+            )}
+          </>
+        )}
+
+        {/* New card form — Stripe (mock) path */}
+        {provider !== 'tyro' && (!existingCard || showNewCard) && (
           <>
             <FormField label="Card number" htmlFor="cardNumber">
               <TextInput

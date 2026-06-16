@@ -68,6 +68,8 @@ async function resolveToken(token: string): Promise<EntryContext | null> {
       org_logo_url: organisationsT.logoUrl,
       org_tier: organisationsT.tier,
       org_stripe_routing: organisationsT.stripeRouting,
+      org_payment_provider: organisationsT.paymentProvider,
+      org_tyro_provider_number: organisationsT.tyroProviderNumber,
       scheduled_at: appointmentsT.scheduledAt,
       phone_number: appointmentsT.phoneNumber,
       clinician_id: appointmentsT.clinicianId,
@@ -88,7 +90,9 @@ async function resolveToken(token: string): Promise<EntryContext | null> {
       session.location_stripe_account_id,
       session.location_id,
       session.org_stripe_routing,
-      session.clinician_id
+      session.clinician_id,
+      session.org_payment_provider,
+      session.org_tyro_provider_number
     );
 
     return {
@@ -137,6 +141,8 @@ async function resolveToken(token: string): Promise<EntryContext | null> {
       org_logo_url: organisationsT.logoUrl,
       org_tier: organisationsT.tier,
       org_stripe_routing: organisationsT.stripeRouting,
+      org_payment_provider: organisationsT.paymentProvider,
+      org_tyro_provider_number: organisationsT.tyroProviderNumber,
     })
     .from(roomsT)
     .innerJoin(locationsT, eq(locationsT.id, roomsT.locationId))
@@ -150,7 +156,9 @@ async function resolveToken(token: string): Promise<EntryContext | null> {
       room.location_stripe_account_id,
       room.location_id,
       room.org_stripe_routing,
-      null
+      null,
+      room.org_payment_provider,
+      room.org_tyro_provider_number
     );
 
     return {
@@ -186,6 +194,8 @@ async function resolveToken(token: string): Promise<EntryContext | null> {
       org_name: organisationsT.name,
       org_logo_url: organisationsT.logoUrl,
       org_tier: organisationsT.tier,
+      org_payment_provider: organisationsT.paymentProvider,
+      org_tyro_provider_number: organisationsT.tyroProviderNumber,
     })
     .from(locationsT)
     .innerJoin(organisationsT, eq(organisationsT.id, locationsT.orgId))
@@ -208,8 +218,12 @@ async function resolveToken(token: string): Promise<EntryContext | null> {
       },
       room: null,
       session: null,
-      // QR code has no room context yet — fall back to location-level check
-      payments_enabled: !!location.location_stripe_account_id,
+      // QR code has no room context yet — fall back to location-level check.
+      // Tyro: enabled when the org's Tyro location identifier is configured.
+      payments_enabled:
+        location.org_payment_provider === 'tyro'
+          ? !!location.org_tyro_provider_number
+          : !!location.location_stripe_account_id,
     };
   }
 
@@ -227,10 +241,18 @@ async function resolvePaymentsEnabled(
   locationStripeAccountId: string | null,
   locationId: string,
   stripeRouting: string,
-  clinicianId: string | null
+  clinicianId: string | null,
+  paymentProvider: string,
+  tyroProviderNumber: string | null
 ): Promise<boolean> {
   // Room has payments disabled — skip regardless
   if (!roomPaymentsEnabled) return false;
+
+  // Tyro: settlement is via the org's Tyro location identifier, not a Stripe
+  // Connect account. Payments are enabled when that identifier is configured.
+  if (paymentProvider === 'tyro') {
+    return !!tyroProviderNumber;
+  }
 
   // Clinic-level routing: check location's Stripe account
   if (stripeRouting === 'location') {

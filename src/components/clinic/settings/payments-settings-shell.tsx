@@ -82,6 +82,75 @@ export function PaymentsSettingsShell() {
     }
   };
 
+  // Payment provider (org-level): stripe (stub) | tyro | console
+  const handleProviderChange = async (
+    provider: "stripe" | "tyro" | "console",
+    tyroProviderNumber?: string
+  ) => {
+    if (!selectedLocation || !data) return;
+    setSaving(true);
+    try {
+      const res = await fetch("/api/settings/payments", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "set_provider",
+          location_id: selectedLocation.id,
+          payment_provider: provider,
+          tyro_provider_number: tyroProviderNumber,
+        }),
+      });
+      if (res.ok) {
+        getClinicStore().setPaymentConfig({
+          ...data,
+          payment_provider: provider,
+          ...(tyroProviderNumber !== undefined
+            ? { tyro_provider_number: tyroProviderNumber || null }
+            : {}),
+        });
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Connect a clinic's own Tyro account (API key + business id + location number)
+  const handleConnectTyro = async (creds: {
+    tyro_api_key?: string;
+    tyro_business_id?: string;
+    tyro_provider_number?: string;
+  }) => {
+    if (!selectedLocation || !data) return;
+    setSaving(true);
+    try {
+      const res = await fetch("/api/settings/payments", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "set_tyro_credentials",
+          location_id: selectedLocation.id,
+          ...creds,
+        }),
+      });
+      if (res.ok) {
+        getClinicStore().setPaymentConfig({
+          ...data,
+          tyro_connected: data.tyro_connected || !!creds.tyro_api_key,
+          tyro_business_id:
+            creds.tyro_business_id !== undefined
+              ? creds.tyro_business_id || null
+              : data.tyro_business_id,
+          tyro_provider_number:
+            creds.tyro_provider_number !== undefined
+              ? creds.tyro_provider_number || null
+              : data.tyro_provider_number,
+        });
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // Connect Stripe account (stubbed)
   const handleConnect = (
     target: "location" | "clinician",
@@ -261,6 +330,8 @@ export function PaymentsSettingsShell() {
           onRoutingChange={handleRoutingChange}
           onConnect={handleConnect}
           onDisconnect={handleDisconnect}
+          onProviderChange={handleProviderChange}
+          onConnectTyro={handleConnectTyro}
         />
       ) : (
         <RoomsTab
@@ -311,6 +382,107 @@ export function PaymentsSettingsShell() {
 }
 
 // ---------------------------------------------------------------------------
+// Payment Provider Section
+// ---------------------------------------------------------------------------
+
+const PROVIDERS: { value: "stripe" | "tyro" | "console"; label: string }[] = [
+  { value: "stripe", label: "Stripe" },
+  { value: "tyro", label: "Tyro Health" },
+  { value: "console", label: "Console (dev)" },
+];
+
+function PaymentProviderSection({
+  provider,
+  tyroConnected,
+  saving,
+  onProviderChange,
+  onConnectTyro,
+}: {
+  provider: "stripe" | "tyro" | "console";
+  tyroConnected: boolean;
+  saving: boolean;
+  onProviderChange: (
+    p: "stripe" | "tyro" | "console",
+    tyroProviderNumber?: string
+  ) => void;
+  onConnectTyro: (creds: { tyro_api_key?: string }) => void;
+}) {
+  const [apiKey, setApiKey] = useState("");
+
+  return (
+    <section>
+      <h2 className="text-base font-semibold text-gray-800 mb-1">
+        Payment provider
+      </h2>
+      <p className="text-sm text-gray-500 mb-4">
+        The processor used to capture cards and charge patients for this
+        organisation.
+      </p>
+
+      <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-1">
+        {PROVIDERS.map((p) => (
+          <button
+            key={p.value}
+            onClick={() => onProviderChange(p.value)}
+            disabled={saving}
+            className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+              provider === p.value
+                ? "bg-white text-gray-800 shadow-sm"
+                : "text-gray-500 hover:text-gray-700"
+            }`}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tyro connection: clinic pastes their own API key; we derive the
+          business id from it. Optional location identifier for settlement. */}
+      {provider === "tyro" && (
+        <div className="mt-4 max-w-md space-y-4">
+          <div className="rounded-xl border border-gray-200 bg-white p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <div
+                className={`h-2.5 w-2.5 rounded-full ${
+                  tyroConnected ? "bg-green-500" : "bg-gray-300"
+                }`}
+              />
+              <span className="text-sm font-medium text-gray-800">
+                {tyroConnected ? "Tyro Health connected" : "Connect Tyro Health"}
+              </span>
+            </div>
+            <p className="text-xs text-gray-400 mb-2">
+              Generate an API key in your Tyro Health Online portal (Business
+              settings → API Keys) and paste it here. We&apos;ll link your
+              business automatically.
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder={tyroConnected ? "•••••••• (replace key)" : "Paste API key"}
+                className="flex-1 text-sm text-gray-800 border border-gray-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+              />
+              <Button
+                size="sm"
+                onClick={() => {
+                  onConnectTyro({ tyro_api_key: apiKey.trim() });
+                  setApiKey("");
+                }}
+                disabled={saving || apiKey.trim() === ""}
+              >
+                {tyroConnected ? "Update" : "Connect"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Configuration Tab
 // ---------------------------------------------------------------------------
 
@@ -324,6 +496,8 @@ function ConfigurationTab({
   onRoutingChange,
   onConnect,
   onDisconnect,
+  onProviderChange,
+  onConnectTyro,
 }: {
   data: PaymentsData | null;
   isAdmin: boolean;
@@ -334,13 +508,34 @@ function ConfigurationTab({
   onRoutingChange: (mode: RoutingMode) => void;
   onConnect: (target: "location" | "clinician", saId?: string) => void;
   onDisconnect: (target: "location" | "clinician", saId?: string) => void;
+  onProviderChange: (
+    provider: "stripe" | "tyro" | "console",
+    tyroProviderNumber?: string
+  ) => void;
+  onConnectTyro: (creds: {
+    tyro_api_key?: string;
+    tyro_business_id?: string;
+    tyro_provider_number?: string;
+  }) => void;
 }) {
   if (!data) return null;
 
   return (
     <div className="space-y-8">
-      {/* Routing mode toggle — admin only */}
+      {/* Payment provider — admin only */}
       {isAdmin && (
+        <PaymentProviderSection
+          provider={data.payment_provider}
+          tyroConnected={data.tyro_connected}
+          saving={saving}
+          onProviderChange={onProviderChange}
+          onConnectTyro={onConnectTyro}
+        />
+      )}
+
+      {/* Routing mode toggle — admin only. Stripe-specific: Tyro settles via its
+          own location identifier, so hide for Tyro. */}
+      {isAdmin && data.payment_provider !== "tyro" && (
         <section>
           <h2 className="text-base font-semibold text-gray-800 mb-1">
             Payment routing
@@ -376,7 +571,8 @@ function ConfigurationTab({
         </section>
       )}
 
-      {/* Stripe Connect section */}
+      {/* Stripe Connect section — hidden for Tyro (no per-account Connect). */}
+      {data.payment_provider !== "tyro" && (
       <section>
         <h2 className="text-base font-semibold text-gray-800 mb-1">
           Stripe Connect
@@ -531,6 +727,7 @@ function ConfigurationTab({
           </div>
         )}
       </section>
+      )}
     </div>
   );
 }

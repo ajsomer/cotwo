@@ -7,9 +7,15 @@ import {
   sessionParticipants,
   payments as paymentsT,
   appointmentActions,
+  patients as patientsT,
+  patientPhoneNumbers,
+  locations as locationsT,
+  organisations as organisationsT,
 } from "@/lib/db/schema";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { getSmsProvider } from "@/lib/sms";
+import { getPaymentProvider, getTyroProviderForOrg, type PaymentProviderType } from "@/lib/payments";
+import { resolvePatientRefId } from "@/lib/payments/ref-id";
 import { getBaseUrl } from "@/lib/utils/url";
 import { maybeCompleteWorkflowRuns } from "@/lib/workflows/run-completion";
 import {
@@ -139,25 +145,34 @@ export async function markSessionDone(sessionId: string) {
   return { success: true };
 }
 
-/** Charge payment for a session. Stub for prototype. */
-export async function chargePayment(
-  sessionId: string,
-  amountCents: number
-) {
-  // Get session details for payment
+/**
+ * Charge payment for a session, routed through the org's configured payment
+ * provider (organisations.payment_provider).
+ *
+ * Stripe (stubbed) and console return 'completed' immediately. Tyro returns a
+ * hosted paymentRequestUrl the patient completes — Tyro is patient-present, so
+ * the payment row is recorded as 'processing' and the URL returned to the UI;
+ * the Tyro webhook (api/webhooks/tyro) flips it to 'completed' on settlement.
+ */
+export async function chargePayment(sessionId: string, amountCents: number) {
+  // Session + its org context (provider + Tyro location identifier) in one hop.
   const [session] = await db
     .select({
       id: sessionsT.id,
       appointment_id: sessionsT.appointmentId,
       location_id: sessionsT.locationId,
+      org_id: organisationsT.id,
+      payment_provider: organisationsT.paymentProvider,
+      tyro_provider_number: organisationsT.tyroProviderNumber,
     })
     .from(sessionsT)
+    .innerJoin(locationsT, eq(sessionsT.locationId, locationsT.id))
+    .innerJoin(organisationsT, eq(locationsT.orgId, organisationsT.id))
     .where(eq(sessionsT.id, sessionId));
 
   if (!session) return { success: false, error: "Session not found" };
 
-  // Resolve the session's patient (first participant). The payment_methods
-  // join in the old query was decorative — only patient_id is used here.
+  // Resolve the session's patient (first participant) + identity for the charge.
   const [participant] = await db
     .select({ patient_id: sessionParticipants.patientId })
     .from(sessionParticipants)
@@ -165,15 +180,90 @@ export async function chargePayment(
     .limit(1);
   const patientId = participant?.patient_id ?? null;
 
+  // Tyro uses the org's connected credentials; others are env/stub.
+  const provider =
+    session.payment_provider === "tyro"
+      ? await getTyroProviderForOrg(session.org_id)
+      : getPaymentProvider(session.payment_provider as PaymentProviderType);
+
+  // Tyro needs patient identity + a stable refId; resolve only what's needed.
+  let result;
+  try {
+    if (session.payment_provider === "tyro") {
+      if (!patientId) {
+        return { success: false, error: "No patient on session" };
+      }
+      if (!session.tyro_provider_number) {
+        return {
+          success: false,
+          error: "Org has no Tyro location identifier configured",
+        };
+      }
+
+      const [patient] = await db
+        .select({
+          first_name: patientsT.firstName,
+          last_name: patientsT.lastName,
+          dob: patientsT.dateOfBirth,
+        })
+        .from(patientsT)
+        .where(eq(patientsT.id, patientId));
+
+      const [phone] = await db
+        .select({ phone_number: patientPhoneNumbers.phoneNumber })
+        .from(patientPhoneNumbers)
+        .where(eq(patientPhoneNumbers.patientId, patientId))
+        .orderBy(sql`is_primary desc`)
+        .limit(1);
+
+      const refId = await resolvePatientRefId(patientId);
+
+      result = await provider.createCharge({
+        sessionId,
+        patientRefId: refId,
+        amountCents,
+        locationProviderNumber: session.tyro_provider_number,
+        patient: {
+          firstName: patient?.first_name ?? "Patient",
+          lastName: patient?.last_name ?? "",
+          mobile: phone?.phone_number ?? "",
+          dob: patient?.dob ?? "1990-01-01",
+        },
+        description: "Consultation",
+      });
+    } else {
+      // Stripe (stub) / console — no patient identity needed.
+      result = await provider.createCharge({
+        sessionId,
+        patientRefId: "",
+        amountCents,
+        locationProviderNumber: "",
+        patient: { firstName: "", lastName: "", mobile: "", dob: "" },
+        description: "Consultation",
+      });
+    }
+  } catch (error) {
+    console.error("[PAYMENT] Provider charge failed:", error);
+    return { success: false, error: (error as Error).message };
+  }
+
+  if (result.status === "failed") {
+    return { success: false, error: result.error };
+  }
+
+  // Persist the payment row with provider-neutral fields.
+  const paymentRequestUrl =
+    result.status === "requires_action" ? result.paymentRequestUrl : null;
   try {
     await db.insert(paymentsT).values({
       sessionId,
       appointmentId: session.appointment_id,
       patientId,
       amountCents,
-      status: "completed", // Stub: in production this would be 'processing' until Stripe confirms
-      stripePaymentIntentId: `pi_test_${Date.now()}`,
-      stripeAccountId: "acct_test_bondi",
+      status: paymentRequestUrl ? "processing" : "completed",
+      provider: session.payment_provider,
+      providerTxnId: result.providerTxnId || null,
+      paymentRequestUrl,
     });
   } catch (error) {
     console.error("[PAYMENT] Failed to create payment record:", error);
@@ -187,6 +277,10 @@ export async function chargePayment(
     });
   }
 
+  // For Tyro, hand the hosted URL back to the UI to present/SMS to the patient.
+  if (paymentRequestUrl) {
+    return { success: true, paymentRequestUrl };
+  }
   return { success: true };
 }
 

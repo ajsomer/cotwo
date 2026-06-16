@@ -16,6 +16,7 @@
   "dependencies": {
     "@livekit/components-react": "^2.9.20",
     "@livekit/components-styles": "^1.2.0",
+    "@medipass/partner-sdk": "^3.0.1",
     "@neondatabase/auth": "^0.4.1-beta",
     "@react-pdf/renderer": "^4.5.1",
     "@stripe/stripe-js": "^9.0.0",

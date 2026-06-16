@@ -17,6 +17,8 @@ import { useCallPop } from "@/hooks/useCallPop";
 import { useClinicStore, getClinicStore, selectRooms } from "@/stores/clinic-store";
 import type { OnboardingState } from "@/stores/clinic-store";
 import { useLocation } from "@/hooks/useLocation";
+import { useOrg } from "@/hooks/useOrg";
+import { openTyroChargeWindow } from "@/lib/payments/tyro-charge-window";
 import { useRole } from "@/hooks/useRole";
 import { usePmsConnection } from "@/hooks/usePmsConnection";
 import { usePmsSync } from "@/hooks/usePmsSync";
@@ -59,6 +61,7 @@ const VideoCallPanelDynamic = dynamic(
 export function RunsheetShell() {
   // Read from Zustand store. If a slice isn't loaded yet, the effect below
   // fetches it once per tab via the store's refresh* action.
+  const { org } = useOrg();
   const sessions = useClinicStore((s) => s.sessions);
   const rooms = useClinicStore(selectRooms);
   const clinicianRoomIds = useClinicStore((s) => s.clinicianRoomIds);
@@ -304,6 +307,13 @@ export function RunsheetShell() {
   const handleAction = useCallback(
     async (sessionId: string, action: string) => {
       if (action === "process") {
+        // Tyro orgs charge via Tyro's own hosted transaction window (opened
+        // synchronously here to keep the user gesture), pre-populated with the
+        // patient's refId. Other providers use our Process slide-over.
+        if (org?.payment_provider === "tyro") {
+          openTyroChargeWindow(sessionId);
+          return;
+        }
         setProcessingSessionId(sessionId);
         return;
       }
@@ -331,7 +341,7 @@ export function RunsheetShell() {
         }
       }
     },
-    [onboarding.testSessionId, onboarding.stage]
+    [onboarding.testSessionId, onboarding.stage, org?.payment_provider]
   );
 
   // Session row click handler

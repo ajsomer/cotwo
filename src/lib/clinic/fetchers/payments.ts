@@ -19,6 +19,10 @@ export const fetchPaymentConfig = cache(async (
       stripe_account_id: locationsT.stripeAccountId,
       org_id: locationsT.orgId,
       stripe_routing: organisationsT.stripeRouting,
+      payment_provider: organisationsT.paymentProvider,
+      tyro_provider_number: organisationsT.tyroProviderNumber,
+      tyro_business_id: organisationsT.tyroBusinessId,
+      tyro_api_key_encrypted: organisationsT.tyroApiKeyEncrypted,
     })
     .from(locationsT)
     .innerJoin(organisationsT, eq(organisationsT.id, locationsT.orgId))
@@ -57,6 +61,11 @@ export const fetchPaymentConfig = cache(async (
   return {
     routing_mode: location.stripe_routing,
     location_stripe_account_id: location.stripe_account_id,
+    payment_provider: location.payment_provider as PaymentsData["payment_provider"],
+    tyro_provider_number: location.tyro_provider_number,
+    tyro_business_id: location.tyro_business_id,
+    // Never send the key itself to the client — just whether one is set.
+    tyro_connected: !!location.tyro_api_key_encrypted,
     clinicians,
   };
 });

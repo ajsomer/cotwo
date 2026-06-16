@@ -20,6 +20,7 @@ export function ProcessFlowPayment({ session, onNext }: ProcessFlowPaymentProps)
   const [editValue, setEditValue] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [paymentRequestUrl, setPaymentRequestUrl] = useState<string | null>(null);
 
   const patientName = formatPatientName(
     session.patient_first_name,
@@ -32,11 +33,20 @@ export function ProcessFlowPayment({ session, onNext }: ProcessFlowPaymentProps)
     const result = await chargePayment(session.session_id, amountCents);
     setLoading(false);
 
-    if (result.success) {
-      onNext();
-    } else {
+    if (!result.success) {
       setError(result.error ?? "Payment failed");
+      return;
     }
+
+    // Some providers return a hosted payment URL to surface (e.g. a Tyro org
+    // that hasn't switched to the clinic charge window). Show it; otherwise the
+    // charge is immediate (Stripe stub / console) and we advance.
+    if (result.paymentRequestUrl) {
+      setPaymentRequestUrl(result.paymentRequestUrl);
+      return;
+    }
+
+    onNext();
   }
 
   return (
@@ -137,9 +147,40 @@ export function ProcessFlowPayment({ session, onNext }: ProcessFlowPaymentProps)
         <p className="text-sm text-red-500">{error}</p>
       )}
 
+      {/* Payment request link returned by the provider (e.g. Tyro hosted page).
+          The patient completes payment here; staff can copy it or move on. */}
+      {paymentRequestUrl && (
+        <div className="space-y-2 p-3 bg-teal-50 rounded-lg">
+          <p className="text-xs font-medium text-gray-800">
+            Payment request created
+          </p>
+          <p className="text-xs text-gray-500">
+            Send this link to the patient to complete payment, or open it to
+            process on their behalf.
+          </p>
+          <div className="flex items-center gap-2">
+            <a
+              href={paymentRequestUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex-1 truncate text-xs text-teal-600 underline"
+            >
+              {paymentRequestUrl}
+            </a>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => navigator.clipboard?.writeText(paymentRequestUrl)}
+            >
+              Copy
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Actions */}
       <div className="space-y-2 pt-2">
-        {amountCents > 0 && session.has_card_on_file && (
+        {amountCents > 0 && session.has_card_on_file && !paymentRequestUrl && (
           <Button
             className="w-full"
             onClick={handleCharge}
@@ -148,22 +189,21 @@ export function ProcessFlowPayment({ session, onNext }: ProcessFlowPaymentProps)
             {loading ? "Charging..." : `Charge ${formatCurrency(amountCents)}`}
           </Button>
         )}
-        {amountCents > 0 && !session.has_card_on_file && (
+        {amountCents > 0 && !session.has_card_on_file && !paymentRequestUrl && (
           <Button
             variant="secondary"
             className="w-full"
-            onClick={() => {
-              onNext();
-            }}
+            onClick={handleCharge}
+            disabled={loading}
           >
-            Send payment request
+            {loading ? "Creating request..." : "Send payment request"}
           </Button>
         )}
         <button
           onClick={onNext}
           className="w-full text-center text-xs text-gray-500 hover:text-gray-800 py-2"
         >
-          Skip payment
+          {paymentRequestUrl ? "Continue" : "Skip payment"}
         </button>
       </div>
     </div>

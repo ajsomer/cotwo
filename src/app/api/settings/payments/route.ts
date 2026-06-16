@@ -92,6 +92,99 @@ export async function PATCH(request: NextRequest) {
         return NextResponse.json({ success: true });
       }
 
+      case "set_provider": {
+        const { location_id, payment_provider, tyro_provider_number } = body;
+        if (!location_id || !payment_provider) {
+          return NextResponse.json(
+            { error: "location_id and payment_provider required" },
+            { status: 400 }
+          );
+        }
+        if (!["stripe", "tyro", "console"].includes(payment_provider)) {
+          return NextResponse.json(
+            { error: "payment_provider must be 'stripe', 'tyro', or 'console'" },
+            { status: 400 }
+          );
+        }
+
+        const providerAccess = await requireStaffLocationAccess(location_id);
+        if (!providerAccess.ok) {
+          return denyResponse(providerAccess);
+        }
+
+        const [loc] = await db
+          .select({ org_id: locationsT.orgId })
+          .from(locationsT)
+          .where(eq(locationsT.id, location_id))
+          .limit(1);
+
+        if (!loc) {
+          return NextResponse.json({ error: "Location not found" }, { status: 404 });
+        }
+
+        await db
+          .update(organisationsT)
+          .set({
+            paymentProvider: payment_provider,
+            // Only set when provided; allows updating provider without clearing it.
+            ...(tyro_provider_number !== undefined
+              ? { tyroProviderNumber: tyro_provider_number || null }
+              : {}),
+          })
+          .where(eq(organisationsT.id, loc.org_id));
+
+        return NextResponse.json({ success: true });
+      }
+
+      case "set_tyro_credentials": {
+        // Connect a clinic's OWN Tyro business. The clinic pastes only their API
+        // key (per-business); we validate it and DERIVE the business id from it
+        // (GET /businesses/me). The provider/location number is an optional
+        // separate setting.
+        const { location_id, tyro_api_key, tyro_provider_number } = body;
+        if (!location_id) {
+          return NextResponse.json({ error: "location_id required" }, { status: 400 });
+        }
+
+        const credAccess = await requireStaffLocationAccess(location_id);
+        if (!credAccess.ok) return denyResponse(credAccess);
+
+        const [loc] = await db
+          .select({ org_id: locationsT.orgId })
+          .from(locationsT)
+          .where(eq(locationsT.id, location_id))
+          .limit(1);
+        if (!loc) {
+          return NextResponse.json({ error: "Location not found" }, { status: 404 });
+        }
+
+        const update: Record<string, string | null> = {};
+
+        if (tyro_api_key) {
+          // Validate the key + derive the business id before storing.
+          const { TyroPaymentProvider } = await import("@/lib/payments/tyro");
+          const { encryptSecret } = await import("@/lib/payments/credentials");
+          try {
+            const probe = new TyroPaymentProvider({ apiKey: tyro_api_key, businessId: "" });
+            const businessId = await probe.resolveBusinessId();
+            update.tyroApiKeyEncrypted = encryptSecret(tyro_api_key);
+            update.tyroBusinessId = businessId;
+          } catch {
+            return NextResponse.json(
+              { error: "Invalid Tyro API key — could not connect to Tyro Health." },
+              { status: 400 }
+            );
+          }
+        }
+
+        if (tyro_provider_number !== undefined) {
+          update.tyroProviderNumber = tyro_provider_number || null;
+        }
+
+        await db.update(organisationsT).set(update).where(eq(organisationsT.id, loc.org_id));
+        return NextResponse.json({ success: true });
+      }
+
       case "connect_account":
         // Generate a test Stripe account ID for the prototype
         return setStripeAccount(
@@ -104,7 +197,7 @@ export async function PATCH(request: NextRequest) {
 
       default:
         return NextResponse.json(
-          { error: "Unknown action. Use: set_routing, connect_account, disconnect_account" },
+          { error: "Unknown action. Use: set_routing, set_provider, connect_account, disconnect_account" },
           { status: 400 }
         );
     }
