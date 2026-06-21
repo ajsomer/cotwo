@@ -23,6 +23,10 @@ import { resolveTask } from "@/lib/runsheet/actions";
 import { seedTasksData, clearTasksData } from "@/lib/readiness/seed";
 import dynamic from "next/dynamic";
 import { ReadinessTable } from "./readiness-table";
+import { ReadinessTaskList } from "./readiness-task-list";
+import { ReadinessKanban } from "./readiness-kanban";
+import { ReadinessViewToggle } from "./readiness-view-toggle";
+import { useReadinessView } from "@/hooks/useReadinessView";
 import type { ActivePanel } from "./types";
 import { FormHandoffPanel } from "@/components/clinic/forms/form-handoff-panel";
 import { IntakePackageHandoffPanel } from "@/components/clinic/forms/intake-package-handoff-panel";
@@ -86,6 +90,7 @@ export function ReadinessShell() {
   useEnsureSlices(["readiness", "rooms", "workflows", "standaloneSubmissions"]);
 
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
+  const [view, setView] = useReadinessView();
   const [filters, setFilters] = useState<ReadinessFilters>({
     roomIds: new Set(),
     typeIds: new Set(),
@@ -386,7 +391,7 @@ export function ReadinessShell() {
   }
 
   return (
-    <div className="p-6 max-w-[860px]">
+    <div className={`p-6 ${view === "kanban" ? "" : "max-w-[860px]"}`}>
       {/* Header — matches run sheet header card */}
       <div className="flex items-center bg-white rounded-xl border border-gray-200 px-6 py-2.5 mb-4">
         <div className="flex flex-1 min-w-0 items-center gap-2">
@@ -441,8 +446,10 @@ export function ReadinessShell() {
       </div>
       {syncMsg && <p className="-mt-2 mb-4 text-[13px] text-gray-600">{syncMsg}</p>}
 
-      {/* Filter bar */}
-      <div className="mb-4">
+      {/* View toggle (left) + filter bar (right, under + Add patient) */}
+      <div className="mb-4 flex items-center gap-2">
+        <ReadinessViewToggle view={view} onChange={setView} />
+        <div className="flex-1" />
         <ReadinessFilterBar
           rooms={rooms.map((r) => ({ id: r.id, name: r.name }))}
           appointmentTypes={appointmentTypes.map((t) => ({
@@ -454,17 +461,46 @@ export function ReadinessShell() {
         />
       </div>
 
-      <ReadinessTable
-        appointments={filtered}
-        standaloneRows={standaloneRows}
-        now={now}
-        onPatientDetail={handlePatientDetail}
-        onPatientIntent={handlePatientIntent}
-        onAction={handleActionButton}
-        onActionIntent={handleActionIntent}
-        onReviewStandalone={handleReviewStandalone}
-        onReviewStandaloneIntent={handleReviewStandaloneIntent}
-      />
+      {view === "status" && (
+        <ReadinessTable
+          appointments={filtered}
+          standaloneRows={standaloneRows}
+          now={now}
+          onPatientDetail={handlePatientDetail}
+          onPatientIntent={handlePatientIntent}
+          onAction={handleActionButton}
+          onActionIntent={handleActionIntent}
+          onReviewStandalone={handleReviewStandalone}
+          onReviewStandaloneIntent={handleReviewStandaloneIntent}
+        />
+      )}
+
+      {view === "list" && (
+        <ReadinessTaskList
+          appointments={filtered}
+          standaloneRows={standaloneRows}
+          now={now}
+          onPatientDetail={handlePatientDetail}
+          onPatientIntent={handlePatientIntent}
+          onAction={handleActionButton}
+          onActionIntent={handleActionIntent}
+          onReviewStandalone={handleReviewStandalone}
+          onReviewStandaloneIntent={handleReviewStandaloneIntent}
+        />
+      )}
+
+      {view === "kanban" && (
+        <ReadinessKanban
+          appointments={filtered}
+          standaloneRows={standaloneRows}
+          onPatientDetail={handlePatientDetail}
+          onPatientIntent={handlePatientIntent}
+          onAction={handleActionButton}
+          onActionIntent={handleActionIntent}
+          onReviewStandalone={handleReviewStandalone}
+          onReviewStandaloneIntent={handleReviewStandaloneIntent}
+        />
+      )}
 
       {/* Panels */}
       {activePanel?.type === "add-patient" && locationId && orgId && (
