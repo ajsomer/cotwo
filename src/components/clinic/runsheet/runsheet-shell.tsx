@@ -33,6 +33,32 @@ import { OnboardingOverlay } from "@/components/clinic/onboarding/onboarding-ove
 import { OnboardingCoachMark } from "@/components/clinic/onboarding/onboarding-coach-mark";
 import { RoomContainerSkeleton } from "./room-container-skeleton";
 import { Button } from "@/components/ui/button";
+import { RunsheetViewToggle } from "./runsheet-view-toggle";
+import { CalendarModeToggle } from "./calendar/calendar-mode-toggle";
+import { useRunsheetView, useCalendarMode } from "@/hooks/useRunsheetView";
+import {
+  RunsheetFilterBar,
+  EMPTY_RUNSHEET_FILTERS,
+  type RunsheetFilters,
+} from "./runsheet-filter-bar";
+
+// Calendar/list views are only needed when their tab is active — lazy-load so
+// the date-fns-backed calendar code isn't in the run sheet's initial chunk.
+const RunsheetAppointmentListDynamic = dynamic(
+  () =>
+    import("./runsheet-appointment-list").then(
+      (m) => m.RunsheetAppointmentList
+    ),
+  { ssr: false }
+);
+const CalendarDayDynamic = dynamic(
+  () => import("./calendar/calendar-day").then((m) => m.CalendarDay),
+  { ssr: false }
+);
+const CalendarWeekDynamic = dynamic(
+  () => import("./calendar/calendar-week").then((m) => m.CalendarWeek),
+  { ssr: false }
+);
 
 const EMPTY_SUMMARY = {
   total: 0,
@@ -156,6 +182,15 @@ export function RunsheetShell() {
   // Tick `now` every 30s for derived state recalculation
   const now = useNow();
 
+  // View mode (persisted) + Room/Type/Status filters. Calendar Day/Week is a
+  // persisted sub-mode within the Calendar view.
+  const [view, setView] = useRunsheetView();
+  const [calendarMode, setCalendarMode] = useCalendarMode();
+  const appointmentTypes = useClinicStore((s) => s.appointmentTypes);
+  const [filters, setFilters] = useState<RunsheetFilters>(
+    EMPTY_RUNSHEET_FILTERS
+  );
+
   // Filter rooms for clinician view. The skeleton gate above guarantees
   // clinicianRoomIdsLoaded === true by the time this runs, so an empty array
   // correctly means "zero assigned rooms" (empty filter result) rather than
@@ -169,11 +204,40 @@ export function RunsheetShell() {
 
   // Enrich sessions with derived state and group by room
   const enriched = useMemo(() => enrichSessions(sessions, now, connectedSessions), [sessions, now, connectedSessions]);
+
+  // Apply Room / Type / Status filters. Empty filter sets mean "no filter".
+  const hasFilters =
+    filters.roomIds.size > 0 ||
+    filters.typeIds.size > 0 ||
+    filters.states.size > 0;
+  const filteredEnriched = useMemo(() => {
+    if (!hasFilters) return enriched;
+    return enriched.filter((s) => {
+      if (filters.roomIds.size > 0) {
+        if (!s.room_id || !filters.roomIds.has(s.room_id)) return false;
+      }
+      if (filters.typeIds.size > 0) {
+        if (!s.appointment_type_id || !filters.typeIds.has(s.appointment_type_id))
+          return false;
+      }
+      if (filters.states.size > 0) {
+        if (!filters.states.has(s.derived_state)) return false;
+      }
+      return true;
+    });
+  }, [enriched, filters, hasFilters]);
+
   const groups = useMemo(
+    () => groupSessionsByRoom(filteredEnriched, visibleRooms),
+    [filteredEnriched, visibleRooms]
+  );
+  // Summary/notifications track the unfiltered set so badge counts and tab
+  // alerts don't drop just because the user narrowed the view.
+  const summaryGroups = useMemo(
     () => groupSessionsByRoom(enriched, visibleRooms),
     [enriched, visibleRooms]
   );
-  const summary = useMemo(() => calculateSummary(groups), [groups]);
+  const summary = useMemo(() => calculateSummary(summaryGroups), [summaryGroups]);
 
   // Background notifications
   useTabNotifications(summary);
@@ -182,6 +246,7 @@ export function RunsheetShell() {
   const isReceptionist = (role === "receptionist" || role === "practice_manager" || role === "clinic_owner");
   const isClinician = role === "clinician" || role === "clinic_owner";
   const singleRoom = false;
+  const isCalendar = view === "calendar";
 
   // Seed state
   const [isSeeding, startSeeding] = useTransition();
@@ -464,7 +529,7 @@ export function RunsheetShell() {
           See docs/plans/remove-runsheet-ctas-and-onboarding.md */}
       {/* <OnboardingOverlay /> */}
       {/* <OnboardingCoachMark /> */}
-    <div className="p-6 max-w-[860px]">
+    <div className={`p-6 ${isCalendar ? "" : "max-w-[860px]"}`}>
       <div className="mb-4">
         <RunsheetHeader
           summary={summary}
@@ -488,6 +553,21 @@ export function RunsheetShell() {
         )}
       </div>
 
+      {/* View toggle (left) + Room/Type/Status filters (right) */}
+      <div className="mb-4 flex items-center gap-2">
+        <RunsheetViewToggle view={view} onChange={setView} />
+        <div className="flex-1" />
+        <RunsheetFilterBar
+          rooms={visibleRooms.map((r) => ({ id: r.id, name: r.name }))}
+          appointmentTypes={appointmentTypes.map((t) => ({
+            id: t.id,
+            name: t.name,
+          }))}
+          filters={filters}
+          onChange={setFilters}
+        />
+      </div>
+
       {sessionsFailed && (
         <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
           <p className="text-sm text-red-700">
@@ -502,31 +582,65 @@ export function RunsheetShell() {
         </div>
       )}
 
-      <div className="space-y-3">
-        {groups.map((group, index) => (
-          <RoomContainer
-            key={group.room_id}
-            group={group}
-            roomIndex={index}
-            onAction={handleAction}
-            onSessionClick={handleSessionClick}
-            onPatientClick={handlePatientClick}
-            singleRoom={singleRoom}
-            totalRooms={groups.length}
-            sessionsLoading={sessionsLoading}
-          />
-        ))}
+      {view === "provider" && (
+        <div className="space-y-3">
+          {groups.map((group, index) => (
+            <RoomContainer
+              key={group.room_id}
+              group={group}
+              roomIndex={index}
+              onAction={handleAction}
+              onSessionClick={handleSessionClick}
+              onPatientClick={handlePatientClick}
+              singleRoom={singleRoom}
+              totalRooms={groups.length}
+              sessionsLoading={sessionsLoading}
+            />
+          ))}
 
-        {groups.length === 0 && (
-          <div className="bg-white rounded-xl border border-gray-200 p-12 text-center space-y-4">
-            <p className="text-gray-500">No rooms configured for this location</p>
-            <Button onClick={handleSeed} disabled={isSeeding}>
-              {isSeeding ? "Seeding..." : "Seed demo data"}
-            </Button>
-          </div>
-        )}
+          {groups.length === 0 && (
+            <div className="bg-white rounded-xl border border-gray-200 p-12 text-center space-y-4">
+              <p className="text-gray-500">No rooms configured for this location</p>
+              <Button onClick={handleSeed} disabled={isSeeding}>
+                {isSeeding ? "Seeding..." : "Seed demo data"}
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
 
-      </div>
+      {view === "list" && (
+        <RunsheetAppointmentListDynamic
+          sessions={filteredEnriched}
+          onAction={handleAction}
+          onSessionClick={isReceptionist ? handleSessionClick : undefined}
+          onPatientClick={handlePatientClick}
+        />
+      )}
+
+      {view === "calendar" && calendarMode === "day" && (
+        <CalendarDayDynamic
+          groups={groups}
+          now={now}
+          onAction={handleAction}
+          onPatientClick={handlePatientClick}
+          modeToggle={
+            <CalendarModeToggle mode={calendarMode} onChange={setCalendarMode} />
+          }
+        />
+      )}
+
+      {view === "calendar" && calendarMode === "week" && (
+        <CalendarWeekDynamic
+          groups={groups}
+          now={now}
+          onAction={handleAction}
+          onPatientClick={handlePatientClick}
+          modeToggle={
+            <CalendarModeToggle mode={calendarMode} onChange={setCalendarMode} />
+          }
+        />
+      )}
 
       {processingSession && (
         <ProcessFlowDynamic

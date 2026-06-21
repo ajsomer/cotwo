@@ -1,22 +1,96 @@
 "use client";
 
+import { useMemo } from "react";
 import { WifiOff, CalendarClock, LogIn } from "lucide-react";
 import { StatusBadge } from "@/components/clinic/shared/status-badge";
 import { ActionButton } from "./action-button";
 import { CardIndicator } from "./card-indicator";
 import { Tooltip } from "@/components/ui/tooltip";
 import { getRowBorderColor } from "@/lib/runsheet/derived-state";
+import { PRIORITY_ORDER } from "@/lib/runsheet/grouping";
 import { resolveSessionTime, formatPatientName } from "@/lib/runsheet/format";
 import type { EnrichedSession } from "@/lib/types/domain";
 
-interface SessionRowProps {
+interface RunsheetAppointmentListProps {
+  sessions: EnrichedSession[];
+  onAction: (sessionId: string, action: string) => void;
+  onSessionClick?: (sessionId: string) => void;
+  onPatientClick?: (sessionId: string) => void;
+}
+
+const GRID = "grid-cols-[100px_160px_28px_120px_120px_140px_1fr_auto_auto]";
+
+/**
+ * Flat "Appointment list" view: every session for the location in one table,
+ * ungrouped, under a column header. Sorted by the same priority order the
+ * grouped view uses, then by time. Reuses the run sheet row primitives.
+ */
+export function RunsheetAppointmentList({
+  sessions,
+  onAction,
+  onSessionClick,
+  onPatientClick,
+}: RunsheetAppointmentListProps) {
+  const sorted = useMemo(() => {
+    return [...sessions].sort((a, b) => {
+      const pd =
+        PRIORITY_ORDER[a.derived_state] - PRIORITY_ORDER[b.derived_state];
+      if (pd !== 0) return pd;
+      const ta = a.scheduled_at ? new Date(a.scheduled_at).getTime() : 0;
+      const tb = b.scheduled_at ? new Date(b.scheduled_at).getTime() : 0;
+      return ta - tb;
+    });
+  }, [sessions]);
+
+  if (sessions.length === 0) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
+        <p className="text-gray-500">No sessions for this location today.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      {/* Column header — grid template matches the row layout exactly */}
+      <div
+        className={`grid ${GRID} items-center border-b border-gray-200 bg-gray-50/50 h-9 text-[11px] font-semibold uppercase tracking-wide text-gray-400`}
+      >
+        <span className="flex items-center justify-center">Time</span>
+        <span className="pl-5 pr-2">Patient</span>
+        <span />
+        <span className="px-2">Status</span>
+        <span className="px-2">Type</span>
+        <span className="px-2">Provider</span>
+        <span />
+        <span />
+        <span className="pr-5" />
+      </div>
+
+      {sorted.map((session) => (
+        <AppointmentListRow
+          key={session.session_id}
+          session={session}
+          onAction={onAction}
+          onClick={onSessionClick}
+          onPatientClick={onPatientClick}
+        />
+      ))}
+    </div>
+  );
+}
+
+function AppointmentListRow({
+  session,
+  onAction,
+  onClick,
+  onPatientClick,
+}: {
   session: EnrichedSession;
   onAction: (sessionId: string, action: string) => void;
   onClick?: (sessionId: string) => void;
   onPatientClick?: (sessionId: string) => void;
-}
-
-export function SessionRow({ session, onAction, onClick, onPatientClick }: SessionRowProps) {
+}) {
   const borderColor = getRowBorderColor(session.derived_state);
   const isDone = session.derived_state === "done";
   const isActive =
@@ -34,7 +108,9 @@ export function SessionRow({ session, onAction, onClick, onPatientClick }: Sessi
 
   return (
     <div
-      className={`grid grid-cols-[100px_160px_28px_120px_120px_1fr_auto_auto] items-center border-b border-gray-200 last:border-b-0 border-l-[3px] ${borderColor} ${activeBg} transition-colors ${isDone ? "opacity-40" : ""} ${onClick ? "cursor-pointer hover:bg-gray-50/50" : ""}`}
+      className={`grid ${GRID} items-center border-b border-gray-200 last:border-b-0 border-l-[3px] ${borderColor} ${activeBg} transition-colors ${
+        isDone ? "opacity-40" : ""
+      } ${onClick ? "cursor-pointer hover:bg-gray-50/50" : ""}`}
       onClick={() => onClick?.(session.session_id)}
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}
@@ -45,8 +121,7 @@ export function SessionRow({ session, onAction, onClick, onPatientClick }: Sessi
         }
       }}
     >
-      {/* Time column — full height, flush against left border. Icon signals
-          whether the time is a scheduled appointment or an on-demand join. */}
+      {/* Time */}
       <span className="self-stretch flex items-center justify-center gap-1 text-[13px] font-medium whitespace-nowrap bg-[#FAF9F7] text-[#5F5E5A] h-12">
         {timeSource === "scheduled" && (
           <Tooltip content="Scheduled appointment">
@@ -61,7 +136,7 @@ export function SessionRow({ session, onAction, onClick, onPatientClick }: Sessi
         {time ?? "--:--"}
       </span>
 
-      {/* Patient name column */}
+      {/* Patient name */}
       <div className="flex items-center min-w-0 pl-5 pr-2">
         {session.patient_id && onPatientClick ? (
           <button
@@ -81,8 +156,7 @@ export function SessionRow({ session, onAction, onClick, onPatientClick }: Sessi
         )}
       </div>
 
-      {/* Disconnect indicator column — reserves width on every row so the
-          status column stays aligned whether or not the icon shows. */}
+      {/* Disconnect indicator column */}
       <div className="flex items-center justify-center">
         {session.patient_disconnected && (
           <Tooltip content="Patient disconnected">
@@ -93,12 +167,12 @@ export function SessionRow({ session, onAction, onClick, onPatientClick }: Sessi
         )}
       </div>
 
-      {/* Status column */}
+      {/* Status */}
       <div className="flex items-center min-w-0 px-2">
         <StatusBadge state={session.derived_state} className="flex-shrink-0" />
       </div>
 
-      {/* Appointment type column */}
+      {/* Type */}
       <div className="flex items-center min-w-0 px-2">
         {session.type_name && (
           <span className="text-xs text-gray-500 truncate leading-none">
@@ -107,16 +181,24 @@ export function SessionRow({ session, onAction, onClick, onPatientClick }: Sessi
         )}
       </div>
 
-      {/* Flexible spacer — absorbs leftover width so columns pack left and
-          the card + action cluster stays right-aligned. */}
+      {/* Provider */}
+      <div className="flex items-center min-w-0 px-2">
+        {session.clinician_name && (
+          <span className="text-xs text-gray-500 truncate leading-none">
+            {session.clinician_name}
+          </span>
+        )}
+      </div>
+
+      {/* Spacer */}
       <div />
 
-      {/* Card column */}
+      {/* Card */}
       <div className="flex items-center justify-center px-3">
         <CardIndicator hasCard={session.has_card_on_file} />
       </div>
 
-      {/* Action column */}
+      {/* Action */}
       <div className="flex items-center justify-end pr-5 pl-3">
         <ActionButton
           state={session.derived_state}
