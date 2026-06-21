@@ -45,18 +45,17 @@ export function PatientRow({
       // concurrency guard.
       onMouseEnter={onActionIntent}
     >
-      {/* Row — matches session-row layout */}
+      {/* Row — matches session-row grid layout */}
       <div
-        className={`flex items-stretch border-l-[3px] ${slot.borderColor} transition-colors ${slot.rowTint}`}
+        className={`grid grid-cols-[100px_160px_120px_1fr_auto] items-center border-l-[3px] ${slot.borderColor} transition-colors ${slot.rowTint}`}
       >
         {/* Time column — matches run sheet exactly */}
-        <span className="flex items-center justify-center w-[94px] flex-shrink-0 text-[13px] font-medium whitespace-nowrap bg-[#FAF9F7] text-[#5F5E5A]">
+        <span className="self-stretch flex items-center justify-center text-[13px] font-medium whitespace-nowrap bg-[#FAF9F7] text-[#5F5E5A] h-12">
           {appointment.scheduled_at ? formatDateTime(appointment.scheduled_at) : "—"}
         </span>
 
-        {/* Content area — matches session-row h-12, px-5 */}
-        <div className="flex items-center flex-1 min-w-0 px-5 h-12">
-          {/* Patient name */}
+        {/* Patient name column */}
+        <div className="flex items-center min-w-0 pl-5 pr-2">
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -68,35 +67,19 @@ export function PatientRow({
           >
             {appointment.patient_first_name} {appointment.patient_last_name}
           </button>
+        </div>
 
-          {/* Separator + appointment type */}
+        {/* Task type column */}
+        <div className="flex items-center min-w-0 px-2">
           {appointment.appointment_type_name && (
-            <>
-              <span className="mx-2 text-gray-300 leading-none flex-shrink-0">
-                &middot;
-              </span>
-              <span className="text-xs text-gray-500 truncate flex-shrink min-w-0 leading-none">
-                {appointment.appointment_type_name}
-              </span>
-            </>
+            <span className="text-xs text-gray-500 truncate leading-none">
+              {appointment.appointment_type_name}
+            </span>
           )}
+        </div>
 
-          {/* Separator + room */}
-          {appointment.room_name && (
-            <>
-              <span className="mx-2 text-gray-300 leading-none flex-shrink-0">
-                &middot;
-              </span>
-              <span className="text-xs text-gray-500 truncate flex-shrink min-w-0 leading-none">
-                {appointment.room_name}
-              </span>
-            </>
-          )}
-
-          {/* Spacer */}
-          <div className="flex-1" />
-
-          {/* Status badge */}
+        {/* Status column */}
+        <div className="flex items-center min-w-0 px-2">
           <Badge
             variant={
               getPriorityBadgeConfig(priority).variant as
@@ -110,23 +93,23 @@ export function PatientRow({
           >
             {getPriorityBadgeConfig(priority).label}
           </Badge>
+        </div>
 
-          {/* Action button — uses Button component matching run sheet */}
+        {/* Action column */}
+        <div className="flex items-center justify-end pr-5 pl-3">
           {actionBtn && (
-            <div className="ml-2 flex-shrink-0">
-              <Button
-                variant={ACTION_BUTTON_VARIANT_MAP[actionBtn.variant] ?? "primary"}
-                size="sm"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onAction();
-                }}
-                onMouseEnter={onActionIntent}
-                onPointerDown={onActionIntent}
-              >
-                {actionBtn.label}
-              </Button>
-            </div>
+            <Button
+              variant={ACTION_BUTTON_VARIANT_MAP[actionBtn.variant] ?? "primary"}
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onAction();
+              }}
+              onMouseEnter={onActionIntent}
+              onPointerDown={onActionIntent}
+            >
+              {actionBtn.label}
+            </Button>
           )}
         </div>
       </div>

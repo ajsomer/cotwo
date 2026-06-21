@@ -33,7 +33,7 @@ export function SessionRow({ session, onAction, onClick, onPatientClick }: Sessi
 
   return (
     <div
-      className={`flex items-stretch border-b border-gray-200 last:border-b-0 border-l-[3px] ${borderColor} ${activeBg} transition-colors ${isDone ? "opacity-40" : ""} ${onClick ? "cursor-pointer hover:bg-gray-50/50" : ""}`}
+      className={`grid grid-cols-[100px_160px_28px_120px_120px_1fr_auto_auto] items-center border-b border-gray-200 last:border-b-0 border-l-[3px] ${borderColor} ${activeBg} transition-colors ${isDone ? "opacity-40" : ""} ${onClick ? "cursor-pointer hover:bg-gray-50/50" : ""}`}
       onClick={() => onClick?.(session.session_id)}
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}
@@ -46,7 +46,7 @@ export function SessionRow({ session, onAction, onClick, onPatientClick }: Sessi
     >
       {/* Time column — full height, flush against left border. Icon signals
           whether the time is a scheduled appointment or an on-demand join. */}
-      <span className="flex items-center justify-center gap-1 w-[100px] flex-shrink-0 text-[13px] font-medium whitespace-nowrap bg-[#FAF9F7] text-[#5F5E5A]">
+      <span className="self-stretch flex items-center justify-center gap-1 text-[13px] font-medium whitespace-nowrap bg-[#FAF9F7] text-[#5F5E5A] h-12">
         {timeSource === "scheduled" && (
           <Tooltip content="Scheduled appointment">
             <CalendarClock size={12} className="text-gray-400 flex-shrink-0" />
@@ -60,9 +60,8 @@ export function SessionRow({ session, onAction, onClick, onPatientClick }: Sessi
         {time ?? "--:--"}
       </span>
 
-      {/* Single-line content area — fixed height for consistency */}
-      <div className="flex items-center flex-1 min-w-0 px-5 h-12">
-        {/* Patient name */}
+      {/* Patient name column */}
+      <div className="flex items-center min-w-0 pl-5 pr-2">
         {session.patient_id && onPatientClick ? (
           <button
             type="button"
@@ -79,46 +78,51 @@ export function SessionRow({ session, onAction, onClick, onPatientClick }: Sessi
             {patientName}
           </span>
         )}
+      </div>
 
-        {/* Card indicator */}
-        <CardIndicator hasCard={session.has_card_on_file} />
-
-        {/* Disconnect indicator */}
+      {/* Disconnect indicator column — reserves width on every row so the
+          status column stays aligned whether or not the icon shows. */}
+      <div className="flex items-center justify-center">
         {session.patient_disconnected && (
           <Tooltip content="Patient disconnected">
-            <span className="ml-1.5 flex-shrink-0 inline-flex items-center text-amber-500">
+            <span className="flex-shrink-0 inline-flex items-center text-amber-500">
               <WifiOff size={14} />
             </span>
           </Tooltip>
         )}
+      </div>
 
-        <span className="mx-2 text-gray-300 leading-none flex-shrink-0">&middot;</span>
-
-        {/* Status badge */}
+      {/* Status column */}
+      <div className="flex items-center min-w-0 px-2">
         <StatusBadge state={session.derived_state} className="flex-shrink-0" />
+      </div>
 
-        {/* Appointment type */}
+      {/* Appointment type column */}
+      <div className="flex items-center min-w-0 px-2">
         {session.type_name && (
-          <>
-            <span className="mx-2 text-gray-300 leading-none flex-shrink-0">&middot;</span>
-            <span className="text-xs text-gray-500 truncate flex-shrink min-w-0 leading-none">
-              {session.type_name}
-            </span>
-          </>
+          <span className="text-xs text-gray-500 truncate leading-none">
+            {session.type_name}
+          </span>
         )}
+      </div>
 
-        {/* Spacer */}
-        <div className="flex-1" />
+      {/* Flexible spacer — absorbs leftover width so columns pack left and
+          the card + action cluster stays right-aligned. */}
+      <div />
 
-        {/* Action button */}
-        <div className="ml-2 flex-shrink-0">
-          <ActionButton
-            state={session.derived_state}
-            modality={session.modality}
-            sessionId={session.session_id}
-            onAction={onAction}
-          />
-        </div>
+      {/* Card column */}
+      <div className="flex items-center justify-center px-3">
+        <CardIndicator hasCard={session.has_card_on_file} />
+      </div>
+
+      {/* Action column */}
+      <div className="flex items-center justify-end pr-5 pl-3">
+        <ActionButton
+          state={session.derived_state}
+          modality={session.modality}
+          sessionId={session.session_id}
+          onAction={onAction}
+        />
       </div>
     </div>
   );
@@ -128,7 +132,7 @@ function CardIndicator({ hasCard }: { hasCard: boolean }) {
   if (hasCard) {
     return (
       <Tooltip content="Card on file">
-        <span className="ml-2 flex-shrink-0 inline-flex items-center">
+        <span className="flex-shrink-0 inline-flex items-center">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-green-500">
             <rect x="1.5" y="3.5" width="13" height="9" rx="1.5" />
             <path d="M1.5 6.5h13" />

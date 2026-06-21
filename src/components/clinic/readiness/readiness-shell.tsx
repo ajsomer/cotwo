@@ -357,7 +357,7 @@ export function ReadinessShell() {
 
   if (!loaded) {
     return (
-      <div className="p-6 max-w-[860px] mx-auto space-y-3">
+      <div className="p-6 max-w-[860px] space-y-3">
         {[1, 2, 3].map((i) => (
           <div
             key={i}
@@ -386,7 +386,7 @@ export function ReadinessShell() {
   }
 
   return (
-    <div className="p-6 max-w-[860px] mx-auto">
+    <div className="p-6 max-w-[860px]">
       {/* Header — matches run sheet header card */}
       <div className="flex items-center bg-white rounded-xl border border-gray-200 px-6 py-2.5 mb-4">
         <div className="flex flex-1 min-w-0 items-center gap-2">

@@ -32,15 +32,14 @@ export function StandaloneSubmissionRow({
       // Whole-row hover warms the submission-detail fetch ahead of the click.
       onMouseEnter={onReviewIntent}
     >
-      <div className="flex items-stretch border-l-[3px] border-l-amber-500 bg-amber-500/[0.03] transition-colors">
+      <div className="grid grid-cols-[100px_160px_120px_1fr_auto] items-center border-l-[3px] border-l-amber-500 bg-amber-500/[0.03] transition-colors">
         {/* Time column — submission age instead of a scheduled time */}
-        <span className="flex items-center justify-center w-[94px] flex-shrink-0 text-[13px] font-medium whitespace-nowrap bg-[#FAF9F7] text-[#5F5E5A]">
+        <span className="self-stretch flex items-center justify-center text-[13px] font-medium whitespace-nowrap bg-[#FAF9F7] text-[#5F5E5A] h-12">
           {timeAgoShort(row.created_at)}
         </span>
 
-        {/* Content */}
-        <div className="flex items-center flex-1 min-w-0 px-5 h-12">
-          {/* Patient name — clickable, opens the patient contact card */}
+        {/* Patient name column */}
+        <div className="flex items-center min-w-0 pl-5 pr-2">
           <button
             onClick={onPatientClick}
             onMouseEnter={onPatientIntent}
@@ -49,53 +48,45 @@ export function StandaloneSubmissionRow({
           >
             {row.patient_name}
           </button>
-          <span className="mx-2 text-gray-300 leading-none flex-shrink-0">
-            &middot;
-          </span>
-          <span className="text-xs text-gray-500 truncate min-w-0 leading-none">
+        </div>
+
+        {/* Task type column — form name, with standalone source + duplicate
+            note as secondary detail underneath */}
+        <div className="flex flex-col justify-center min-w-0 px-2 gap-0.5">
+          <span className="text-xs text-gray-500 truncate leading-none">
             {row.form_name}
           </span>
-          <span className="mx-2 text-gray-300 leading-none flex-shrink-0">
-            &middot;
-          </span>
-          <span className="text-xs text-gray-400 truncate flex-shrink-0 leading-none">
-            Standalone submission · {sourceLabel}
+          <span className="text-[11px] text-gray-400 truncate leading-none">
+            Standalone · {sourceLabel}
           </span>
           {row.duplicate?.possible_duplicate_patient_name && (
-            <>
-              <span className="mx-2 text-gray-300 leading-none flex-shrink-0">
-                &middot;
-              </span>
-              <span className="text-xs text-amber-600 truncate flex-shrink-0 leading-none">
-                Possible duplicate of {row.duplicate.possible_duplicate_patient_name}
-              </span>
-            </>
+            <span className="text-[11px] text-amber-600 truncate leading-none">
+              Possible duplicate of {row.duplicate.possible_duplicate_patient_name}
+            </span>
           )}
+        </div>
 
-          {/* Spacer */}
-          <div className="flex-1" />
-
-          {/* Status badge — matches the Form Completed appointment treatment */}
+        {/* Status column */}
+        <div className="flex items-center min-w-0 px-2">
           <Badge variant="amber" className="flex-shrink-0">
             Form completed
           </Badge>
+        </div>
 
-          {/* Review action — opens the standalone submission detail panel,
-              same affordance as the appointment-bound Form Completed row */}
-          <div className="ml-2 flex-shrink-0">
-            <Button
-              variant="accent"
-              size="sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                onReview();
-              }}
-              onMouseEnter={onReviewIntent}
-              onPointerDown={onReviewIntent}
-            >
-              Review
-            </Button>
-          </div>
+        {/* Action column */}
+        <div className="flex items-center justify-end pr-5 pl-3">
+          <Button
+            variant="accent"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              onReview();
+            }}
+            onMouseEnter={onReviewIntent}
+            onPointerDown={onReviewIntent}
+          >
+            Review
+          </Button>
         </div>
       </div>
     </div>

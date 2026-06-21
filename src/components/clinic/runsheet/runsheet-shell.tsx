@@ -402,7 +402,7 @@ export function RunsheetShell() {
     if (structuralError) {
       return (
         <PatientSlideOverProvider onOpenPatient={handleOpenPatient}>
-          <div className="p-6 max-w-[860px] mx-auto">
+          <div className="p-6 max-w-[860px]">
             <div className="mb-4">
               <RunsheetHeader
                 summary={EMPTY_SUMMARY}
@@ -426,7 +426,7 @@ export function RunsheetShell() {
     }
     return (
       <PatientSlideOverProvider onOpenPatient={handleOpenPatient}>
-        <div className="p-6 max-w-[860px] mx-auto">
+        <div className="p-6 max-w-[860px]">
           <div className="mb-4">
             <RunsheetHeader
               summary={EMPTY_SUMMARY}
@@ -464,7 +464,7 @@ export function RunsheetShell() {
           See docs/plans/remove-runsheet-ctas-and-onboarding.md */}
       {/* <OnboardingOverlay /> */}
       {/* <OnboardingCoachMark /> */}
-    <div className="p-6 max-w-[860px] mx-auto">
+    <div className="p-6 max-w-[860px]">
       <div className="mb-4">
         <RunsheetHeader
           summary={summary}
